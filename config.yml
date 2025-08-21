@@ -1,0 +1,7 @@
+tunnel: 5612346e-ee13-4f7b-8a04-9215b63b14d3
+credentials-file: C:\Users\fxlabs01\.cloudflared\5612346e-ee13-4f7b-8a04-9215b63b14d3.json
+
+ingress:
+  - hostname: api.fxlabs.ai
+    service: http://127.0.0.1:8000
+  - service: http_status:404
