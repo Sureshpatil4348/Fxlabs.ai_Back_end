@@ -2,9 +2,11 @@ import asyncio
 import os
 import signal
 import sys
+from collections import deque
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set
+from datetime import datetime, timezone, timedelta
+from enum import Enum
+from typing import Dict, List, Optional, Set, Tuple
 
 import MetaTrader5 as mt5
 import orjson
@@ -35,7 +37,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     mt5.shutdown()
 
-app = FastAPI(title="MT5 Tick Stream", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="MT5 Market Data Stream", version="2.0.0", lifespan=lifespan)
 
 # Always add CORS middleware for development
 app.add_middleware(
@@ -46,6 +48,28 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+class Timeframe(str, Enum):
+    M1 = "1M"
+    M5 = "5M"
+    M15 = "15M"
+    M30 = "30M"
+    H1 = "1H"
+    H4 = "4H"
+    D1 = "1D"
+    W1 = "1W"
+
+# MT5 timeframe mapping
+MT5_TIMEFRAMES = {
+    Timeframe.M1: mt5.TIMEFRAME_M1,
+    Timeframe.M5: mt5.TIMEFRAME_M5,
+    Timeframe.M15: mt5.TIMEFRAME_M15,
+    Timeframe.M30: mt5.TIMEFRAME_M30,
+    Timeframe.H1: mt5.TIMEFRAME_H1,
+    Timeframe.H4: mt5.TIMEFRAME_H4,
+    Timeframe.D1: mt5.TIMEFRAME_D1,
+    Timeframe.W1: mt5.TIMEFRAME_W1,
+}
+
 class Tick(BaseModel):
     symbol: str
     time: int              # epoch ms
@@ -55,6 +79,23 @@ class Tick(BaseModel):
     last: Optional[float] = None
     volume: Optional[float] = None
     flags: Optional[int] = None
+
+class OHLC(BaseModel):
+    symbol: str
+    timeframe: str
+    time: int              # epoch ms
+    time_iso: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: Optional[float] = None
+
+class SubscriptionInfo(BaseModel):
+    symbol: str
+    timeframe: Timeframe
+    subscription_time: datetime
+    data_types: List[str]  # ["ticks", "ohlc"]
 
 def _to_tick(symbol: str, info) -> Optional[Tick]:
     if info is None:
@@ -81,10 +122,155 @@ def ensure_symbol_selected(symbol: str) -> None:
         if not info.visible and not mt5.symbol_select(symbol, True):
             raise HTTPException(status_code=400, detail=f"Failed to select symbol: {symbol}")
 
+# Global OHLC cache: {symbol: {timeframe: deque([OHLC_bars])}}
+global_ohlc_cache: Dict[str, Dict[str, deque]] = {}
+
 def require_api_token_header(x_api_key: Optional[str] = None):
     # For REST: expect header "X-API-Key"
     if API_TOKEN and x_api_key != API_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
+    """Convert MT5 rate data to OHLC model"""
+    if rate_data is None:
+        return None
+    
+    ts_ms = int(rate_data['time']) * 1000
+    dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+    
+    return OHLC(
+        symbol=symbol,
+        timeframe=timeframe,
+        time=ts_ms,
+        time_iso=dt.isoformat(),
+        open=float(rate_data['open']),
+        high=float(rate_data['high']),
+        low=float(rate_data['low']),
+        close=float(rate_data['close']),
+        volume=float(rate_data.get('tick_volume', 0))
+    )
+
+def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 100) -> List[OHLC]:
+    """Get OHLC data from MT5"""
+    ensure_symbol_selected(symbol)
+    
+    mt5_timeframe = MT5_TIMEFRAMES.get(timeframe)
+    if mt5_timeframe is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
+    
+    # Get rates from MT5
+    rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, count)
+    if rates is None or len(rates) == 0:
+        return []
+    
+    # Convert to OHLC objects
+    ohlc_data = []
+    for rate in rates:
+        ohlc = _to_ohlc(symbol, timeframe.value, rate)
+        if ohlc:
+            ohlc_data.append(ohlc)
+    
+    return ohlc_data
+
+def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
+    """Get current (most recent) OHLC bar"""
+    data = get_ohlc_data(symbol, timeframe, 1)
+    return data[0] if data else None
+
+def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe) -> datetime:
+    """Calculate when the next OHLC update should be sent"""
+    if timeframe == Timeframe.M1:
+        # Next minute boundary
+        next_update = subscription_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    elif timeframe == Timeframe.M5:
+        # Next 5-minute boundary
+        current_minute = subscription_time.minute
+        next_minute = ((current_minute // 5) + 1) * 5
+        if next_minute >= 60:
+            next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_update = subscription_time.replace(minute=next_minute, second=0, microsecond=0)
+    elif timeframe == Timeframe.M15:
+        # Next 15-minute boundary
+        current_minute = subscription_time.minute
+        next_minute = ((current_minute // 15) + 1) * 15
+        if next_minute >= 60:
+            next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_update = subscription_time.replace(minute=next_minute, second=0, microsecond=0)
+    elif timeframe == Timeframe.M30:
+        # Next 30-minute boundary
+        current_minute = subscription_time.minute
+        next_minute = ((current_minute // 30) + 1) * 30
+        if next_minute >= 60:
+            next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_update = subscription_time.replace(minute=next_minute, second=0, microsecond=0)
+    elif timeframe == Timeframe.H1:
+        # Next hour boundary
+        next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    elif timeframe == Timeframe.H4:
+        # Next 4-hour boundary
+        current_hour = subscription_time.hour
+        next_hour = ((current_hour // 4) + 1) * 4
+        if next_hour >= 24:
+            next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        else:
+            next_update = subscription_time.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+    elif timeframe == Timeframe.D1:
+        # Next day boundary (midnight UTC)
+        next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+    elif timeframe == Timeframe.W1:
+        # Next Monday midnight UTC
+        days_ahead = 7 - subscription_time.weekday()
+        if days_ahead == 7:  # Already Monday
+            days_ahead = 7
+        next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
+    else:
+        # Default to 1 minute
+        next_update = subscription_time + timedelta(minutes=1)
+    
+    return next_update
+
+def update_ohlc_cache(symbol: str, timeframe: Timeframe, max_bars: int = 100):
+    """Update the global OHLC cache for a symbol/timeframe"""
+    global global_ohlc_cache
+    
+    if symbol not in global_ohlc_cache:
+        global_ohlc_cache[symbol] = {}
+    
+    if timeframe.value not in global_ohlc_cache[symbol]:
+        global_ohlc_cache[symbol][timeframe.value] = deque(maxlen=max_bars)
+    
+    # Get current OHLC data
+    current_ohlc = get_current_ohlc(symbol, timeframe)
+    if current_ohlc is None:
+        return
+    
+    cache = global_ohlc_cache[symbol][timeframe.value]
+    
+    # If cache is empty or this is a new time period, add the bar
+    if not cache or cache[-1].time != current_ohlc.time:
+        cache.append(current_ohlc)
+    else:
+        # Update the current bar (same time period)
+        cache[-1] = current_ohlc
+
+def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 100) -> List[OHLC]:
+    """Get OHLC data from cache, fetch from MT5 if not cached"""
+    global global_ohlc_cache
+    
+    if symbol not in global_ohlc_cache:
+        global_ohlc_cache[symbol] = {}
+    
+    if timeframe.value not in global_ohlc_cache[symbol]:
+        # Not cached, fetch from MT5
+        ohlc_data = get_ohlc_data(symbol, timeframe, count)
+        global_ohlc_cache[symbol][timeframe.value] = deque(ohlc_data, maxlen=count)
+        return ohlc_data
+    
+    # Return cached data
+    return list(global_ohlc_cache[symbol][timeframe.value])
 
 @app.get("/health")
 def health():
@@ -93,7 +279,25 @@ def health():
 
 @app.get("/test-ws")
 def test_websocket():
-    return {"message": "WebSocket endpoint should be available at /ws/ticks"}
+    return {"message": "WebSocket endpoint available at /ws/market"}
+
+@app.get("/api/ohlc/{symbol}")
+def get_ohlc(symbol: str, timeframe: str = Query("1M"), count: int = Query(100, le=500), x_api_key: Optional[str] = Depends(require_api_token_header)):
+    """Get OHLC data for a symbol and timeframe"""
+    try:
+        tf = Timeframe(timeframe)
+        sym = symbol.upper()
+        ohlc_data = get_ohlc_data(sym, tf, count)
+        return {
+            "symbol": sym,
+            "timeframe": timeframe,
+            "count": len(ohlc_data),
+            "data": [ohlc.model_dump() for ohlc in ohlc_data]
+        }
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/tick/{symbol}")
 def get_tick(symbol: str, x_api_key: Optional[str] = Depends(require_api_token_header)):
@@ -121,15 +325,21 @@ class WSClient:
     def __init__(self, websocket: WebSocket, token: str):
         self.websocket = websocket
         self.token = token
+        # Legacy tick subscriptions
         self.symbols: Set[str] = set()
         self._last_sent_ts: Dict[str, int] = {}
+        # New subscription model
+        self.subscriptions: Dict[str, SubscriptionInfo] = {}  # symbol -> subscription info
+        self.next_ohlc_updates: Dict[str, datetime] = {}  # symbol -> next update time
         self._task: Optional[asyncio.Task] = None
-        self._send_interval_s: float = 0.10  # 10 Hz
+        self._ohlc_task: Optional[asyncio.Task] = None
+        self._send_interval_s: float = 0.10  # 10 Hz for ticks
 
     async def start(self):
         # WebSocket is already accepted in the main handler
-        # Just start the background task
-        self._task = asyncio.create_task(self._loop())
+        # Start both tick and OHLC background tasks
+        self._task = asyncio.create_task(self._tick_loop())
+        self._ohlc_task = asyncio.create_task(self._ohlc_loop())
 
     async def stop(self):
         if self._task:
@@ -138,20 +348,48 @@ class WSClient:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        if self._ohlc_task:
+            self._ohlc_task.cancel()
+            try:
+                await self._ohlc_task
+            except asyncio.CancelledError:
+                pass
 
-    async def _loop(self):
+    async def _tick_loop(self):
+        """Handle real-time tick streaming"""
         try:
             while True:
-                await self._send_updates_once()
+                await self._send_tick_updates()
                 await asyncio.sleep(self._send_interval_s)
         except asyncio.CancelledError:
             return
-
-    async def _send_updates_once(self):
-        if not self.symbols:
+    
+    async def _ohlc_loop(self):
+        """Handle scheduled OHLC updates"""
+        try:
+            while True:
+                await self._send_scheduled_ohlc_updates()
+                await asyncio.sleep(1.0)  # Check every second for due updates
+        except asyncio.CancelledError:
             return
+
+    async def _send_tick_updates(self):
+        """Send real-time tick updates for subscribed symbols"""
+        tick_symbols = set()
+        
+        # Collect symbols that need tick updates
+        for symbol, sub_info in self.subscriptions.items():
+            if "ticks" in sub_info.data_types:
+                tick_symbols.add(symbol)
+        
+        # Also include legacy tick subscriptions
+        tick_symbols.update(self.symbols)
+        
+        if not tick_symbols:
+            return
+            
         updates: List[dict] = []
-        for sym in list(self.symbols):
+        for sym in list(tick_symbols):
             try:
                 ensure_symbol_selected(sym)
                 info = mt5.symbol_info_tick(sym)
@@ -164,40 +402,201 @@ class WSClient:
                 if tick:
                     updates.append(tick.model_dump())
                     self._last_sent_ts[sym] = ts_ms
+                    
+                    # Update OHLC cache for this symbol if we have OHLC subscriptions
+                    if sym in self.subscriptions and "ohlc" in self.subscriptions[sym].data_types:
+                        update_ohlc_cache(sym, self.subscriptions[sym].timeframe)
+                        
             except HTTPException:
                 # symbol disappeared or invalid; drop it
-                self.symbols.discard(sym)
+                if sym in self.symbols:
+                    self.symbols.discard(sym)
+                if sym in self.subscriptions:
+                    del self.subscriptions[sym]
+                    
         if updates:
             await self.websocket.send_bytes(orjson.dumps({"type": "ticks", "data": updates}))
+    
+    async def _send_scheduled_ohlc_updates(self):
+        """Send OHLC updates when timeframe periods complete"""
+        current_time = datetime.now(timezone.utc)
+        
+        for symbol, next_update_time in list(self.next_ohlc_updates.items()):
+            if current_time >= next_update_time:
+                try:
+                    sub_info = self.subscriptions.get(symbol)
+                    if sub_info and "ohlc" in sub_info.data_types:
+                        # Get current OHLC data from cache
+                        cached_data = get_cached_ohlc(symbol, sub_info.timeframe, 1)
+                        if cached_data:
+                            current_ohlc = cached_data[-1]
+                            await self.websocket.send_json({
+                                "type": "ohlc_update",
+                                "data": current_ohlc.model_dump()
+                            })
+                        
+                        # Schedule next update
+                        self.next_ohlc_updates[symbol] = calculate_next_update_time(
+                            current_time, sub_info.timeframe
+                        )
+                        
+                except Exception as e:
+                    print(f"❌ Error sending OHLC update for {symbol}: {e}")
+                    # Remove problematic subscription
+                    if symbol in self.subscriptions:
+                        del self.subscriptions[symbol]
+                    if symbol in self.next_ohlc_updates:
+                        del self.next_ohlc_updates[symbol]
 
     async def handle_message(self, message: dict):
         action = message.get("action")
+        
         if action == "subscribe":
+            # New subscription format
+            symbol = message.get("symbol", "").upper()
+            timeframe = message.get("timeframe", "1M")
+            data_types = message.get("data_types", ["ticks", "ohlc"])
+            
+            if not symbol:
+                await self.websocket.send_json({"type": "error", "error": "symbol_required"})
+                return
+            
+            try:
+                # Validate timeframe
+                tf = Timeframe(timeframe)
+                ensure_symbol_selected(symbol)
+                
+                # Create subscription info
+                sub_info = SubscriptionInfo(
+                    symbol=symbol,
+                    timeframe=tf,
+                    subscription_time=datetime.now(timezone.utc),
+                    data_types=data_types
+                )
+                
+                self.subscriptions[symbol] = sub_info
+                
+                # Send initial OHLC data if requested
+                if "ohlc" in data_types:
+                    try:
+                        ohlc_data = get_cached_ohlc(symbol, tf, 100)
+                        if ohlc_data:
+                            await self.websocket.send_json({
+                                "type": "initial_ohlc",
+                                "symbol": symbol,
+                                "timeframe": timeframe,
+                                "data": [ohlc.model_dump() for ohlc in ohlc_data]
+                            })
+                        
+                        # Schedule next OHLC update
+                        self.next_ohlc_updates[symbol] = calculate_next_update_time(
+                            sub_info.subscription_time, tf
+                        )
+                        
+                    except Exception as e:
+                        print(f"❌ Error getting initial OHLC for {symbol}: {e}")
+                        await self.websocket.send_json({
+                            "type": "error", 
+                            "error": f"failed_to_get_ohlc: {str(e)}"
+                        })
+                        return
+                
+                await self.websocket.send_json({
+                    "type": "subscribed",
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "data_types": data_types
+                })
+                
+            except ValueError:
+                await self.websocket.send_json({"type": "error", "error": f"invalid_timeframe: {timeframe}"})
+            except HTTPException as e:
+                await self.websocket.send_json({"type": "error", "error": str(e.detail)})
+            except Exception as e:
+                await self.websocket.send_json({"type": "error", "error": str(e)})
+                
+        elif action == "subscribe_legacy":
+            # Legacy tick-only subscription
             syms = [s.upper() for s in message.get("symbols", [])]
             for s in syms:
                 ensure_symbol_selected(s)
                 self.symbols.add(s)
             await self.websocket.send_json({"type": "subscribed", "symbols": sorted(self.symbols)})
+            
         elif action == "unsubscribe":
-            syms = [s.upper() for s in message.get("symbols", [])]
-            for s in syms:
-                self.symbols.discard(s)
-            await self.websocket.send_json({"type": "unsubscribed", "symbols": sorted(self.symbols)})
+            symbol = message.get("symbol", "").upper()
+            if symbol:
+                if symbol in self.subscriptions:
+                    del self.subscriptions[symbol]
+                if symbol in self.next_ohlc_updates:
+                    del self.next_ohlc_updates[symbol]
+                self.symbols.discard(symbol)
+                await self.websocket.send_json({"type": "unsubscribed", "symbol": symbol})
+            else:
+                # Legacy unsubscribe
+                syms = [s.upper() for s in message.get("symbols", [])]
+                for s in syms:
+                    self.symbols.discard(s)
+                    if s in self.subscriptions:
+                        del self.subscriptions[s]
+                    if s in self.next_ohlc_updates:
+                        del self.next_ohlc_updates[s]
+                await self.websocket.send_json({"type": "unsubscribed", "symbols": sorted(syms)})
+                
         elif action == "ping":
             await self.websocket.send_json({"type": "pong"})
         else:
             await self.websocket.send_json({"type": "error", "error": "unknown_action"})
 
+# Keep legacy endpoint for backward compatibility
 @app.websocket("/ws/ticks")
-async def ws_ticks(websocket: WebSocket):
+async def ws_ticks_legacy(websocket: WebSocket):
+    """Legacy WebSocket endpoint for tick-only streaming"""
+    print("🔌 Legacy WebSocket connection attempt received")
+    client = None
+    
+    try:
+        await websocket.accept()
+        await websocket.send_json({"type": "connected", "message": "Legacy tick WebSocket connected"})
+        
+        client = WSClient(websocket, "")
+        await client.start()
+        
+        while True:
+            data = await websocket.receive_text()
+            try:
+                message = orjson.loads(data)
+                # Force legacy behavior
+                if message.get("action") == "subscribe":
+                    message["action"] = "subscribe_legacy"
+                await client.handle_message(message)
+            except Exception as parse_error:
+                await websocket.send_json({"type": "error", "error": str(parse_error)})
+                
+    except WebSocketDisconnect:
+        print("🔌 Legacy WebSocket disconnected")
+    except Exception as e:
+        print(f"❌ Legacy WebSocket error: {e}")
+    finally:
+        if client:
+            await client.stop()
+
+@app.websocket("/ws/market")
+async def ws_market(websocket: WebSocket):
     print("🔌 WebSocket connection attempt received")
+    client = None
     
     try:
         await websocket.accept()
         print("✅ WebSocket connection accepted")
         
         # Send a welcome message
-        await websocket.send_json({"type": "connected", "message": "WebSocket connected successfully"})
+        await websocket.send_json({
+            "type": "connected", 
+            "message": "WebSocket connected successfully",
+            "supported_timeframes": [tf.value for tf in Timeframe],
+            "supported_data_types": ["ticks", "ohlc"]
+        })
         print("📤 Sent welcome message")
         
         # Create WSClient for real MT5 data
@@ -227,7 +626,8 @@ async def ws_ticks(websocket: WebSocket):
         traceback.print_exc()
     finally:
         print("🧹 Cleaning up WSClient...")
-        await client.stop()
+        if client:
+            await client.stop()
 
 def _install_sigterm_handler(loop: asyncio.AbstractEventLoop):
     def _handler():
@@ -245,6 +645,17 @@ def _install_sigterm_handler(loop: asyncio.AbstractEventLoop):
 if __name__ == "__main__":
     # Run with: python server.py
     import uvicorn
+    print("🚀 Starting MT5 Market Data Server...")
+    print("📊 Available endpoints:")
+    print("   - WebSocket (new): ws://localhost:8000/ws/market")
+    print("   - WebSocket (legacy): ws://localhost:8000/ws/ticks")
+    print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=1M&count=100")
+    print("   - Health check: GET /health")
+    print("")
+    print("📋 Supported timeframes: 1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W")
+    print("📋 Supported data types: ticks, ohlc")
+    print("")
+    
     _install_sigterm_handler(asyncio.get_event_loop())
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8000"))

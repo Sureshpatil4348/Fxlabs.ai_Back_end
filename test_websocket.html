@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MT5 Market Data WebSocket Test</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .controls input, .controls select, .controls button {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .controls button {
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            border: none;
+        }
+        .controls button:hover {
+            background: #0056b3;
+        }
+        .controls button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .logs {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .data-display {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .data-section {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+        }
+        .data-section h3 {
+            margin-top: 0;
+            color: #495057;
+        }
+        .tick-data, .ohlc-data {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .clear-btn {
+            background: #dc3545 !important;
+        }
+        .clear-btn:hover {
+            background: #c82333 !important;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔌 MT5 Market Data WebSocket Test</h1>
+    
+    <div class="container">
+        <h2>Connection & Subscription</h2>
+        
+        <div class="controls">
+            <input type="text" id="wsUrl" value="ws://localhost:8000/ws/market" placeholder="WebSocket URL">
+            <button id="connectBtn" onclick="connect()">Connect</button>
+            <button id="disconnectBtn" onclick="disconnect()" disabled>Disconnect</button>
+        </div>
+        
+        <div class="controls">
+            <input type="text" id="symbol" value="EURUSD" placeholder="Symbol">
+            <select id="timeframe">
+                <option value="1M">1 Minute</option>
+                <option value="5M">5 Minutes</option>
+                <option value="15M">15 Minutes</option>
+                <option value="30M">30 Minutes</option>
+                <option value="1H">1 Hour</option>
+                <option value="4H">4 Hours</option>
+                <option value="1D">1 Day</option>
+                <option value="1W">1 Week</option>
+            </select>
+            <label><input type="checkbox" id="ticksEnabled" checked> Ticks</label>
+            <label><input type="checkbox" id="ohlcEnabled" checked> OHLC</label>
+            <button id="subscribeBtn" onclick="subscribe()" disabled>Subscribe</button>
+            <button id="unsubscribeBtn" onclick="unsubscribe()" disabled>Unsubscribe</button>
+        </div>
+        
+        <div id="status" class="status disconnected">Disconnected</div>
+    </div>
+    
+    <div class="container">
+        <h2>Real-time Data</h2>
+        <div class="data-display">
+            <div class="data-section">
+                <h3>📈 Latest Ticks</h3>
+                <div id="tickData" class="tick-data">No tick data yet...</div>
+            </div>
+            <div class="data-section">
+                <h3>📊 Latest OHLC</h3>
+                <div id="ohlcData" class="ohlc-data">No OHLC data yet...</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="container">
+        <h2>Message Log</h2>
+        <div class="controls">
+            <button class="clear-btn" onclick="clearLogs()">Clear Logs</button>
+        </div>
+        <div id="logs" class="logs">Ready to connect...\n</div>
+    </div>
+
+    <script>
+        let ws = null;
+        let isConnected = false;
+        let currentSubscription = null;
+
+        function log(message) {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            logs.textContent += `[${timestamp}] ${message}\n`;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        function updateStatus(connected) {
+            const status = document.getElementById('status');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const subscribeBtn = document.getElementById('subscribeBtn');
+            const unsubscribeBtn = document.getElementById('unsubscribeBtn');
+
+            isConnected = connected;
+            
+            if (connected) {
+                status.textContent = 'Connected';
+                status.className = 'status connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                subscribeBtn.disabled = false;
+            } else {
+                status.textContent = 'Disconnected';
+                status.className = 'status disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                subscribeBtn.disabled = true;
+                unsubscribeBtn.disabled = true;
+                currentSubscription = null;
+            }
+        }
+
+        function connect() {
+            const url = document.getElementById('wsUrl').value;
+            log(`Connecting to ${url}...`);
+            
+            ws = new WebSocket(url);
+            
+            ws.onopen = function(event) {
+                log('✅ WebSocket connection established');
+                updateStatus(true);
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleMessage(data);
+                } catch (e) {
+                    log(`❌ Error parsing message: ${e}`);
+                }
+            };
+            
+            ws.onclose = function(event) {
+                log('🔌 WebSocket connection closed');
+                updateStatus(false);
+            };
+            
+            ws.onerror = function(error) {
+                log(`❌ WebSocket error: ${error}`);
+                updateStatus(false);
+            };
+        }
+
+        function disconnect() {
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+        }
+
+        function subscribe() {
+            if (!isConnected) return;
+            
+            const symbol = document.getElementById('symbol').value.toUpperCase();
+            const timeframe = document.getElementById('timeframe').value;
+            const ticksEnabled = document.getElementById('ticksEnabled').checked;
+            const ohlcEnabled = document.getElementById('ohlcEnabled').checked;
+            
+            const dataTypes = [];
+            if (ticksEnabled) dataTypes.push('ticks');
+            if (ohlcEnabled) dataTypes.push('ohlc');
+            
+            if (dataTypes.length === 0) {
+                alert('Please select at least one data type (Ticks or OHLC)');
+                return;
+            }
+            
+            const subscription = {
+                action: 'subscribe',
+                symbol: symbol,
+                timeframe: timeframe,
+                data_types: dataTypes
+            };
+            
+            log(`📤 Subscribing: ${JSON.stringify(subscription)}`);
+            ws.send(JSON.stringify(subscription));
+            currentSubscription = symbol;
+            document.getElementById('unsubscribeBtn').disabled = false;
+        }
+
+        function unsubscribe() {
+            if (!isConnected || !currentSubscription) return;
+            
+            const message = {
+                action: 'unsubscribe',
+                symbol: currentSubscription
+            };
+            
+            log(`📤 Unsubscribing: ${JSON.stringify(message)}`);
+            ws.send(JSON.stringify(message));
+        }
+
+        function handleMessage(data) {
+            log(`📨 ${data.type}: ${JSON.stringify(data).substring(0, 100)}...`);
+            
+            switch (data.type) {
+                case 'connected':
+                    log(`🎉 Welcome: ${data.message}`);
+                    if (data.supported_timeframes) {
+                        log(`📊 Supported timeframes: ${data.supported_timeframes.join(', ')}`);
+                    }
+                    break;
+                    
+                case 'subscribed':
+                    log(`✅ Subscribed to ${data.symbol} (${data.timeframe}) - ${data.data_types.join(', ')}`);
+                    break;
+                    
+                case 'unsubscribed':
+                    log(`❌ Unsubscribed from ${data.symbol}`);
+                    currentSubscription = null;
+                    document.getElementById('unsubscribeBtn').disabled = true;
+                    break;
+                    
+                case 'initial_ohlc':
+                    log(`📊 Initial OHLC: ${data.data.length} bars for ${data.symbol} (${data.timeframe})`);
+                    displayOHLCData(data.data.slice(-5)); // Show last 5 bars
+                    break;
+                    
+                case 'ticks':
+                    displayTickData(data.data);
+                    break;
+                    
+                case 'ohlc_update':
+                    log(`📊 OHLC Update: ${data.data.symbol} - Close: ${data.data.close}`);
+                    displayOHLCData([data.data]);
+                    break;
+                    
+                case 'pong':
+                    log('🏓 Pong received');
+                    break;
+                    
+                case 'error':
+                    log(`❌ Error: ${data.error}`);
+                    break;
+                    
+                default:
+                    log(`❓ Unknown message type: ${data.type}`);
+            }
+        }
+
+        function displayTickData(ticks) {
+            const tickDiv = document.getElementById('tickData');
+            let html = '';
+            
+            ticks.forEach(tick => {
+                html += `${tick.symbol}: Bid=${tick.bid} Ask=${tick.ask} Time=${new Date(tick.time).toLocaleTimeString()}\n`;
+            });
+            
+            tickDiv.textContent = html + tickDiv.textContent;
+            
+            // Keep only last 10 lines
+            const lines = tickDiv.textContent.split('\n');
+            if (lines.length > 10) {
+                tickDiv.textContent = lines.slice(0, 10).join('\n');
+            }
+        }
+
+        function displayOHLCData(ohlcBars) {
+            const ohlcDiv = document.getElementById('ohlcData');
+            let html = '';
+            
+            ohlcBars.forEach(bar => {
+                const time = new Date(bar.time).toLocaleString();
+                html += `${bar.symbol} (${bar.timeframe}): O=${bar.open} H=${bar.high} L=${bar.low} C=${bar.close} V=${bar.volume} @ ${time}\n`;
+            });
+            
+            ohlcDiv.textContent = html + ohlcDiv.textContent;
+            
+            // Keep only last 5 bars
+            const lines = ohlcDiv.textContent.split('\n');
+            if (lines.length > 5) {
+                ohlcDiv.textContent = lines.slice(0, 5).join('\n');
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').textContent = 'Logs cleared...\n';
+        }
+
+        // Test ping every 30 seconds when connected
+        setInterval(() => {
+            if (isConnected && ws) {
+                ws.send(JSON.stringify({action: 'ping'}));
+            }
+        }, 30000);
+    </script>
+</body>
+</html>
