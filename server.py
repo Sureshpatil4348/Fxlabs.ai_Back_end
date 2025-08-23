@@ -114,13 +114,48 @@ def _to_tick(symbol: str, info) -> Optional[Tick]:
     )
 
 def ensure_symbol_selected(symbol: str) -> None:
+    # First check if symbol exists at all
+    info = mt5.symbol_info(symbol)
+    
+    if info is None:
+        # Symbol doesn't exist - let's check what symbols are available
+        all_symbols = mt5.symbols_get()
+        if all_symbols:
+            # Show first few available symbols for debugging
+            sample_symbols = [s.name for s in all_symbols[:10]]
+            print(f"Available symbols (first 10): {sample_symbols}")
+            
+            # Check if there's a case sensitivity issue
+            upper_symbol = symbol.upper()
+            lower_symbol = symbol.lower()
+            
+            # Try to find similar symbols
+            similar_symbols = []
+            for s in all_symbols:
+                s_name = s.name
+                if upper_symbol in s_name.upper() or lower_symbol in s_name.lower():
+                    similar_symbols.append(s_name)
+                    if len(similar_symbols) >= 5:  # Limit to 5 suggestions
+                        break
+            
+            error_detail = f"Unknown symbol: '{symbol}'. "
+            if similar_symbols:
+                error_detail += f"Similar symbols found: {similar_symbols}"
+            else:
+                error_detail += f"Available symbols (first 10): {sample_symbols}"
+            
+            raise HTTPException(status_code=404, detail=error_detail)
+        else:
+            raise HTTPException(status_code=500, detail="No symbols available from MT5 - check connection")
+    
+    # Symbol exists, now try to select it
     if not mt5.symbol_select(symbol, True):
-        # Try enabling if not already
-        info = mt5.symbol_info(symbol)
-        if info is None:
-            raise HTTPException(status_code=404, detail=f"Unknown symbol: {symbol}")
-        if not info.visible and not mt5.symbol_select(symbol, True):
-            raise HTTPException(status_code=400, detail=f"Failed to select symbol: {symbol}")
+        if not info.visible:
+            # Try to make it visible first
+            if not mt5.symbol_select(symbol, True):
+                raise HTTPException(status_code=400, detail=f"Failed to select symbol: {symbol} - symbol exists but cannot be selected")
+        else:
+            raise HTTPException(status_code=400, detail=f"Failed to select symbol: {symbol} - unknown error")
 
 # Global OHLC cache: {symbol: {timeframe: deque([OHLC_bars])}}
 global_ohlc_cache: Dict[str, Dict[str, deque]] = {}
@@ -135,23 +170,32 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
     if rate_data is None:
         return None
     
-    ts_ms = int(rate_data['time']) * 1000
-    dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
-    
-    return OHLC(
-        symbol=symbol,
-        timeframe=timeframe,
-        time=ts_ms,
-        time_iso=dt.isoformat(),
-        open=float(rate_data['open']),
-        high=float(rate_data['high']),
-        low=float(rate_data['low']),
-        close=float(rate_data['close']),
-        volume=float(rate_data.get('tick_volume', 0))
-    )
+    # MT5 returns numpy structured arrays, access by index: (time, open, high, low, close, tick_volume, spread, real_volume)
+    try:
+        ts_ms = int(rate_data[0]) * 1000  # time is at index 0
+        dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+        
+        return OHLC(
+            symbol=symbol,
+            timeframe=timeframe,
+            time=ts_ms,
+            time_iso=dt.isoformat(),
+            open=float(rate_data[1]),    # open is at index 1
+            high=float(rate_data[2]),    # high is at index 2
+            low=float(rate_data[3]),     # low is at index 3
+            close=float(rate_data[4]),   # close is at index 4
+            volume=float(rate_data[5])   # tick_volume is at index 5
+        )
+    except (IndexError, ValueError, TypeError) as e:
+        print(f"Error converting rate data to OHLC: {e}")
+        print(f"Rate data type: {type(rate_data)}")
+        print(f"Rate data: {rate_data}")
+        return None
 
 def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 100) -> List[OHLC]:
     """Get OHLC data from MT5"""
+    print(f"📊 Fetching OHLC: {symbol} {timeframe.value} x{count}")
+    
     ensure_symbol_selected(symbol)
     
     mt5_timeframe = MT5_TIMEFRAMES.get(timeframe)
@@ -160,8 +204,12 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 100) -> List[O
     
     # Get rates from MT5
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, count)
+    
     if rates is None or len(rates) == 0:
+        print(f"⚠️ No rates from MT5 for {symbol}")
         return []
+    
+    print(f"📊 Got {len(rates)} rates from MT5")
     
     # Convert to OHLC objects
     ohlc_data = []
@@ -170,6 +218,7 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 100) -> List[O
         if ohlc:
             ohlc_data.append(ohlc)
     
+    print(f"📊 Converted to {len(ohlc_data)} OHLC bars")
     return ohlc_data
 
 def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
@@ -265,12 +314,15 @@ def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 100) -> List
     
     if timeframe.value not in global_ohlc_cache[symbol]:
         # Not cached, fetch from MT5
+        print(f"📡 Cache miss - fetching from MT5: {symbol} {timeframe.value}")
         ohlc_data = get_ohlc_data(symbol, timeframe, count)
         global_ohlc_cache[symbol][timeframe.value] = deque(ohlc_data, maxlen=count)
         return ohlc_data
     
     # Return cached data
-    return list(global_ohlc_cache[symbol][timeframe.value])
+    cached_data = list(global_ohlc_cache[symbol][timeframe.value])
+    print(f"📦 Cache hit: {symbol} {timeframe.value} ({len(cached_data)} bars)")
+    return cached_data
 
 @app.get("/health")
 def health():
@@ -453,7 +505,7 @@ class WSClient:
         
         if action == "subscribe":
             # New subscription format
-            symbol = message.get("symbol", "").upper()
+            symbol = message.get("symbol", "")
             timeframe = message.get("timeframe", "1M")
             data_types = message.get("data_types", ["ticks", "ohlc"])
             
@@ -479,7 +531,10 @@ class WSClient:
                 # Send initial OHLC data if requested
                 if "ohlc" in data_types:
                     try:
+                        print(f"📊 Fetching initial OHLC data for {symbol} ({timeframe})")
                         ohlc_data = get_cached_ohlc(symbol, tf, 100)
+                        print(f"📊 Got {len(ohlc_data) if ohlc_data else 0} OHLC bars for {symbol}")
+                        
                         if ohlc_data:
                             await self.websocket.send_json({
                                 "type": "initial_ohlc",
@@ -487,14 +542,20 @@ class WSClient:
                                 "timeframe": timeframe,
                                 "data": [ohlc.model_dump() for ohlc in ohlc_data]
                             })
+                            print(f"✅ Sent initial OHLC data for {symbol}: {len(ohlc_data)} bars")
+                        else:
+                            print(f"⚠️ No OHLC data available for {symbol}")
                         
                         # Schedule next OHLC update
                         self.next_ohlc_updates[symbol] = calculate_next_update_time(
                             sub_info.subscription_time, tf
                         )
+                        print(f"⏰ Scheduled next OHLC update for {symbol} at {self.next_ohlc_updates[symbol]}")
                         
                     except Exception as e:
                         print(f"❌ Error getting initial OHLC for {symbol}: {e}")
+                        import traceback
+                        traceback.print_exc()
                         await self.websocket.send_json({
                             "type": "error", 
                             "error": f"failed_to_get_ohlc: {str(e)}"
@@ -517,14 +578,14 @@ class WSClient:
                 
         elif action == "subscribe_legacy":
             # Legacy tick-only subscription
-            syms = [s.upper() for s in message.get("symbols", [])]
+            syms = message.get("symbols", [])
             for s in syms:
                 ensure_symbol_selected(s)
                 self.symbols.add(s)
             await self.websocket.send_json({"type": "subscribed", "symbols": sorted(self.symbols)})
             
         elif action == "unsubscribe":
-            symbol = message.get("symbol", "").upper()
+            symbol = message.get("symbol", "")
             if symbol:
                 if symbol in self.subscriptions:
                     del self.subscriptions[symbol]
@@ -534,7 +595,7 @@ class WSClient:
                 await self.websocket.send_json({"type": "unsubscribed", "symbol": symbol})
             else:
                 # Legacy unsubscribe
-                syms = [s.upper() for s in message.get("symbols", [])]
+                syms = message.get("symbols", [])
                 for s in syms:
                     self.symbols.discard(s)
                     if s in self.subscriptions:
@@ -657,6 +718,6 @@ if __name__ == "__main__":
     print("")
     
     _install_sigterm_handler(asyncio.get_event_loop())
-    host = os.environ.get("HOST", "127.0.0.1")
-    port = int(os.environ.get("PORT", "8000"))
+    host = os.environ.get("HOST", "127.0.0.2")
+    port = int(os.environ.get("PORT", "8080"))
     uvicorn.run("server:app", host=host, port=port, reload=False, server_header=False, date_header=False)
