@@ -7,17 +7,27 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
+import aiohttp
+import asyncio
 
 import MetaTrader5 as mt5
 import orjson
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+import json
 
 # Config via environment variables
 API_TOKEN = os.environ.get("API_TOKEN", "")
 ALLOWED_ORIGINS = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
 MT5_TERMINAL_PATH = os.environ.get("MT5_TERMINAL_PATH", "")
+
+# News analysis configuration
+PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "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")
+JBLANKED_API_URL = os.environ.get("JBLANKED_API_URL", "https://www.jblanked.com/news/api/forex-factory/calendar/today/")
+JBLANKED_API_KEY = os.environ.get("JBLANKED_API_KEY", "32FEvnEZ")
+NEWS_UPDATE_INTERVAL_HOURS = int(os.environ.get("NEWS_UPDATE_INTERVAL_HOURS", "24"))
+NEWS_CACHE_MAX_ITEMS = int(os.environ.get("NEWS_CACHE_MAX_ITEMS", "100"))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,9 +42,21 @@ async def lifespan(app: FastAPI):
     v = mt5.version()
     print(f"MT5 initialized. Version: {v}", flush=True)
     
+    # Initialize news cache and start scheduler
+    print("📰 Initializing news analysis system...")
+    print(f"🔑 Perplexity API Key: {PERPLEXITY_API_KEY[:10]}...")
+    print(f"🔑 Jblanked API Key: {JBLANKED_API_KEY}")
+    news_task = asyncio.create_task(news_scheduler())
+    print("📰 News scheduler started")
+    
     yield
     
     # Shutdown
+    news_task.cancel()
+    try:
+        await news_task
+    except asyncio.CancelledError:
+        pass
     mt5.shutdown()
 
 app = FastAPI(title="MT5 Market Data Stream", version="2.0.0", lifespan=lifespan)
@@ -96,6 +118,25 @@ class SubscriptionInfo(BaseModel):
     timeframe: Timeframe
     subscription_time: datetime
     data_types: List[str]  # ["ticks", "ohlc"]
+
+class NewsItem(BaseModel):
+    headline: str
+    forecast: Optional[str] = None
+    previous: Optional[str] = None
+    actual: Optional[str] = None
+    currency: Optional[str] = None
+    impact: Optional[str] = None
+    time: Optional[str] = None
+
+class NewsAnalysis(BaseModel):
+    headline: str
+    forecast: Optional[str] = None
+    previous: Optional[str] = None
+    actual: Optional[str] = None
+    currency: Optional[str] = None
+    time: Optional[str] = None
+    analysis: Dict[str, str]  # AI analysis results
+    analyzed_at: datetime
 
 def _to_tick(symbol: str, info) -> Optional[Tick]:
     if info is None:
@@ -159,6 +200,14 @@ def ensure_symbol_selected(symbol: str) -> None:
 
 # Global OHLC cache: {symbol: {timeframe: deque([OHLC_bars])}}
 global_ohlc_cache: Dict[str, Dict[str, deque]] = {}
+
+# Global news cache
+global_news_cache: List[NewsAnalysis] = []
+news_cache_metadata: Dict[str, any] = {
+    "last_updated": None,
+    "next_update_time": None,
+    "is_updating": False
+}
 
 def require_api_token_header(x_api_key: Optional[str] = None):
     # For REST: expect header "X-API-Key"
@@ -324,6 +373,301 @@ def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 100) -> List
     print(f"📦 Cache hit: {symbol} {timeframe.value} ({len(cached_data)} bars)")
     return cached_data
 
+async def fetch_jblanked_news() -> List[NewsItem]:
+    """Fetch news data from Jblanked API"""
+    try:
+        print("📰 Fetching news from Jblanked API...")
+        headers = {
+            "Authorization": f"Api-Key {JBLANKED_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(JBLANKED_API_URL, headers=headers) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    print(f"📰 Raw API response type: {type(data)}")
+                    print(f"📰 Raw API response: {data}")
+                    news_items = []
+                    
+                    # Handle different response formats
+                    if isinstance(data, list):
+                        # API returns list directly
+                        items = data
+                    elif isinstance(data, dict) and 'data' in data:
+                        # API returns object with data field
+                        items = data['data']
+                    else:
+                        # Try to find any array in the response
+                        items = []
+                        if isinstance(data, dict):
+                            for key, value in data.items():
+                                if isinstance(value, list):
+                                    items = value
+                                    break
+                    
+                    print(f"📰 Processing {len(items) if items else 0} items from response")
+                    
+                    # Process the API response
+                    for item in items:
+                        if isinstance(item, dict):
+                            print(f"📰 Processing item: {item}")
+                            print(f"📰 Available fields: {list(item.keys())}")
+                            
+                            # Extract fields with debugging
+                            headline = item.get('Name', '') or item.get('title', '') or item.get('headline', '') or item.get('name', '')
+                            forecast = item.get('Forecast', '') or item.get('forecast', '') or item.get('expected', '')
+                            previous = item.get('Previous', '') or item.get('previous', '') or item.get('prev', '')
+                            actual = item.get('Actual', '') or item.get('actual', '') or item.get('result', '')
+                            currency = item.get('Currency', '') or item.get('currency', '') or item.get('ccy', '') or item.get('country', '')
+                            impact = item.get('Strength', '') or item.get('impact', '') or item.get('importance', '')
+                            time = item.get('Date', '') or item.get('time', '') or item.get('date', '') or item.get('timestamp', '')
+                            
+                            # Additional context fields from Jblanked API
+                            outcome = item.get('Outcome', '')
+                            quality = item.get('Quality', '')
+                            
+                            # Enhanced headline with context if available
+                            if outcome and headline:
+                                headline = f"{headline} ({outcome})"
+                            if quality and headline:
+                                headline = f"{headline} - {quality}"
+                            
+                            # Convert numeric values to strings for Pydantic validation
+                            if isinstance(forecast, (int, float)):
+                                forecast = str(forecast)
+                            if isinstance(previous, (int, float)):
+                                previous = str(previous)
+                            if isinstance(actual, (int, float)):
+                                actual = str(actual)
+                            
+                            # Handle empty strings - convert to None if empty
+                            if headline == '':
+                                headline = None
+                            if forecast == '':
+                                forecast = None
+                            if previous == '':
+                                previous = None
+                            if actual == '':
+                                actual = None
+                            if currency == '':
+                                currency = None
+                            if impact == '':
+                                impact = None
+                            if time == '':
+                                time = None
+                            
+                            print(f"📰 Mapped fields:")
+                            print(f"   Headline: '{headline}'")
+                            print(f"   Forecast: '{forecast}'")
+                            print(f"   Previous: '{previous}'")
+                            print(f"   Actual: '{actual}'")
+                            print(f"   Currency: '{currency}'")
+                            print(f"   Time: '{time}'")
+                            
+                            news_item = NewsItem(
+                                headline=headline,
+                                forecast=forecast,
+                                previous=previous,
+                                actual=actual,
+                                currency=currency,
+                                impact=impact,
+                                time=time
+                            )
+                            news_items.append(news_item)
+                    
+                    print(f"📰 Fetched {len(news_items)} news items from Jblanked API")
+                    return news_items
+                else:
+                    print(f"❌ Jblanked API error: {response.status}")
+                    text = await response.text()
+                    print(f"   Response: {text}")
+                    return []
+    except Exception as e:
+        print(f"❌ Error fetching Jblanked API news: {e}")
+        import traceback
+        traceback.print_exc()
+        return []
+
+async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnalysis]:
+    prompt = (
+        "Analyze the following economic news for Forex trading impact.\n"
+        f"News: {news_item.headline}\n"
+        f"Forecast: {news_item.forecast or 'N/A'}\n"
+        f"Previous: {news_item.previous or 'N/A'}\n"
+        f"Actual: {news_item.actual or 'N/A'}\n"
+        "Provide:\n"
+        "1. Expected effect (Bullish, Bearish, Neutral).\n"
+        "2. Which currencies are most impacted.\n"
+        "3. Suggested currency pairs to monitor."
+    )
+
+    # 🔒 Required auth header & stable endpoint
+    url = "https://api.perplexity.ai/chat/completions"  # official endpoint
+    headers = {
+        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",  # the only supported auth
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "fx-news-analyzer/1.0"
+    }
+
+    # ✅ Use a model that is available via the Chat Completions API
+    # You can use "sonar", "sonar-pro", "sonar-reasoning" or "sonar-deep-research".
+    # If you hit plan/permission issues, fall back to "sonar".
+    payload = {
+        "model": "sonar",  # try "sonar-deep-research" if your account has access
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 500,
+        "temperature": 0.1
+    }
+
+    timeout = aiohttp.ClientTimeout(total=30, connect=10)
+    backoff = [0.5, 1.5, 3.0]  # simple retry for transient errors
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        for attempt, delay in enumerate([0] + backoff):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                async with session.post(url, headers=headers, json=payload) as resp:
+                    text = await resp.text()
+                    if resp.status == 200:
+                        data = json.loads(text)
+                        analysis_text = data["choices"][0]["message"]["content"]
+                        effect = "Neutral"
+                        lt = analysis_text.lower()
+                        if "bullish" in lt:
+                            effect = "Bullish"
+                        elif "bearish" in lt:
+                            effect = "Bearish"
+
+                        analysis = {
+                            "effect": effect,
+                            "currencies_impacted": "Multiple",
+                            "currency_pairs": "Major pairs",
+                            "full_analysis": analysis_text
+                        }
+                        return NewsAnalysis(
+                            headline=news_item.headline,
+                            forecast=news_item.forecast,
+                            previous=news_item.previous,
+                            actual=news_item.actual,
+                            currency=news_item.currency,
+                            time=news_item.time,
+                            analysis=analysis,
+                            analyzed_at=datetime.now(timezone.utc)
+                        )
+                    elif resp.status in (429, 500, 502, 503, 504) and attempt < len(backoff):
+                        # retry on transient errors
+                        continue
+                    else:
+                        # useful server message for debugging
+                        raise RuntimeError(f"Perplexity API {resp.status}: {text}")
+            except asyncio.TimeoutError:
+                if attempt >= len(backoff):
+                    raise
+                continue
+
+async def update_news_cache():
+    """Update the global news cache with fresh data"""
+    global global_news_cache, news_cache_metadata
+    
+    if news_cache_metadata["is_updating"]:
+        print("📰 News update already in progress, skipping...")
+        return
+    
+    try:
+        news_cache_metadata["is_updating"] = True
+        print("📰 Starting news cache update...")
+        
+        # Fetch news from Jblanked API
+        news_items = await fetch_jblanked_news()
+        if not news_items:
+            print("⚠️ No news items fetched, keeping existing cache")
+            return
+        
+        # Analyze each news item
+        analyzed_news = []
+        for news_item in news_items:
+            try:
+                # Add timeout for each news analysis
+                analysis = await asyncio.wait_for(
+                    analyze_news_with_perplexity(news_item), 
+                    timeout=60.0  # 60 seconds per news item
+                )
+                if analysis:
+                    analyzed_news.append(analysis)
+                # Small delay to respect API rate limits
+                await asyncio.sleep(0.1)
+            except asyncio.TimeoutError:
+                print(f"⏰ Timeout analyzing news: {news_item.headline[:50]}...")
+                continue
+            except Exception as e:
+                print(f"❌ Error analyzing news: {news_item.headline[:50]}... Error: {e}")
+                continue
+        
+        if analyzed_news:
+            global_news_cache = analyzed_news[:NEWS_CACHE_MAX_ITEMS]
+            news_cache_metadata["last_updated"] = datetime.now(timezone.utc)
+            news_cache_metadata["next_update_time"] = datetime.now(timezone.utc) + timedelta(hours=NEWS_UPDATE_INTERVAL_HOURS)
+            
+            print(f"✅ News cache updated: {len(global_news_cache)} items")
+            print(f"⏰ Next update scheduled for: {news_cache_metadata['next_update_time']}")
+        else:
+            print("⚠️ No news analyzed successfully, storing raw news data as fallback")
+            # Fallback: store raw news data without AI analysis
+            raw_news = []
+            for news_item in news_items:
+                raw_analysis = NewsAnalysis(
+                    headline=news_item.headline,
+                    forecast=news_item.forecast,
+                    previous=news_item.previous,
+                    actual=news_item.actual,
+                    currency=news_item.currency,
+                    time=news_item.time,
+                    analysis={
+                        "effect": "Unknown",
+                        "currencies_impacted": "Unknown",
+                        "currency_pairs": "Unknown",
+                        "full_analysis": "AI analysis failed - raw data only"
+                    },
+                    analyzed_at=datetime.now(timezone.utc)
+                )
+                raw_news.append(raw_analysis)
+            
+            global_news_cache = raw_news[:NEWS_CACHE_MAX_ITEMS]
+            news_cache_metadata["last_updated"] = datetime.now(timezone.utc)
+            news_cache_metadata["next_update_time"] = datetime.now(timezone.utc) + timedelta(hours=NEWS_UPDATE_INTERVAL_HOURS)
+            
+            print(f"✅ News cache updated with raw data: {len(global_news_cache)} items")
+            print(f"⏰ Next update scheduled for: {news_cache_metadata['next_update_time']}")
+            print("💡 Tip: Check Perplexity API key and run test_perplexity_auth.py to debug authentication")
+            
+    except Exception as e:
+        print(f"❌ Error updating news cache: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        news_cache_metadata["is_updating"] = False
+
+async def news_scheduler():
+    """Background task to schedule news updates every 24 hours"""
+    while True:
+        try:
+            current_time = datetime.now(timezone.utc)
+            
+            # Check if we need to update
+            if (news_cache_metadata["next_update_time"] is None or 
+                current_time >= news_cache_metadata["next_update_time"]):
+                await update_news_cache()
+            
+            # Wait for 1 hour before checking again
+            await asyncio.sleep(3600)  # 1 hour
+            
+        except Exception as e:
+            print(f"❌ Error in news scheduler: {e}")
+            await asyncio.sleep(3600)  # Wait 1 hour before retrying
+
 @app.get("/health")
 def health():
     v = mt5.version()
@@ -372,6 +716,25 @@ def search_symbols(q: str = Query(..., min_length=1), x_api_key: Optional[str] =
             if len(res) >= 50:
                 break
     return {"results": res}
+
+@app.get("/api/news/analysis")
+def get_news_analysis(x_api_key: Optional[str] = Depends(require_api_token_header)):
+    """Get all cached news analysis data"""
+    global global_news_cache, news_cache_metadata
+    
+    return {
+        "news_count": len(global_news_cache),
+        "last_updated": news_cache_metadata["last_updated"],
+        "next_update": news_cache_metadata["next_update_time"],
+        "is_updating": news_cache_metadata["is_updating"],
+        "data": [news.model_dump() for news in global_news_cache]
+    }
+
+@app.post("/api/news/refresh")
+async def refresh_news_manual(x_api_key: Optional[str] = Depends(require_api_token_header)):
+    """Manually trigger news refresh (for testing)"""
+    await update_news_cache()
+    return {"message": "News refresh triggered", "status": "success"}
 
 class WSClient:
     def __init__(self, websocket: WebSocket, token: str):
@@ -711,13 +1074,18 @@ if __name__ == "__main__":
     print("   - WebSocket (new): ws://localhost:8000/ws/market")
     print("   - WebSocket (legacy): ws://localhost:8000/ws/ticks")
     print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=1M&count=100")
+    print("   - News Analysis: GET /api/news/analysis")
+    print("   - News Refresh: POST /api/news/refresh")
     print("   - Health check: GET /health")
     print("")
     print("📋 Supported timeframes: 1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W")
     print("📋 Supported data types: ticks, ohlc")
+    print("📰 News analysis: Auto-updates every 24 hours via Jblanked API + Perplexity AI (sonar-deep-research)")
+    print("🔧 Test news: python test_news_simple.py")
+    print("🔑 Test Perplexity auth: python test_perplexity_auth.py")
     print("")
     
     _install_sigterm_handler(asyncio.get_event_loop())
-    host = os.environ.get("HOST", "127.0.0.2")
-    port = int(os.environ.get("PORT", "8080"))
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8000"))
     uvicorn.run("server:app", host=host, port=port, reload=False, server_header=False, date_header=False)
