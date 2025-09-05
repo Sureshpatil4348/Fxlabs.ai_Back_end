@@ -43,12 +43,7 @@ async def lifespan(app: FastAPI):
     print(f"MT5 initialized. Version: {v}", flush=True)
     
     # Initialize news cache and start scheduler
-    print("📰 Initializing news analysis system...")
-    print(f"🔑 Perplexity API Key: {PERPLEXITY_API_KEY[:10]}...")
-    print(f"🔑 Jblanked API Key: {JBLANKED_API_KEY}")
-    news_task = asyncio.create_task(news_scheduler())
-    print("📰 News scheduler started")
-    
+    news_task = asyncio.create_task(news_scheduler())    
     yield
     
     # Shutdown
@@ -164,7 +159,6 @@ def ensure_symbol_selected(symbol: str) -> None:
         if all_symbols:
             # Show first few available symbols for debugging
             sample_symbols = [s.name for s in all_symbols[:10]]
-            print(f"Available symbols (first 10): {sample_symbols}")
             
             # Check if there's a case sensitivity issue
             upper_symbol = symbol.upper()
@@ -243,7 +237,6 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
 
 def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 100) -> List[OHLC]:
     """Get OHLC data from MT5"""
-    print(f"📊 Fetching OHLC: {symbol} {timeframe.value} x{count}")
     
     ensure_symbol_selected(symbol)
     
@@ -258,7 +251,6 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 100) -> List[O
         print(f"⚠️ No rates from MT5 for {symbol}")
         return []
     
-    print(f"📊 Got {len(rates)} rates from MT5")
     
     # Convert to OHLC objects
     ohlc_data = []
@@ -267,7 +259,6 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 100) -> List[O
         if ohlc:
             ohlc_data.append(ohlc)
     
-    print(f"📊 Converted to {len(ohlc_data)} OHLC bars")
     return ohlc_data
 
 def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
@@ -370,13 +361,11 @@ def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 100) -> List
     
     # Return cached data
     cached_data = list(global_ohlc_cache[symbol][timeframe.value])
-    print(f"📦 Cache hit: {symbol} {timeframe.value} ({len(cached_data)} bars)")
     return cached_data
 
 async def fetch_jblanked_news() -> List[NewsItem]:
     """Fetch news data from Jblanked API"""
     try:
-        print("📰 Fetching news from Jblanked API...")
         headers = {
             "Authorization": f"Api-Key {JBLANKED_API_KEY}",
             "Content-Type": "application/json"
@@ -386,8 +375,6 @@ async def fetch_jblanked_news() -> List[NewsItem]:
             async with session.get(JBLANKED_API_URL, headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
-                    print(f"📰 Raw API response type: {type(data)}")
-                    print(f"📰 Raw API response: {data}")
                     news_items = []
                     
                     # Handle different response formats
@@ -406,13 +393,10 @@ async def fetch_jblanked_news() -> List[NewsItem]:
                                     items = value
                                     break
                     
-                    print(f"📰 Processing {len(items) if items else 0} items from response")
                     
                     # Process the API response
                     for item in items:
                         if isinstance(item, dict):
-                            print(f"📰 Processing item: {item}")
-                            print(f"📰 Available fields: {list(item.keys())}")
                             
                             # Extract fields with debugging
                             headline = item.get('Name', '') or item.get('title', '') or item.get('headline', '') or item.get('name', '')
@@ -457,13 +441,6 @@ async def fetch_jblanked_news() -> List[NewsItem]:
                             if time == '':
                                 time = None
                             
-                            print(f"📰 Mapped fields:")
-                            print(f"   Headline: '{headline}'")
-                            print(f"   Forecast: '{forecast}'")
-                            print(f"   Previous: '{previous}'")
-                            print(f"   Actual: '{actual}'")
-                            print(f"   Currency: '{currency}'")
-                            print(f"   Time: '{time}'")
                             
                             news_item = NewsItem(
                                 headline=headline,
@@ -476,7 +453,6 @@ async def fetch_jblanked_news() -> List[NewsItem]:
                             )
                             news_items.append(news_item)
                     
-                    print(f"📰 Fetched {len(news_items)} news items from Jblanked API")
                     return news_items
                 else:
                     print(f"❌ Jblanked API error: {response.status}")
@@ -578,7 +554,6 @@ async def update_news_cache():
     
     try:
         news_cache_metadata["is_updating"] = True
-        print("📰 Starting news cache update...")
         
         # Fetch news from Jblanked API
         news_items = await fetch_jblanked_news()
@@ -611,7 +586,6 @@ async def update_news_cache():
             news_cache_metadata["last_updated"] = datetime.now(timezone.utc)
             news_cache_metadata["next_update_time"] = datetime.now(timezone.utc) + timedelta(hours=NEWS_UPDATE_INTERVAL_HOURS)
             
-            print(f"✅ News cache updated: {len(global_news_cache)} items")
             print(f"⏰ Next update scheduled for: {news_cache_metadata['next_update_time']}")
         else:
             print("⚠️ No news analyzed successfully, storing raw news data as fallback")
@@ -641,7 +615,6 @@ async def update_news_cache():
             
             print(f"✅ News cache updated with raw data: {len(global_news_cache)} items")
             print(f"⏰ Next update scheduled for: {news_cache_metadata['next_update_time']}")
-            print("💡 Tip: Check Perplexity API key and run test_perplexity_auth.py to debug authentication")
             
     except Exception as e:
         print(f"❌ Error updating news cache: {e}")
@@ -894,9 +867,7 @@ class WSClient:
                 # Send initial OHLC data if requested
                 if "ohlc" in data_types:
                     try:
-                        print(f"📊 Fetching initial OHLC data for {symbol} ({timeframe})")
                         ohlc_data = get_cached_ohlc(symbol, tf, 100)
-                        print(f"📊 Got {len(ohlc_data) if ohlc_data else 0} OHLC bars for {symbol}")
                         
                         if ohlc_data:
                             await self.websocket.send_json({
@@ -905,7 +876,6 @@ class WSClient:
                                 "timeframe": timeframe,
                                 "data": [ohlc.model_dump() for ohlc in ohlc_data]
                             })
-                            print(f"✅ Sent initial OHLC data for {symbol}: {len(ohlc_data)} bars")
                         else:
                             print(f"⚠️ No OHLC data available for {symbol}")
                         
@@ -913,7 +883,6 @@ class WSClient:
                         self.next_ohlc_updates[symbol] = calculate_next_update_time(
                             sub_info.subscription_time, tf
                         )
-                        print(f"⏰ Scheduled next OHLC update for {symbol} at {self.next_ohlc_updates[symbol]}")
                         
                     except Exception as e:
                         print(f"❌ Error getting initial OHLC for {symbol}: {e}")
@@ -976,7 +945,6 @@ class WSClient:
 @app.websocket("/ws/ticks")
 async def ws_ticks_legacy(websocket: WebSocket):
     """Legacy WebSocket endpoint for tick-only streaming"""
-    print("🔌 Legacy WebSocket connection attempt received")
     client = None
     
     try:
@@ -1007,12 +975,10 @@ async def ws_ticks_legacy(websocket: WebSocket):
 
 @app.websocket("/ws/market")
 async def ws_market(websocket: WebSocket):
-    print("🔌 WebSocket connection attempt received")
     client = None
     
     try:
         await websocket.accept()
-        print("✅ WebSocket connection accepted")
         
         # Send a welcome message
         await websocket.send_json({
@@ -1021,21 +987,17 @@ async def ws_market(websocket: WebSocket):
             "supported_timeframes": [tf.value for tf in Timeframe],
             "supported_data_types": ["ticks", "ohlc"]
         })
-        print("📤 Sent welcome message")
         
         # Create WSClient for real MT5 data
         client = WSClient(websocket, "")
         await client.start()
-        print("📊 WSClient started with MT5 integration")
         
         # Handle incoming messages
         while True:
             data = await websocket.receive_text()
-            print(f"📥 Received: {data}")
             
             try:
                 message = orjson.loads(data)
-                print(f"📋 Parsed message: {message}")
                 await client.handle_message(message)
                 
             except Exception as parse_error:
@@ -1043,13 +1005,12 @@ async def ws_market(websocket: WebSocket):
                 await websocket.send_json({"type": "error", "error": str(parse_error)})
                 
     except WebSocketDisconnect:
-        print("🔌 WebSocket disconnected normally")
+        print("Websocket Disconnected")
     except Exception as e:
         print(f"❌ WebSocket error: {e}")
         import traceback
         traceback.print_exc()
     finally:
-        print("🧹 Cleaning up WSClient...")
         if client:
             await client.stop()
 
@@ -1077,13 +1038,6 @@ if __name__ == "__main__":
     print("   - News Analysis: GET /api/news/analysis")
     print("   - News Refresh: POST /api/news/refresh")
     print("   - Health check: GET /health")
-    print("")
-    print("📋 Supported timeframes: 1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W")
-    print("📋 Supported data types: ticks, ohlc")
-    print("📰 News analysis: Auto-updates every 24 hours via Jblanked API + Perplexity AI (sonar-deep-research)")
-    print("🔧 Test news: python test_news_simple.py")
-    print("🔑 Test Perplexity auth: python test_perplexity_auth.py")
-    print("")
     
     _install_sigterm_handler(asyncio.get_event_loop())
     host = os.environ.get("HOST", "127.0.0.1")
