@@ -2,32 +2,32 @@ import asyncio
 import os
 import signal
 import sys
-from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
-from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
-import aiohttp
-import asyncio
 
 import MetaTrader5 as mt5
 import orjson
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import json
 
-# Config via environment variables
-API_TOKEN = os.environ.get("API_TOKEN", "")
-ALLOWED_ORIGINS = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
-MT5_TERMINAL_PATH = os.environ.get("MT5_TERMINAL_PATH", "")
-
-# News analysis configuration
-PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "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")
-JBLANKED_API_URL = os.environ.get("JBLANKED_API_URL", "https://www.jblanked.com/news/api/forex-factory/calendar/today/")
-JBLANKED_API_KEY = os.environ.get("JBLANKED_API_KEY", "32FEvnEZ")
-NEWS_UPDATE_INTERVAL_HOURS = int(os.environ.get("NEWS_UPDATE_INTERVAL_HOURS", "24"))
-NEWS_CACHE_MAX_ITEMS = int(os.environ.get("NEWS_CACHE_MAX_ITEMS", "100"))
+from app.config import (
+    API_TOKEN,
+    ALLOWED_ORIGINS,
+    MT5_TERMINAL_PATH,
+)
+import app.news as news
+from app.models import Timeframe, Tick, OHLC, SubscriptionInfo, NewsItem, NewsAnalysis
+from app.mt5_utils import (
+    MT5_TIMEFRAMES,
+    ensure_symbol_selected,
+    _to_tick,
+    get_ohlc_data,
+    get_current_ohlc,
+    calculate_next_update_time,
+    update_ohlc_cache,
+    get_cached_ohlc,
+)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     print(f"MT5 initialized. Version: {v}", flush=True)
     
     # Initialize news cache and start scheduler
-    news_task = asyncio.create_task(news_scheduler())    
+    news_task = asyncio.create_task(news.news_scheduler())    
     yield
     
     # Shutdown
@@ -64,133 +64,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+"""Models are defined in app.models"""
 
-class Timeframe(str, Enum):
-    M1 = "1M"
-    M5 = "5M"
-    M15 = "15M"
-    M30 = "30M"
-    H1 = "1H"
-    H4 = "4H"
-    D1 = "1D"
-    W1 = "1W"
+"""OHLC model is imported from app.models"""
 
-# MT5 timeframe mapping
-MT5_TIMEFRAMES = {
-    Timeframe.M1: mt5.TIMEFRAME_M1,
-    Timeframe.M5: mt5.TIMEFRAME_M5,
-    Timeframe.M15: mt5.TIMEFRAME_M15,
-    Timeframe.M30: mt5.TIMEFRAME_M30,
-    Timeframe.H1: mt5.TIMEFRAME_H1,
-    Timeframe.H4: mt5.TIMEFRAME_H4,
-    Timeframe.D1: mt5.TIMEFRAME_D1,
-    Timeframe.W1: mt5.TIMEFRAME_W1,
-}
+"""SubscriptionInfo model is imported from app.models"""
 
-class Tick(BaseModel):
-    symbol: str
-    time: int              # epoch ms
-    time_iso: str
-    bid: Optional[float] = None
-    ask: Optional[float] = None
-    last: Optional[float] = None
-    volume: Optional[float] = None
-    flags: Optional[int] = None
+"""NewsItem model is imported from app.models"""
 
-class OHLC(BaseModel):
-    symbol: str
-    timeframe: str
-    time: int              # epoch ms
-    time_iso: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: Optional[float] = None
-
-class SubscriptionInfo(BaseModel):
-    symbol: str
-    timeframe: Timeframe
-    subscription_time: datetime
-    data_types: List[str]  # ["ticks", "ohlc"]
-
-class NewsItem(BaseModel):
-    headline: str
-    forecast: Optional[str] = None
-    previous: Optional[str] = None
-    actual: Optional[str] = None
-    currency: Optional[str] = None
-    impact: Optional[str] = None
-    time: Optional[str] = None
-
-class NewsAnalysis(BaseModel):
-    headline: str
-    forecast: Optional[str] = None
-    previous: Optional[str] = None
-    actual: Optional[str] = None
-    currency: Optional[str] = None
-    time: Optional[str] = None
-    analysis: Dict[str, str]  # AI analysis results
-    analyzed_at: datetime
-
-def _to_tick(symbol: str, info) -> Optional[Tick]:
-    if info is None:
-        return None
-    ts_ms = getattr(info, "time_msc", 0) or int(getattr(info, "time", 0)) * 1000
-    dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
-    return Tick(
-        symbol=symbol,
-        time=ts_ms,
-        time_iso=dt.isoformat(),
-        bid=getattr(info, "bid", None),
-        ask=getattr(info, "ask", None),
-        last=getattr(info, "last", None),
-        volume=getattr(info, "volume_real", None) or getattr(info, "volume", None),
-        flags=getattr(info, "flags", None),
-    )
-
-def ensure_symbol_selected(symbol: str) -> None:
-    # First check if symbol exists at all
-    info = mt5.symbol_info(symbol)
-    
-    if info is None:
-        # Symbol doesn't exist - let's check what symbols are available
-        all_symbols = mt5.symbols_get()
-        if all_symbols:
-            # Show first few available symbols for debugging
-            sample_symbols = [s.name for s in all_symbols[:10]]
-            
-            # Check if there's a case sensitivity issue
-            upper_symbol = symbol.upper()
-            lower_symbol = symbol.lower()
-            
-            # Try to find similar symbols
-            similar_symbols = []
-            for s in all_symbols:
-                s_name = s.name
-                if upper_symbol in s_name.upper() or lower_symbol in s_name.lower():
-                    similar_symbols.append(s_name)
-                    if len(similar_symbols) >= 5:  # Limit to 5 suggestions
-                        break
-            
-            error_detail = f"Unknown symbol: '{symbol}'. "
-            if similar_symbols:
-                error_detail += f"Similar symbols found: {similar_symbols}"
-            else:
-                error_detail += f"Available symbols (first 10): {sample_symbols}"
-            
-            raise HTTPException(status_code=404, detail=error_detail)
-        else:
-            raise HTTPException(status_code=500, detail="No symbols available from MT5 - check connection")
-    
-    # Symbol exists, now try to select it
-    if not mt5.symbol_select(symbol, True):
-        if not info.visible:
-            # Try to make it visible first
-            if not mt5.symbol_select(symbol, True):
-                raise HTTPException(status_code=400, detail=f"Failed to select symbol: {symbol} - symbol exists but cannot be selected")
-        else:
-            raise HTTPException(status_code=400, detail=f"Failed to select symbol: {symbol} - unknown error")
+"""NewsAnalysis model is imported from app.models"""
 
 # Global OHLC cache: {symbol: {timeframe: deque([OHLC_bars])}}
 global_ohlc_cache: Dict[str, Dict[str, deque]] = {}
@@ -693,20 +575,18 @@ def search_symbols(q: str = Query(..., min_length=1), x_api_key: Optional[str] =
 @app.get("/api/news/analysis")
 def get_news_analysis(x_api_key: Optional[str] = Depends(require_api_token_header)):
     """Get all cached news analysis data"""
-    global global_news_cache, news_cache_metadata
-    
     return {
-        "news_count": len(global_news_cache),
-        "last_updated": news_cache_metadata["last_updated"],
-        "next_update": news_cache_metadata["next_update_time"],
-        "is_updating": news_cache_metadata["is_updating"],
-        "data": [news.model_dump() for news in global_news_cache]
+        "news_count": len(news.global_news_cache),
+        "last_updated": news.news_cache_metadata["last_updated"],
+        "next_update": news.news_cache_metadata["next_update_time"],
+        "is_updating": news.news_cache_metadata["is_updating"],
+        "data": [item.model_dump() for item in news.global_news_cache]
     }
 
 @app.post("/api/news/refresh")
 async def refresh_news_manual(x_api_key: Optional[str] = Depends(require_api_token_header)):
     """Manually trigger news refresh (for testing)"""
-    await update_news_cache()
+    await news.update_news_cache()
     return {"message": "News refresh triggered", "status": "success"}
 
 class WSClient:
