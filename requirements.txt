@@ -7,3 +7,4 @@ orjson==3.10.3
 websockets==12.0
 wsproto==1.2.0
 aiohttp==3.9.1
+numpy<2
