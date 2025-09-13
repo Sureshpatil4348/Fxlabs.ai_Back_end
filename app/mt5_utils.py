@@ -93,7 +93,7 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
         return None
 
 
-def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 100) -> List[OHLC]:
+def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[OHLC]:
     ensure_symbol_selected(symbol)
     mt5_timeframe = MT5_TIMEFRAMES.get(timeframe)
     if mt5_timeframe is None:
@@ -164,7 +164,7 @@ def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe
 global_ohlc_cache: Dict[str, Dict[str, deque]] = {}
 
 
-def update_ohlc_cache(symbol: str, timeframe: Timeframe, max_bars: int = 100):
+def update_ohlc_cache(symbol: str, timeframe: Timeframe, max_bars: int = 250):
     global global_ohlc_cache
     if symbol not in global_ohlc_cache:
         global_ohlc_cache[symbol] = {}
@@ -180,7 +180,7 @@ def update_ohlc_cache(symbol: str, timeframe: Timeframe, max_bars: int = 100):
         cache[-1] = current_ohlc
 
 
-def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 100) -> List[OHLC]:
+def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 250) -> List[OHLC]:
     global global_ohlc_cache
     if symbol not in global_ohlc_cache:
         global_ohlc_cache[symbol] = {}

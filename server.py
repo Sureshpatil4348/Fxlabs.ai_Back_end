@@ -118,7 +118,7 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
         print(f"Rate data: {rate_data}")
         return None
 
-def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 100) -> List[OHLC]:
+def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[OHLC]:
     """Get OHLC data from MT5"""
     
     ensure_symbol_selected(symbol)
@@ -534,7 +534,7 @@ def test_websocket():
     return {"message": "WebSocket endpoint available at /ws/market"}
 
 @app.get("/api/ohlc/{symbol}")
-def get_ohlc(symbol: str, timeframe: str = Query("1M"), count: int = Query(100, le=500), x_api_key: Optional[str] = Depends(require_api_token_header)):
+def get_ohlc(symbol: str, timeframe: str = Query("1M"), count: int = Query(250, le=500), x_api_key: Optional[str] = Depends(require_api_token_header)):
     """Get OHLC data for a symbol and timeframe"""
     try:
         tf = Timeframe(timeframe)
@@ -748,7 +748,7 @@ class WSClient:
                 # Send initial OHLC data if requested
                 if "ohlc" in data_types:
                     try:
-                        ohlc_data = get_cached_ohlc(symbol, tf, 100)
+                        ohlc_data = get_cached_ohlc(symbol, tf, 250)
                         
                         if ohlc_data:
                             await self.websocket.send_json({
