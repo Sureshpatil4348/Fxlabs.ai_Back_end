@@ -105,6 +105,56 @@ news_cache_metadata: Dict[str, any] = {
 }
 
 
+def _split_headline(headline: Optional[str]) -> tuple:
+    """Return (base, outcome, quality) from an augmented headline.
+
+    Format: base (+ optional " (Outcome)") (+ optional " - Quality").
+    """
+    if not headline:
+        return "", None, None
+    base = headline.strip()
+    quality = None
+    outcome = None
+    if " - " in base:
+        base, quality = base.rsplit(" - ", 1)
+        base = base.strip()
+        quality = quality.strip() if quality is not None else None
+    if base.endswith(")") and "(" in base:
+        open_idx = base.rfind("(")
+        close_idx = base.rfind(")")
+        if open_idx != -1 and close_idx == len(base) - 1 and open_idx < close_idx:
+            outcome = base[open_idx + 1:close_idx].strip()
+            base = base[:open_idx].rstrip()
+    return base, outcome, quality
+
+
+def _make_dedup_key_from_item(item: NewsItem) -> Optional[tuple]:
+    currency = (item.currency or "").strip()
+    time_iso = (item.time or "").strip()
+    base, _, _ = _split_headline(item.headline)
+    if not currency or not time_iso or not base:
+        return None
+    return (currency, time_iso, base)
+
+
+def _make_dedup_key_from_analysis(analysis: NewsAnalysis) -> Optional[tuple]:
+    currency = (analysis.currency or "").strip()
+    time_iso = (analysis.time or "").strip()
+    base, _, _ = _split_headline(analysis.headline)
+    if not currency or not time_iso or not base:
+        return None
+    return (currency, time_iso, base)
+
+
+def _iso_to_dt(time_iso: Optional[str]) -> datetime:
+    if not time_iso:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+    try:
+        return datetime.fromisoformat(time_iso.replace("Z", "+00:00"))
+    except Exception:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
 async def fetch_jblanked_news() -> List[NewsItem]:
     try:
         print("📰 [fetch] Starting Jblanked fetch...")
@@ -285,52 +335,140 @@ async def update_news_cache():
         if not news_items:
             print("⚠️ [update] No news items fetched, keeping existing cache")
             return
-        analyzed_news = []
+        # Build map of existing items for dedup
+        existing_map: Dict[tuple, int] = {}
+        for i, existing in enumerate(global_news_cache):
+            k = _make_dedup_key_from_analysis(existing)
+            if k is not None:
+                existing_map[k] = i
+
+        updated_cache = list(global_news_cache)
+
         for idx, news_item in enumerate(news_items, start=1):
-            try:
-                print(f"🗞️ [update] Analyzing item {idx}/{len(news_items)}")
-                analysis = await asyncio.wait_for(analyze_news_with_perplexity(news_item), timeout=60.0)
-                if analysis:
-                    analyzed_news.append(analysis)
-                    print(f"🗞️ [update] Analysis OK for item {idx}")
-                await asyncio.sleep(0.1)
-            except asyncio.TimeoutError:
-                print(f"⏰ [update] Timeout analyzing news: {news_item.headline[:50]}...")
+            key = _make_dedup_key_from_item(news_item)
+            if key is None:
+                print(f"⚠️ [update] Skipping item {idx}: insufficient data for dedup (currency/time/base) -> '{(news_item.headline or '')[:60]}'")
                 continue
-            except Exception as e:
-                print(f"❌ [update] Error analyzing news: {news_item.headline[:50]}... Error: {e}")
-                continue
-        if analyzed_news:
-            global_news_cache = analyzed_news[:NEWS_CACHE_MAX_ITEMS]
-            news_cache_metadata["last_updated"] = datetime.now(timezone.utc)
-            news_cache_metadata["next_update_time"] = datetime.now(timezone.utc) + timedelta(hours=NEWS_UPDATE_INTERVAL_HOURS)
-            print(f"✅ [update] Cached analyzed items: {len(global_news_cache)} (max {NEWS_CACHE_MAX_ITEMS})")
-            print(f"⏰ [update] Next update scheduled for: {news_cache_metadata['next_update_time']}")
-        else:
-            print("⚠️ [update] No news analyzed successfully, storing raw news data as fallback")
-            raw_news = []
-            for news_item in news_items:
-                raw_analysis = NewsAnalysis(
-                    headline=news_item.headline,
-                    forecast=news_item.forecast,
-                    previous=news_item.previous,
-                    actual=news_item.actual,
-                    currency=news_item.currency,
-                    time=news_item.time,
-                    analysis={
-                        "effect": "Unknown",
-                        "currencies_impacted": "Unknown",
-                        "currency_pairs": "Unknown",
-                        "full_analysis": "AI analysis failed - raw data only",
-                    },
-                    analyzed_at=datetime.now(timezone.utc),
-                )
-                raw_news.append(raw_analysis)
-            global_news_cache = raw_news[:NEWS_CACHE_MAX_ITEMS]
-            news_cache_metadata["last_updated"] = datetime.now(timezone.utc)
-            news_cache_metadata["next_update_time"] = datetime.now(timezone.utc) + timedelta(hours=NEWS_UPDATE_INTERVAL_HOURS)
-            print(f"✅ [update] News cache updated with raw data: {len(global_news_cache)} items")
-            print(f"⏰ [update] Next update scheduled for: {news_cache_metadata['next_update_time']}")
+
+            if key in existing_map:
+                cached = updated_cache[existing_map[key]]
+                cached_base, cached_outcome, cached_quality = _split_headline(cached.headline)
+                item_base, item_outcome, item_quality = _split_headline(news_item.headline)
+                changed = False
+                if (cached.actual or None) != (news_item.actual or None):
+                    changed = True
+                if (cached_outcome or None) != (item_outcome or None):
+                    changed = True
+                if (cached_quality or None) != (item_quality or None):
+                    changed = True
+                if changed:
+                    try:
+                        print(f"♻️ [update] Refreshing analysis for existing item: '{item_base[:60]}' @ {news_item.time}")
+                        analysis = await asyncio.wait_for(analyze_news_with_perplexity(news_item), timeout=60.0)
+                        if analysis:
+                            updated_cache[existing_map[key]] = analysis
+                            print("✅ [update] Refreshed analysis")
+                        else:
+                            updated_cache[existing_map[key]] = NewsAnalysis(
+                                headline=news_item.headline,
+                                forecast=news_item.forecast,
+                                previous=news_item.previous,
+                                actual=news_item.actual,
+                                currency=news_item.currency,
+                                time=news_item.time,
+                                analysis={
+                                    "effect": "Unknown",
+                                    "currencies_impacted": "Unknown",
+                                    "currency_pairs": "Unknown",
+                                    "full_analysis": "AI analysis failed - raw data only",
+                                },
+                                analyzed_at=datetime.now(timezone.utc),
+                            )
+                            print("⚠️ [update] Analysis returned None, stored raw entry")
+                    except asyncio.TimeoutError:
+                        print(f"⏰ [update] Timeout refreshing analysis: {news_item.headline[:50]}...")
+                    except Exception as e:
+                        print(f"❌ [update] Error refreshing analysis: {e}")
+                else:
+                    print(f"➡️ [update] Duplicate unchanged, keeping cached analysis: '{item_base[:60]}' @ {news_item.time}")
+            else:
+                try:
+                    print(f"🆕 [update] Analyzing NEW item {idx}/{len(news_items)}")
+                    analysis = await asyncio.wait_for(analyze_news_with_perplexity(news_item), timeout=60.0)
+                    if analysis:
+                        updated_cache.append(analysis)
+                        existing_map[key] = len(updated_cache) - 1
+                        print("✅ [update] Added analyzed item")
+                    else:
+                        updated_cache.append(NewsAnalysis(
+                            headline=news_item.headline,
+                            forecast=news_item.forecast,
+                            previous=news_item.previous,
+                            actual=news_item.actual,
+                            currency=news_item.currency,
+                            time=news_item.time,
+                            analysis={
+                                "effect": "Unknown",
+                                "currencies_impacted": "Unknown",
+                                "currency_pairs": "Unknown",
+                                "full_analysis": "AI analysis failed - raw data only",
+                            },
+                            analyzed_at=datetime.now(timezone.utc),
+                        ))
+                        existing_map[key] = len(updated_cache) - 1
+                        print("⚠️ [update] Analysis None, stored raw entry")
+                    await asyncio.sleep(0.1)
+                except asyncio.TimeoutError:
+                    print(f"⏰ [update] Timeout analyzing new item: {news_item.headline[:50]}...")
+                    updated_cache.append(NewsAnalysis(
+                        headline=news_item.headline,
+                        forecast=news_item.forecast,
+                        previous=news_item.previous,
+                        actual=news_item.actual,
+                        currency=news_item.currency,
+                        time=news_item.time,
+                        analysis={
+                            "effect": "Unknown",
+                            "currencies_impacted": "Unknown",
+                            "currency_pairs": "Unknown",
+                            "full_analysis": "AI analysis failed - raw data only",
+                        },
+                        analyzed_at=datetime.now(timezone.utc),
+                    ))
+                    existing_map[key] = len(updated_cache) - 1
+                    print("⚠️ [update] Stored raw entry on timeout")
+                except Exception as e:
+                    print(f"❌ [update] Error analyzing new item: {e}")
+                    updated_cache.append(NewsAnalysis(
+                        headline=news_item.headline,
+                        forecast=news_item.forecast,
+                        previous=news_item.previous,
+                        actual=news_item.actual,
+                        currency=news_item.currency,
+                        time=news_item.time,
+                        analysis={
+                            "effect": "Unknown",
+                            "currencies_impacted": "Unknown",
+                            "currency_pairs": "Unknown",
+                            "full_analysis": "AI analysis failed - raw data only",
+                        },
+                        analyzed_at=datetime.now(timezone.utc),
+                    ))
+                    existing_map[key] = len(updated_cache) - 1
+                    print("⚠️ [update] Stored raw entry on error")
+
+        # Sort cache by time desc and trim
+        updated_cache.sort(key=lambda x: _iso_to_dt(x.time), reverse=True)
+        if len(updated_cache) > NEWS_CACHE_MAX_ITEMS:
+            removed = len(updated_cache) - NEWS_CACHE_MAX_ITEMS
+            print(f"🧹 [update] Trimming cache by removing {removed} oldest items")
+            updated_cache = updated_cache[:NEWS_CACHE_MAX_ITEMS]
+
+        global_news_cache = updated_cache
+        news_cache_metadata["last_updated"] = datetime.now(timezone.utc)
+        news_cache_metadata["next_update_time"] = datetime.now(timezone.utc) + timedelta(hours=NEWS_UPDATE_INTERVAL_HOURS)
+        print(f"✅ [update] Cache size now: {len(global_news_cache)} (max {NEWS_CACHE_MAX_ITEMS})")
+        print(f"⏰ [update] Next update scheduled for: {news_cache_metadata['next_update_time']}")
     except Exception as e:
         print(f"❌ [update] Error updating news cache: {e}")
         import traceback
