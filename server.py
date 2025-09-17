@@ -393,12 +393,12 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                     if resp.status == 200:
                         data = json.loads(text)
                         analysis_text = data["choices"][0]["message"]["content"]
-                        effect = "Neutral"
                         lt = analysis_text.lower()
+                        effect = "neutral"
                         if "bullish" in lt:
-                            effect = "Bullish"
+                            effect = "bullish"
                         elif "bearish" in lt:
-                            effect = "Bearish"
+                            effect = "bearish"
                         # Derive impact (high/medium/low) from AI response
                         impact_value = "unknown"
                         if any(kw in lt for kw in ["high impact", "significant", "strong impact", "highly volatile", "highly impactful"]):
@@ -490,7 +490,7 @@ async def update_news_cache():
                     currency=news_item.currency,
                     time=news_item.time,
                     analysis={
-                        "effect": "Unknown",
+                        "effect": "unknown",
                         "impact": "unknown",
                         "full_analysis": "AI analysis failed - raw data only"
                     },

@@ -373,7 +373,7 @@ Each item in `data` contains:
   "currency": "AUD",
   "time": "2025-09-18T01:30:00Z",
   "analysis": {
-    "effect": "Bearish",
+    "effect": "bearish",
     "impact": "high",
     "full_analysis": "... concise AI explanation ..."
   },
@@ -382,7 +382,7 @@ Each item in `data` contains:
 ```
 
 Notes:
-- `analysis.effect`: Bullish | Bearish | Neutral
+- `analysis.effect`: bullish | bearish | neutral (lowercase)
 - `analysis.impact`: high | medium | low (lowercase); may be `unknown` if not inferable
 - Removed fields: `currencies_impacted`, `currency_pairs`
 
