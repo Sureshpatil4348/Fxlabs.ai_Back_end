@@ -355,10 +355,10 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
         f"Forecast: {news_item.forecast or 'N/A'}\n"
         f"Previous: {news_item.previous or 'N/A'}\n"
         f"Actual: {news_item.actual or 'N/A'}\n"
-        "Provide:\n"
+        "Provide only:\n"
         "1. Expected effect (Bullish, Bearish, Neutral).\n"
-        "2. Which currencies are most impacted.\n"
-        "3. Suggested currency pairs to monitor."
+        "2. Impact level (High, Medium, Low).\n"
+        "3. A concise explanation (1-2 sentences)."
     )
 
     # 🔒 Required auth header & stable endpoint
@@ -399,11 +399,18 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                             effect = "Bullish"
                         elif "bearish" in lt:
                             effect = "Bearish"
+                        # Derive impact (high/medium/low) from AI response
+                        impact_value = "unknown"
+                        if any(kw in lt for kw in ["high impact", "significant", "strong impact", "highly volatile", "highly impactful"]):
+                            impact_value = "high"
+                        elif any(kw in lt for kw in ["medium impact", "moderate", "moderately"]):
+                            impact_value = "medium"
+                        elif any(kw in lt for kw in ["low impact", "minor", "limited", "low volatility"]):
+                            impact_value = "low"
 
                         analysis = {
                             "effect": effect,
-                            "currencies_impacted": "Multiple",
-                            "currency_pairs": "Major pairs",
+                            "impact": impact_value,
                             "full_analysis": analysis_text
                         }
                         return NewsAnalysis(
@@ -484,8 +491,7 @@ async def update_news_cache():
                     time=news_item.time,
                     analysis={
                         "effect": "Unknown",
-                        "currencies_impacted": "Unknown",
-                        "currency_pairs": "Unknown",
+                        "impact": "unknown",
                         "full_analysis": "AI analysis failed - raw data only"
                     },
                     analyzed_at=datetime.now(timezone.utc)
