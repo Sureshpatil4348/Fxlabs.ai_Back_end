@@ -23,7 +23,7 @@ A high-performance, real-time financial market data streaming service built with
 
 - **Real-time Data Streaming**: Live tick and OHLC data via WebSocket
 - **Historical Data Access**: REST API for historical market data
-- **AI-Powered News Analysis**: Automated economic news impact analysis
+- **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Intelligent Caching**: Memory-efficient selective data caching
 - **High Performance**: 99.9% bandwidth reduction through selective streaming
 - **Scalable Architecture**: Async/await design for high concurrency
@@ -387,7 +387,7 @@ Notes:
 - Removed fields: `currencies_impacted`, `currency_pairs`
 
 Model behavior:
-- The AI prompt requests a strict JSON-only reply to avoid ambiguity:
+- The AI prompt requests a strict JSON-only reply to avoid ambiguity, and instructs the model to use live internet search to validate context:
   ```json
   {
     "effect": "bullish|bearish|neutral",
