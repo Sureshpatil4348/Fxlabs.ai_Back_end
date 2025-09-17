@@ -259,6 +259,7 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
     # Ask Perplexity to respond with a strict JSON payload to avoid ambiguous wording
     prompt = (
         "Analyze the following economic news for Forex trading impact.\n"
+        f"Currency: {news_item.currency}\n"
         f"News: {news_item.headline}\n"
         f"Time: {news_item.time or 'N/A'}\n"
         f"Forecast: {news_item.forecast or 'N/A'}\n"
