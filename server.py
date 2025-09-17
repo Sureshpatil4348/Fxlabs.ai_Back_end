@@ -487,7 +487,7 @@ async def update_news_cache():
         else:
             print("⚠️ No news analyzed successfully, storing raw news data as fallback")
             # Fallback: store raw news data without AI analysis
-                    raw_news = []
+            raw_news = []
             for news_item in news_items:
                 raw_analysis = NewsAnalysis(
                     headline=news_item.headline,
