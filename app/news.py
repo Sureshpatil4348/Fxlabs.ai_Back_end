@@ -15,6 +15,72 @@ from .config import (
 from .models import NewsAnalysis, NewsItem
 
 
+def _to_utc_iso8601(time_value) -> Optional[str]:
+    """Convert various upstream time formats (UTC+3 by default) to UTC ISO 8601 (Z).
+
+    Behavior:
+    - If aware (has tzinfo), convert to UTC.
+    - If naive (no tz), assume UTC+3 and convert to UTC.
+    - If numeric, treat as Unix epoch (seconds or ms) in UTC.
+    Returns ISO string with 'Z' suffix, or None if parsing fails/empty.
+    """
+    try:
+        if time_value is None:
+            return None
+        # Handle numeric timestamps (epoch seconds or milliseconds)
+        if isinstance(time_value, (int, float)):
+            ts = float(time_value)
+            # Heuristic: > 10^12 implies milliseconds
+            if ts > 1_000_000_000_000:
+                dt = datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc)
+            else:
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+            return dt.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+
+        if isinstance(time_value, str):
+            t = time_value.strip()
+            if not t:
+                return None
+
+            # Try ISO 8601 first
+            iso_candidate = t.replace("Z", "+00:00")
+            try:
+                dt = datetime.fromisoformat(iso_candidate)
+                if dt.tzinfo is None:
+                    # Assume UTC+3 for naive times
+                    dt = dt.replace(tzinfo=timezone(timedelta(hours=3)))
+                dt_utc = dt.astimezone(timezone.utc)
+                return dt_utc.isoformat().replace("+00:00", "Z")
+            except Exception:
+                pass
+
+            # Common fallback patterns (assume UTC+3 if naive)
+            patterns = [
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%d %H:%M",
+                "%Y/%m/%d %H:%M:%S",
+                "%Y/%m/%d %H:%M",
+                "%d/%m/%Y %H:%M:%S",
+                "%d/%m/%Y %H:%M",
+                "%Y-%m-%d",
+            ]
+            for fmt in patterns:
+                try:
+                    dt = datetime.strptime(t, fmt)
+                    dt = dt.replace(tzinfo=timezone(timedelta(hours=3)))
+                    dt_utc = dt.astimezone(timezone.utc)
+                    return dt_utc.isoformat().replace("+00:00", "Z")
+                except Exception:
+                    continue
+
+            # Last resort: return None if not parseable
+            return None
+
+        return None
+    except Exception:
+        return None
+
+
 global_news_cache: List[NewsAnalysis] = []
 news_cache_metadata: Dict[str, any] = {
     "last_updated": None,
@@ -50,7 +116,7 @@ async def fetch_jblanked_news() -> List[NewsItem]:
                             actual = item.get('Actual', '') or item.get('actual', '') or item.get('result', '')
                             currency = item.get('Currency', '') or item.get('currency', '') or item.get('ccy', '') or item.get('country', '')
                             impact = item.get('Strength', '') or item.get('impact', '') or item.get('importance', '')
-                            time = item.get('Date', '') or item.get('time', '') or item.get('date', '') or item.get('timestamp', '')
+                            time_value = item.get('Date', '') or item.get('time', '') or item.get('date', '') or item.get('timestamp', '')
                             outcome = item.get('Outcome', '')
                             quality = item.get('Quality', '')
                             if outcome and headline:
@@ -75,8 +141,11 @@ async def fetch_jblanked_news() -> List[NewsItem]:
                                 currency = None
                             if impact == '':
                                 impact = None
-                            if time == '':
-                                time = None
+                            # Normalize time to UTC ISO (assume upstream UTC+3 if naive)
+                            if time_value == '':
+                                time_iso = None
+                            else:
+                                time_iso = _to_utc_iso8601(time_value)
                             news_item = NewsItem(
                                 headline=headline,
                                 forecast=forecast,
@@ -84,7 +153,7 @@ async def fetch_jblanked_news() -> List[NewsItem]:
                                 actual=actual,
                                 currency=currency,
                                 impact=impact,
-                                time=time,
+                                time=time_iso,
                             )
                             news_items.append(news_item)
                     return news_items
