@@ -91,25 +91,38 @@ news_cache_metadata: Dict[str, any] = {
 
 async def fetch_jblanked_news() -> List[NewsItem]:
     try:
+        print("📰 [fetch] Starting Jblanked fetch...")
+        print(f"📰 [fetch] URL: {JBLANKED_API_URL}")
         headers = {"Authorization": f"Api-Key {JBLANKED_API_KEY}", "Content-Type": "application/json"}
         async with aiohttp.ClientSession() as session:
             async with session.get(JBLANKED_API_URL, headers=headers) as response:
+                print(f"📰 [fetch] HTTP status: {response.status}")
                 if response.status == 200:
                     data = await response.json()
+                    print(f"📰 [fetch] JSON type: {type(data).__name__}")
                     news_items = []
                     if isinstance(data, list):
+                        print(f"📰 [parse] Top-level list detected. count={len(data)}")
                         items = data
                     elif isinstance(data, dict) and 'data' in data:
+                        try:
+                            count = len(data.get('data', []))
+                        except Exception:
+                            count = 'unknown'
+                        print(f"📰 [parse] Dict with 'data' key detected. count={count}")
                         items = data['data']
                     else:
                         items = []
                         if isinstance(data, dict):
+                            print(f"📰 [parse] Unknown dict structure. Keys={list(data.keys())[:10]}")
                             for _, value in data.items():
                                 if isinstance(value, list):
                                     items = value
                                     break
+                        print(f"📰 [parse] First list found count={len(items)}")
                     for item in items:
                         if isinstance(item, dict):
+                            headline_before = item.get('Name') or item.get('title') or item.get('headline') or item.get('name')
                             headline = item.get('Name', '') or item.get('title', '') or item.get('headline', '') or item.get('name', '')
                             forecast = item.get('Forecast', '') or item.get('forecast', '') or item.get('expected', '')
                             previous = item.get('Previous', '') or item.get('previous', '') or item.get('prev', '')
@@ -146,6 +159,10 @@ async def fetch_jblanked_news() -> List[NewsItem]:
                                 time_iso = None
                             else:
                                 time_iso = _to_utc_iso8601(time_value)
+                            print(
+                                f"📰 [item] headline='{(headline or headline_before or '')[:60]}' "
+                                f"time_raw='{str(time_value)[:32]}' -> time_utc='{(time_iso or 'None')[:32]}'"
+                            )
                             news_item = NewsItem(
                                 headline=headline,
                                 forecast=forecast,
@@ -156,6 +173,7 @@ async def fetch_jblanked_news() -> List[NewsItem]:
                                 time=time_iso,
                             )
                             news_items.append(news_item)
+                    print(f"📰 [fetch] Parsed news items: {len(news_items)}")
                     return news_items
                 else:
                     print(f"❌ Jblanked API error: {response.status}")
@@ -170,6 +188,7 @@ async def fetch_jblanked_news() -> List[NewsItem]:
 
 
 async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnalysis]:
+    print(f"🔎 [analyze] Start analysis for: '{(news_item.headline or '')[:60]}'")
     prompt = (
         "Analyze the following economic news for Forex trading impact.\n"
         f"News: {news_item.headline}\n"
@@ -198,6 +217,7 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
             try:
                 async with session.post(url, headers=headers, json=payload) as resp:
                     text = await resp.text()
+                    print(f"🔎 [analyze] Attempt {attempt} status={resp.status} body_len={len(text)}")
                     if resp.status == 200:
                         data = json.loads(text)
                         analysis_text = data["choices"][0]["message"]["content"]
@@ -207,6 +227,7 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                             effect = "Bullish"
                         elif "bearish" in lt:
                             effect = "Bearish"
+                        print(f"🔎 [analyze] Effect derived: {effect}")
                         analysis = {
                             "effect": effect,
                             "currencies_impacted": "Multiple",
@@ -224,10 +245,12 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                             analyzed_at=datetime.now(timezone.utc),
                         )
                     elif resp.status in (429, 500, 502, 503, 504) and attempt < len(backoff):
+                        print(f"🔁 [analyze] Transient error {resp.status}, will retry...")
                         continue
                     else:
                         raise RuntimeError(f"Perplexity API {resp.status}: {text}")
             except asyncio.TimeoutError:
+                print("⏰ [analyze] Timeout; considering retry if available...")
                 if attempt >= len(backoff):
                     raise
                 continue
@@ -236,34 +259,39 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
 async def update_news_cache():
     global global_news_cache, news_cache_metadata
     if news_cache_metadata["is_updating"]:
-        print("📰 News update already in progress, skipping...")
+        print("🗞️ [update] News update already in progress, skipping...")
         return
     try:
+        print("🗞️ [update] Starting news cache update...")
         news_cache_metadata["is_updating"] = True
         news_items = await fetch_jblanked_news()
+        print(f"🗞️ [update] Fetched items: {len(news_items)}")
         if not news_items:
-            print("⚠️ No news items fetched, keeping existing cache")
+            print("⚠️ [update] No news items fetched, keeping existing cache")
             return
         analyzed_news = []
-        for news_item in news_items:
+        for idx, news_item in enumerate(news_items, start=1):
             try:
+                print(f"🗞️ [update] Analyzing item {idx}/{len(news_items)}")
                 analysis = await asyncio.wait_for(analyze_news_with_perplexity(news_item), timeout=60.0)
                 if analysis:
                     analyzed_news.append(analysis)
+                    print(f"🗞️ [update] Analysis OK for item {idx}")
                 await asyncio.sleep(0.1)
             except asyncio.TimeoutError:
-                print(f"⏰ Timeout analyzing news: {news_item.headline[:50]}...")
+                print(f"⏰ [update] Timeout analyzing news: {news_item.headline[:50]}...")
                 continue
             except Exception as e:
-                print(f"❌ Error analyzing news: {news_item.headline[:50]}... Error: {e}")
+                print(f"❌ [update] Error analyzing news: {news_item.headline[:50]}... Error: {e}")
                 continue
         if analyzed_news:
             global_news_cache = analyzed_news[:NEWS_CACHE_MAX_ITEMS]
             news_cache_metadata["last_updated"] = datetime.now(timezone.utc)
             news_cache_metadata["next_update_time"] = datetime.now(timezone.utc) + timedelta(hours=NEWS_UPDATE_INTERVAL_HOURS)
-            print(f"⏰ Next update scheduled for: {news_cache_metadata['next_update_time']}")
+            print(f"✅ [update] Cached analyzed items: {len(global_news_cache)} (max {NEWS_CACHE_MAX_ITEMS})")
+            print(f"⏰ [update] Next update scheduled for: {news_cache_metadata['next_update_time']}")
         else:
-            print("⚠️ No news analyzed successfully, storing raw news data as fallback")
+            print("⚠️ [update] No news analyzed successfully, storing raw news data as fallback")
             raw_news = []
             for news_item in news_items:
                 raw_analysis = NewsAnalysis(
@@ -285,25 +313,30 @@ async def update_news_cache():
             global_news_cache = raw_news[:NEWS_CACHE_MAX_ITEMS]
             news_cache_metadata["last_updated"] = datetime.now(timezone.utc)
             news_cache_metadata["next_update_time"] = datetime.now(timezone.utc) + timedelta(hours=NEWS_UPDATE_INTERVAL_HOURS)
-            print(f"✅ News cache updated with raw data: {len(global_news_cache)} items")
-            print(f"⏰ Next update scheduled for: {news_cache_metadata['next_update_time']}")
+            print(f"✅ [update] News cache updated with raw data: {len(global_news_cache)} items")
+            print(f"⏰ [update] Next update scheduled for: {news_cache_metadata['next_update_time']}")
     except Exception as e:
-        print(f"❌ Error updating news cache: {e}")
+        print(f"❌ [update] Error updating news cache: {e}")
         import traceback
         traceback.print_exc()
     finally:
         news_cache_metadata["is_updating"] = False
+        print("🗞️ [update] Update flag reset (is_updating=False)")
 
 
 async def news_scheduler():
     while True:
         try:
             current_time = datetime.now(timezone.utc)
+            print(
+                f"⏰ [scheduler] tick at {current_time.isoformat()} | next_update={news_cache_metadata['next_update_time']} | is_updating={news_cache_metadata['is_updating']}"
+            )
             if news_cache_metadata["next_update_time"] is None or current_time >= news_cache_metadata["next_update_time"]:
+                print("⏰ [scheduler] Triggering update_news_cache()")
                 await update_news_cache()
             await asyncio.sleep(3600)
         except Exception as e:
-            print(f"❌ Error in news scheduler: {e}")
+            print(f"❌ [scheduler] Error in news scheduler: {e}")
             await asyncio.sleep(3600)
 
 
