@@ -418,11 +418,21 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                         if not impact_value:
                             impact_value = "medium"
 
+                        # Choose human-readable explanation text for full_analysis
+                        if parsed and isinstance(explanation, str) and explanation.strip():
+                            full_analysis_text = explanation.strip()
+                        elif parsed:
+                            # Structured JSON but missing explanation -> synthesize a short line
+                            full_analysis_text = f"Effect: {effect}. Impact: {impact_value}."
+                        else:
+                            # Free text response, keep as-is
+                            full_analysis_text = analysis_text.strip()
+
                         print(f"🔎 [analyze] Effect derived: {effect} | Impact: {impact_value}")
                         analysis = {
                             "effect": effect,
                             "impact": impact_value,
-                            "full_analysis": analysis_text,
+                            "full_analysis": full_analysis_text,
                         }
                         return NewsAnalysis(
                             headline=news_item.headline,
