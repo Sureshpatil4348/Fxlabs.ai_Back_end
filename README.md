@@ -387,8 +387,16 @@ Notes:
 - Removed fields: `currencies_impacted`, `currency_pairs`
 
 Model behavior:
-- The AI prompt was updated to request only effect, impact, and a concise explanation, and to consult `https://www.forexfactory.com/` for context when needed.
-- Impact is inferred from AI text, falling back to source `impact` when available; defaults to `medium` if ambiguous.
+- The AI prompt requests a strict JSON-only reply to avoid ambiguity:
+  ```json
+  {
+    "effect": "bullish|bearish|neutral",
+    "impact": "high|medium|low",
+    "explanation": "<max 2 sentences>"
+  }
+  ```
+- Parsing first attempts to load the JSON. If unavailable, it falls back to regex and synonym detection.
+- `impact` is normalized from synonyms (e.g., significant→high, moderate→medium, minor→low), then falls back to the source `impact` field if present; defaults to `medium` if still ambiguous.
 
 ## 🔒 Security Features
 

@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 
@@ -255,17 +256,21 @@ async def fetch_jblanked_news() -> List[NewsItem]:
 
 async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnalysis]:
     print(f"🔎 [analyze] Start analysis for: '{(news_item.headline or '')[:60]}'")
+    # Ask Perplexity to respond with a strict JSON payload to avoid ambiguous wording
     prompt = (
         "Analyze the following economic news for Forex trading impact.\n"
         f"News: {news_item.headline}\n"
         f"Forecast: {news_item.forecast or 'N/A'}\n"
         f"Previous: {news_item.previous or 'N/A'}\n"
         f"Actual: {news_item.actual or 'N/A'}\n"
-        "Provide only:\n"
-        "1. Expected effect (Bullish, Bearish, Neutral).\n"
-        "2. Impact level (High, Medium, Low).\n"
-        "3. A concise explanation (1-2 sentences).\n"
-        "Also consult @https://www.forexfactory.com/ for context and validation if needed."
+        f"Source impact hint: {(news_item.impact or 'N/A')}\n\n"
+        "Respond ONLY with a JSON object using this exact schema (no extra text):\n"
+        "{\n"
+        "  \"effect\": \"bullish|bearish|neutral\",\n"
+        "  \"impact\": \"high|medium|low\",\n"
+        "  \"explanation\": \"<max 2 sentences>\"\n"
+        "}\n"
+        "Rules: values for effect/impact must be lowercase and one of the allowed options."
     )
     url = "https://api.perplexity.ai/chat/completions"
     headers = {
@@ -288,26 +293,131 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                     if resp.status == 200:
                         data = json.loads(text)
                         analysis_text = data["choices"][0]["message"]["content"]
-                        lt = analysis_text.lower()
+
+                        def _normalize_effect(token: Optional[str]) -> str:
+                            if not token:
+                                return "neutral"
+                            t = token.strip().lower()
+                            if t in ("bullish", "bearish", "neutral"):
+                                return t
+                            # simple synonyms mapping
+                            if t in ("positive", "hawkish"):
+                                return "bullish"
+                            if t in ("negative", "dovish"):
+                                return "bearish"
+                            return "neutral"
+
+                        def _normalize_impact(token: Optional[str]) -> Optional[str]:
+                            if not token:
+                                return None
+                            t = token.strip().lower()
+                            if t in ("high", "medium", "low"):
+                                return t
+                            # map common synonyms
+                            high_words = {
+                                "significant", "strong", "major", "elevated", "substantial", "pronounced",
+                                "considerable", "notable", "sizeable", "severe", "marked", "robust",
+                                "heightened", "spike", "surge", "high-impact", "very high", "extreme"
+                            }
+                            medium_words = {
+                                "medium", "moderate", "modest", "balanced", "average", "mixed", "temperate",
+                                "somewhat", "moderately"
+                            }
+                            low_words = {
+                                "low", "minor", "limited", "negligible", "minimal", "slight", "muted",
+                                "weak", "dampened", "low-impact"
+                            }
+                            if t in high_words:
+                                return "high"
+                            if t in medium_words:
+                                return "medium"
+                            if t in low_words:
+                                return "low"
+                            return None
+
+                        def _extract_json_block(s: str) -> Optional[dict]:
+                            # Strip code fences if present
+                            content = s.strip()
+                            if content.startswith("```"):
+                                # take inner fenced block
+                                parts = content.split("```")
+                                for part in parts:
+                                    part = part.strip()
+                                    if part.startswith("{") and part.endswith("}"):
+                                        try:
+                                            return json.loads(part)
+                                        except Exception:
+                                            pass
+                            # Try direct JSON
+                            try:
+                                return json.loads(content)
+                            except Exception:
+                                pass
+                            # Try to locate a JSON object substring
+                            start_idx = content.find("{")
+                            end_idx = content.rfind("}")
+                            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                                snippet = content[start_idx:end_idx + 1]
+                                # Heuristic: ensure it likely has keys
+                                if '"impact"' in snippet or '"effect"' in snippet:
+                                    try:
+                                        return json.loads(snippet)
+                                    except Exception:
+                                        pass
+                            return None
+
                         effect = "neutral"
-                        if "bullish" in lt:
-                            effect = "bullish"
-                        elif "bearish" in lt:
-                            effect = "bearish"
-                        # Derive impact (high/medium/low); default to 'medium' if ambiguous
-                        impact_value = None
-                        if any(kw in lt for kw in ["high impact", "significant", "strong impact", "highly volatile", "highly impactful"]):
-                            impact_value = "high"
-                        elif any(kw in lt for kw in ["medium impact", "moderate", "moderately"]):
-                            impact_value = "medium"
-                        elif any(kw in lt for kw in ["low impact", "minor", "limited", "low volatility"]):
-                            impact_value = "low"
-                        if not impact_value and (news_item.impact or "").strip():
+                        impact_value: Optional[str] = None
+                        explanation = None
+
+                        parsed = _extract_json_block(analysis_text)
+                        if parsed and isinstance(parsed, dict):
+                            effect = _normalize_effect(parsed.get("effect"))
+                            impact_value = _normalize_impact(parsed.get("impact"))
+                            explanation = parsed.get("explanation")
+
+                        if impact_value is None or effect == "neutral":
+                            # Fallback: regex extraction from free text
+                            lt = analysis_text.lower()
+                            # Effect
+                            m_eff = re.search(r"effect\s*[:\-]\s*\"?([a-z]+)\"?", lt)
+                            if m_eff:
+                                effect = _normalize_effect(m_eff.group(1)) or effect
+                            else:
+                                if "bullish" in lt:
+                                    effect = "bullish"
+                                elif "bearish" in lt:
+                                    effect = "bearish"
+
+                            # Impact
+                            m_imp = re.search(r"impact\s*[:\-]\s*\"?([a-z ]+)\"?", lt)
+                            if m_imp:
+                                impact_value = _normalize_impact(m_imp.group(1)) or impact_value
+                            if impact_value is None:
+                                # synonym sweep
+                                if any(w in lt for w in [
+                                    "high impact", "significant", "strong impact", "highly volatile",
+                                    "highly impactful", "very high", "major", "substantial"
+                                ]):
+                                    impact_value = "high"
+                                elif any(w in lt for w in [
+                                    "medium impact", "moderate", "modest", "moderately"
+                                ]):
+                                    impact_value = "medium"
+                                elif any(w in lt for w in [
+                                    "low impact", "minor", "limited", "low volatility", "negligible", "minimal", "slight"
+                                ]):
+                                    impact_value = "low"
+
+                        # Final fallback: use source impact hint if provided
+                        if (impact_value is None or impact_value not in ("high", "medium", "low")) and (news_item.impact or "").strip():
                             im = (news_item.impact or "").strip().lower()
                             if im in ("high", "medium", "low"):
                                 impact_value = im
+
                         if not impact_value:
                             impact_value = "medium"
+
                         print(f"🔎 [analyze] Effect derived: {effect} | Impact: {impact_value}")
                         analysis = {
                             "effect": effect,
