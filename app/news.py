@@ -15,6 +15,19 @@ from .config import (
 from .models import NewsAnalysis, NewsItem
 
 
+def _get_field(item: dict, keys: List[str]):
+    """Return the first present value among keys, allowing numeric 0/0.0 but skipping None/empty strings."""
+    for key in keys:
+        if key in item:
+            val = item.get(key)
+            if val is None:
+                continue
+            if isinstance(val, str) and val.strip() == "":
+                continue
+            return val
+    return ""
+
+
 def _to_utc_iso8601(time_value) -> Optional[str]:
     """Convert various upstream time formats (UTC+3 by default) to UTC ISO 8601 (Z).
 
@@ -56,6 +69,9 @@ def _to_utc_iso8601(time_value) -> Optional[str]:
 
             # Common fallback patterns (assume UTC+3 if naive)
             patterns = [
+                "%Y.%m.%d %H:%M:%S",  # e.g., 2025.09.17 21:00:00 (Jblanked weekly)
+                "%Y.%m.%d %H:%M",    # e.g., 2025.09.17 21:00
+                "%Y.%m.%d",          # e.g., 2025.09.17
                 "%Y-%m-%d %H:%M:%S",
                 "%Y-%m-%d %H:%M",
                 "%Y/%m/%d %H:%M:%S",
@@ -122,14 +138,14 @@ async def fetch_jblanked_news() -> List[NewsItem]:
                         print(f"📰 [parse] First list found count={len(items)}")
                     for item in items:
                         if isinstance(item, dict):
-                            headline_before = item.get('Name') or item.get('title') or item.get('headline') or item.get('name')
-                            headline = item.get('Name', '') or item.get('title', '') or item.get('headline', '') or item.get('name', '')
-                            forecast = item.get('Forecast', '') or item.get('forecast', '') or item.get('expected', '')
-                            previous = item.get('Previous', '') or item.get('previous', '') or item.get('prev', '')
-                            actual = item.get('Actual', '') or item.get('actual', '') or item.get('result', '')
-                            currency = item.get('Currency', '') or item.get('currency', '') or item.get('ccy', '') or item.get('country', '')
-                            impact = item.get('Strength', '') or item.get('impact', '') or item.get('importance', '')
-                            time_value = item.get('Date', '') or item.get('time', '') or item.get('date', '') or item.get('timestamp', '')
+                            headline_before = _get_field(item, ['Name', 'title', 'headline', 'name'])
+                            headline = _get_field(item, ['Name', 'title', 'headline', 'name'])
+                            forecast = _get_field(item, ['Forecast', 'forecast', 'expected'])
+                            previous = _get_field(item, ['Previous', 'previous', 'prev'])
+                            actual = _get_field(item, ['Actual', 'actual', 'result'])
+                            currency = _get_field(item, ['Currency', 'currency', 'ccy', 'country'])
+                            impact = _get_field(item, ['Strength', 'impact', 'importance'])
+                            time_value = _get_field(item, ['TimeUTC', 'datetime', 'dateTime', 'timestamp', 'Date', 'date', 'Time', 'time'])
                             outcome = item.get('Outcome', '')
                             quality = item.get('Quality', '')
                             if outcome and headline:
