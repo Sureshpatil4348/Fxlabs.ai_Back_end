@@ -260,10 +260,12 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
     prompt = (
         "Analyze the following economic news for Forex trading impact.\n"
         f"News: {news_item.headline}\n"
+        f"Time: {news_item.time or 'N/A'}\n"
         f"Forecast: {news_item.forecast or 'N/A'}\n"
         f"Previous: {news_item.previous or 'N/A'}\n"
         f"Source impact hint: {(news_item.impact or 'N/A')}\n\n"
-        "Use live internet search to validate and augment the latest market context before answering.\n"
+        "The data I provided you might not have the actual data if the event has not happened yet (will happen or be published in future)\n"
+        "Use live internet search to get latest data, validate and augment missing info the latest market context before answering.\n"
         "Respond ONLY with a JSON object using this exact schema (no extra text):\n"
         "{\n"
         "  \"effect\": \"bullish|bearish|neutral\",\n"
