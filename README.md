@@ -383,12 +383,12 @@ Each item in `data` contains:
 
 Notes:
 - `analysis.effect`: bullish | bearish | neutral (lowercase)
-- `analysis.impact`: high | medium | low (lowercase); may be `unknown` if not inferable
+- `analysis.impact`: high | medium | low (lowercase)
 - Removed fields: `currencies_impacted`, `currency_pairs`
 
 Model behavior:
-- The AI prompt was updated to request only effect, impact, and a concise explanation.
-- Impact is inferred from AI text, falling back to source `impact` when available.
+- The AI prompt was updated to request only effect, impact, and a concise explanation, and to consult `https://www.forexfactory.com/` for context when needed.
+- Impact is inferred from AI text, falling back to source `impact` when available; defaults to `medium` if ambiguous.
 
 ## 🔒 Security Features
 

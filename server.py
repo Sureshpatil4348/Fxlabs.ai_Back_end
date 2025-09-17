@@ -358,7 +358,8 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
         "Provide only:\n"
         "1. Expected effect (Bullish, Bearish, Neutral).\n"
         "2. Impact level (High, Medium, Low).\n"
-        "3. A concise explanation (1-2 sentences)."
+        "3. A concise explanation (1-2 sentences).\n"
+        "Also consult @https://www.forexfactory.com/ for context and validation if needed."
     )
 
     # 🔒 Required auth header & stable endpoint
@@ -399,14 +400,20 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                             effect = "bullish"
                         elif "bearish" in lt:
                             effect = "bearish"
-                        # Derive impact (high/medium/low) from AI response
-                        impact_value = "unknown"
+                        # Derive impact (high/medium/low) from AI response; default to 'medium'
+                        impact_value = None
                         if any(kw in lt for kw in ["high impact", "significant", "strong impact", "highly volatile", "highly impactful"]):
                             impact_value = "high"
                         elif any(kw in lt for kw in ["medium impact", "moderate", "moderately"]):
                             impact_value = "medium"
                         elif any(kw in lt for kw in ["low impact", "minor", "limited", "low volatility"]):
                             impact_value = "low"
+                        if not impact_value and (news_item.impact or "").strip():
+                            im = (news_item.impact or "").strip().lower()
+                            if im in ("high", "medium", "low"):
+                                impact_value = im
+                        if not impact_value:
+                            impact_value = "medium"
 
                         analysis = {
                             "effect": effect,
@@ -480,7 +487,7 @@ async def update_news_cache():
         else:
             print("⚠️ No news analyzed successfully, storing raw news data as fallback")
             # Fallback: store raw news data without AI analysis
-            raw_news = []
+                    raw_news = []
             for news_item in news_items:
                 raw_analysis = NewsAnalysis(
                     headline=news_item.headline,
@@ -491,7 +498,7 @@ async def update_news_cache():
                     time=news_item.time,
                     analysis={
                         "effect": "unknown",
-                        "impact": "unknown",
+                        "impact": ((news_item.impact or "").strip().lower() if (news_item.impact or "").strip().lower() in ("high", "medium", "low") else "medium"),
                         "full_analysis": "AI analysis failed - raw data only"
                     },
                     analyzed_at=datetime.now(timezone.utc)
