@@ -1,0 +1,444 @@
+import asyncio
+import os
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Any, Tuple
+import aiohttp
+import json
+import logging
+
+from .email_service import email_service
+from .alert_cache import alert_cache
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class HeatmapAlertService:
+    """Service for checking and triggering heatmap alerts"""
+    
+    def __init__(self):
+        self.supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
+        self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5YWp3aHRrd2xkcm1saGZpdXdnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjI5NjUzNCwiZXhwIjoyMDcxODcyNTM0fQ.UDqYHY5Io0o-fQTswCYQmMdC6UCPQI2gf3aTb9o09SE")
+        self.last_triggered_alerts: Dict[str, datetime] = {}  # Track last trigger time per alert
+        
+    async def check_heatmap_alerts(self, tick_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Check all heatmap alerts against current tick data"""
+        
+        try:
+            # Get all active heatmap alerts from cache
+            all_alerts = await alert_cache.get_all_alerts()
+            
+            triggered_alerts = []
+            
+            for user_id, user_alerts in all_alerts.items():
+                for alert in user_alerts:
+                    if alert.get("type") == "heatmap" and alert.get("is_active", True):
+                        # Check if this alert should be triggered
+                        trigger_result = await self._check_single_heatmap_alert(alert, tick_data)
+                        
+                        if trigger_result:
+                            triggered_alerts.append(trigger_result)
+                            
+                            # Send email notification if configured
+                            if "email" in alert.get("notification_methods", []):
+                                await self._send_alert_notification(trigger_result)
+            
+            return triggered_alerts
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking heatmap alerts: {e}")
+            return []
+    
+    async def _check_single_heatmap_alert(self, alert: Dict[str, Any], tick_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Check if a single heatmap alert should be triggered"""
+        
+        try:
+            alert_id = alert.get("id")
+            alert_name = alert.get("alert_name")
+            
+            # Check alert frequency to avoid spam
+            if not self._should_trigger_alert(alert_id, alert):
+                return None
+            
+            # Get alert configuration
+            pairs = alert.get("pairs", [])
+            timeframes = alert.get("timeframes", [])
+            buy_threshold_min = alert.get("buy_threshold_min", 70)
+            buy_threshold_max = alert.get("buy_threshold_max", 100)
+            sell_threshold_min = alert.get("sell_threshold_min", 0)
+            sell_threshold_max = alert.get("sell_threshold_max", 30)
+            selected_indicators = alert.get("selected_indicators", [])
+            
+            # Calculate heatmap data for each pair
+            triggered_pairs = []
+            
+            for pair in pairs:
+                for timeframe in timeframes:
+                    # Get current market data for the pair
+                    market_data = await self._get_market_data(pair, timeframe)
+                    
+                    if not market_data:
+                        continue
+                    
+                    # Calculate indicators and strength
+                    strength_data = await self._calculate_indicators_strength(
+                        market_data, selected_indicators
+                    )
+                    
+                    if not strength_data:
+                        continue
+                    
+                    # Check if strength meets alert criteria
+                    signal = self._determine_signal(
+                        strength_data, 
+                        buy_threshold_min, buy_threshold_max,
+                        sell_threshold_min, sell_threshold_max
+                    )
+                    
+                    if signal:
+                        triggered_pairs.append({
+                            "symbol": pair,
+                            "timeframe": timeframe,
+                            "strength": strength_data.get("overall_strength", 0),
+                            "signal": signal,
+                            "indicators": strength_data.get("indicators", {}),
+                            "price": market_data.get("close", 0),
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+            
+            # If we have triggered pairs, return the alert trigger
+            if triggered_pairs:
+                # Update last trigger time
+                self.last_triggered_alerts[alert_id] = datetime.now(timezone.utc)
+                
+                return {
+                    "alert_id": alert_id,
+                    "alert_name": alert_name,
+                    "user_email": alert.get("user_email", ""),
+                    "triggered_pairs": triggered_pairs,
+                    "trigger_time": datetime.now(timezone.utc),
+                    "alert_config": alert
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking single heatmap alert {alert.get('alert_name', 'Unknown')}: {e}")
+            return None
+    
+    def _should_trigger_alert(self, alert_id: str, alert: Dict[str, Any]) -> bool:
+        """Check if alert should be triggered based on frequency settings"""
+        
+        alert_frequency = alert.get("alert_frequency", "once")
+        current_time = datetime.now(timezone.utc)
+        
+        if alert_frequency == "once":
+            # Only trigger once per alert
+            return alert_id not in self.last_triggered_alerts
+        
+        elif alert_frequency == "hourly":
+            # Trigger once per hour
+            last_trigger = self.last_triggered_alerts.get(alert_id)
+            if not last_trigger:
+                return True
+            return (current_time - last_trigger).total_seconds() >= 3600
+        
+        elif alert_frequency == "daily":
+            # Trigger once per day
+            last_trigger = self.last_triggered_alerts.get(alert_id)
+            if not last_trigger:
+                return True
+            return (current_time - last_trigger).total_seconds() >= 86400
+        
+        return True  # Default to allowing trigger
+    
+    async def _get_market_data(self, symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
+        """Get current market data for a symbol and timeframe"""
+        
+        try:
+            # This would typically fetch from MT5 or your market data source
+            # For now, we'll simulate with some basic data
+            # In a real implementation, you'd integrate with your MT5 data source
+            
+            # Simulate market data (replace with actual MT5 integration)
+            import random
+            
+            return {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "open": 1.1000 + random.uniform(-0.01, 0.01),
+                "high": 1.1020 + random.uniform(-0.01, 0.01),
+                "low": 1.0980 + random.uniform(-0.01, 0.01),
+                "close": 1.1005 + random.uniform(-0.01, 0.01),
+                "volume": random.randint(1000, 10000),
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting market data for {symbol} {timeframe}: {e}")
+            return None
+    
+    async def _calculate_indicators_strength(
+        self, 
+        market_data: Dict[str, Any], 
+        selected_indicators: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Calculate indicator strength for the given market data"""
+        
+        try:
+            # This is a simplified implementation
+            # In a real system, you'd calculate actual technical indicators
+            
+            indicators = {}
+            overall_strength = 0
+            
+            for indicator in selected_indicators:
+                # Normalize indicator name to lowercase for comparison
+                indicator_lower = indicator.lower()
+                
+                if indicator_lower == "rsi":
+                    # Simulate RSI calculation
+                    rsi_value = 50 + (market_data.get("close", 1.1) - 1.1) * 100
+                    rsi_value = max(0, min(100, rsi_value))
+                    indicators["rsi"] = rsi_value
+                    overall_strength += rsi_value
+                
+                elif indicator_lower == "macd":
+                    # Simulate MACD calculation
+                    macd_value = (market_data.get("close", 1.1) - 1.1) * 50
+                    indicators["macd"] = macd_value
+                    overall_strength += 50 + macd_value
+                
+                elif indicator_lower == "bollinger":
+                    # Simulate Bollinger Bands
+                    bb_value = 50 + (market_data.get("close", 1.1) - 1.1) * 30
+                    indicators["bollinger"] = bb_value
+                    overall_strength += bb_value
+                
+                elif indicator_lower == "stochastic":
+                    # Simulate Stochastic
+                    stoch_value = 50 + (market_data.get("close", 1.1) - 1.1) * 40
+                    indicators["stochastic"] = stoch_value
+                    overall_strength += stoch_value
+                
+                elif indicator_lower == "ema21":
+                    # Simulate EMA 21 calculation
+                    ema21_value = 50 + (market_data.get("close", 1.1) - 1.1) * 60
+                    ema21_value = max(0, min(100, ema21_value))
+                    indicators["ema21"] = ema21_value
+                    overall_strength += ema21_value
+                
+                elif indicator_lower == "ema50":
+                    # Simulate EMA 50 calculation
+                    ema50_value = 50 + (market_data.get("close", 1.1) - 1.1) * 45
+                    ema50_value = max(0, min(100, ema50_value))
+                    indicators["ema50"] = ema50_value
+                    overall_strength += ema50_value
+                
+                elif indicator_lower == "ema200":
+                    # Simulate EMA 200 calculation
+                    ema200_value = 50 + (market_data.get("close", 1.1) - 1.1) * 35
+                    ema200_value = max(0, min(100, ema200_value))
+                    indicators["ema200"] = ema200_value
+                    overall_strength += ema200_value
+                
+                elif indicator_lower == "utbot":
+                    # Simulate UTBOT calculation
+                    utbot_value = 50 + (market_data.get("close", 1.1) - 1.1) * 25
+                    utbot_value = max(0, min(100, utbot_value))
+                    indicators["utbot"] = utbot_value
+                    overall_strength += utbot_value
+                
+                elif indicator_lower == "ichimokuclone":
+                    # Simulate Ichimoku Clone calculation
+                    ichimoku_value = 50 + (market_data.get("close", 1.1) - 1.1) * 40
+                    ichimoku_value = max(0, min(100, ichimoku_value))
+                    indicators["ichimokuclone"] = ichimoku_value
+                    overall_strength += ichimoku_value
+                
+                else:
+                    # Unknown indicator - log warning but continue
+                    logger.warning(f"⚠️ Unknown indicator: {indicator}")
+                    # Use default neutral value
+                    indicators[indicator_lower] = 50
+                    overall_strength += 50
+            
+            # Calculate average strength
+            if selected_indicators:
+                overall_strength = overall_strength / len(selected_indicators)
+            else:
+                overall_strength = 50  # Default neutral
+            
+            return {
+                "overall_strength": round(overall_strength, 2),
+                "indicators": indicators
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculating indicators strength: {e}")
+            return None
+    
+    def _determine_signal(
+        self, 
+        strength_data: Dict[str, Any],
+        buy_threshold_min: int,
+        buy_threshold_max: int,
+        sell_threshold_min: int,
+        sell_threshold_max: int
+    ) -> Optional[str]:
+        """Determine if the strength data triggers a buy or sell signal"""
+        
+        overall_strength = strength_data.get("overall_strength", 50)
+        
+        # Check for buy signal
+        if buy_threshold_min <= overall_strength <= buy_threshold_max:
+            return "BUY"
+        
+        # Check for sell signal
+        if sell_threshold_min <= overall_strength <= sell_threshold_max:
+            return "SELL"
+        
+        return None
+    
+    async def _send_alert_notification(self, trigger_data: Dict[str, Any]):
+        """Send email notification for triggered alert"""
+        
+        try:
+            user_email = trigger_data.get("user_email")
+            alert_name = trigger_data.get("alert_name")
+            triggered_pairs = trigger_data.get("triggered_pairs", [])
+            alert_config = trigger_data.get("alert_config", {})
+            
+            if not user_email:
+                logger.warning("No user email found for alert notification")
+                return
+            
+            # Send email using the email service
+            success = await email_service.send_heatmap_alert(
+                user_email=user_email,
+                alert_name=alert_name,
+                triggered_pairs=triggered_pairs,
+                alert_config=alert_config
+            )
+            
+            if success:
+                logger.info(f"✅ Alert notification sent to {user_email} for {alert_name}")
+            else:
+                logger.error(f"❌ Failed to send alert notification to {user_email}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error sending alert notification: {e}")
+    
+    async def create_heatmap_alert(self, alert_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create a new heatmap alert in Supabase"""
+        
+        try:
+            headers = {
+                "apikey": self.supabase_service_key,
+                "Authorization": f"Bearer {self.supabase_service_key}",
+                "Content-Type": "application/json"
+            }
+            
+            url = f"{self.supabase_url}/rest/v1/heatmap_alerts"
+            
+            # Prepare alert data for Supabase
+            supabase_data = {
+                "alert_name": alert_data.get("alert_name"),
+                "user_email": alert_data.get("user_email"),
+                "pairs": alert_data.get("pairs", []),
+                "timeframes": alert_data.get("timeframes", []),
+                "selected_indicators": alert_data.get("selected_indicators", []),
+                "trading_style": alert_data.get("trading_style", "dayTrader"),
+                "buy_threshold_min": alert_data.get("buy_threshold_min", 70),
+                "buy_threshold_max": alert_data.get("buy_threshold_max", 100),
+                "sell_threshold_min": alert_data.get("sell_threshold_min", 0),
+                "sell_threshold_max": alert_data.get("sell_threshold_max", 30),
+                "notification_methods": alert_data.get("notification_methods", ["email"]),
+                "alert_frequency": alert_data.get("alert_frequency", "once"),
+                "trigger_on_crossing": alert_data.get("trigger_on_crossing", True),
+                "is_active": True,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=supabase_data) as response:
+                    if response.status in [200, 201]:
+                        result = await response.json()
+                        logger.info(f"✅ Heatmap alert created: {alert_data.get('alert_name')}")
+                        
+                        # Refresh alert cache
+                        await alert_cache._refresh_cache()
+                        
+                        return result
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"❌ Failed to create heatmap alert: {response.status} - {error_text}")
+                        return None
+                        
+        except Exception as e:
+            logger.error(f"❌ Error creating heatmap alert: {e}")
+            return None
+    
+    async def get_user_heatmap_alerts(self, user_email: str) -> List[Dict[str, Any]]:
+        """Get all heatmap alerts for a specific user"""
+        
+        try:
+            headers = {
+                "apikey": self.supabase_service_key,
+                "Authorization": f"Bearer {self.supabase_service_key}",
+                "Content-Type": "application/json"
+            }
+            
+            url = f"{self.supabase_url}/rest/v1/heatmap_alerts"
+            params = {
+                "select": "*",
+                "user_email": f"eq.{user_email}",
+                "order": "created_at.desc"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, params=params) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        logger.error(f"❌ Failed to get user heatmap alerts: {response.status}")
+                        return []
+                        
+        except Exception as e:
+            logger.error(f"❌ Error getting user heatmap alerts: {e}")
+            return []
+    
+    async def delete_heatmap_alert(self, alert_id: str) -> bool:
+        """Delete a heatmap alert"""
+        
+        try:
+            headers = {
+                "apikey": self.supabase_service_key,
+                "Authorization": f"Bearer {self.supabase_service_key}",
+                "Content-Type": "application/json"
+            }
+            
+            url = f"{self.supabase_url}/rest/v1/heatmap_alerts"
+            params = {"id": f"eq.{alert_id}"}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.delete(url, headers=headers, params=params) as response:
+                    if response.status in [200, 204]:
+                        logger.info(f"✅ Heatmap alert deleted: {alert_id}")
+                        
+                        # Refresh alert cache
+                        await alert_cache._refresh_cache()
+                        
+                        return True
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"❌ Failed to delete heatmap alert: {response.status} - {error_text}")
+                        return False
+                        
+        except Exception as e:
+            logger.error(f"❌ Error deleting heatmap alert: {e}")
+            return False
+
+# Global heatmap alert service instance
+heatmap_alert_service = HeatmapAlertService()

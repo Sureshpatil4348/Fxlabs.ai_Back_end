@@ -1,0 +1,511 @@
+import asyncio
+import os
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Any, Tuple
+import aiohttp
+import json
+import logging
+
+from .email_service import email_service
+from .alert_cache import alert_cache
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+class RSICorrelationAlertService:
+    """
+    RSI Correlation Alert Service for monitoring RSI correlation conditions
+    Supports both RSI Threshold mode and Real Correlation mode
+    """
+    
+    def __init__(self):
+        self.supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
+        self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
+        self.last_triggered_alerts: Dict[str, datetime] = {}  # Track last trigger time per alert
+        
+    async def check_rsi_correlation_alerts(self, tick_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Check all RSI correlation alerts against current tick data"""
+        
+        try:
+            # Get all active RSI correlation alerts from cache
+            all_alerts = await alert_cache.get_all_alerts()
+            
+            triggered_alerts = []
+            
+            for user_id, user_alerts in all_alerts.items():
+                for alert in user_alerts:
+                    if alert.get("type") == "rsi_correlation" and alert.get("is_active", True):
+                        # Check if this alert should be triggered
+                        trigger_result = await self._check_single_rsi_correlation_alert(alert, tick_data)
+                        
+                        if trigger_result:
+                            triggered_alerts.append(trigger_result)
+                            
+                            # Send email notification if configured
+                            if "email" in alert.get("notification_methods", []):
+                                await self._send_rsi_correlation_alert_notification(trigger_result)
+            
+            return triggered_alerts
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking RSI correlation alerts: {e}")
+            return []
+    
+    async def _check_single_rsi_correlation_alert(self, alert: Dict[str, Any], tick_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Check a single RSI correlation alert against current market data"""
+        
+        try:
+            alert_id = alert.get("id")
+            alert_name = alert.get("alert_name")
+            correlation_pairs = alert.get("correlation_pairs", [])
+            timeframes = alert.get("timeframes", ["1H"])
+            calculation_mode = alert.get("calculation_mode", "rsi_threshold")
+            alert_conditions = alert.get("alert_conditions", [])
+            
+            triggered_pairs = []
+            
+            # Check each correlation pair and timeframe
+            for pair in correlation_pairs:
+                if not isinstance(pair, list) or len(pair) != 2:
+                    continue
+                    
+                symbol1, symbol2 = pair[0], pair[1]
+                
+                for timeframe in timeframes:
+                    # Get market data for both symbols
+                    market_data1 = self._get_market_data_for_symbol(symbol1, timeframe, tick_data)
+                    market_data2 = self._get_market_data_for_symbol(symbol2, timeframe, tick_data)
+                    
+                    if not market_data1 or not market_data2:
+                        continue
+                    
+                    # Process based on calculation mode
+                    if calculation_mode == "rsi_threshold":
+                        trigger_result = await self._check_rsi_threshold_mode(
+                            alert, symbol1, symbol2, timeframe, market_data1, market_data2, alert_conditions
+                        )
+                    elif calculation_mode == "real_correlation":
+                        trigger_result = await self._check_real_correlation_mode(
+                            alert, symbol1, symbol2, timeframe, market_data1, market_data2, alert_conditions
+                        )
+                    else:
+                        continue
+                    
+                    if trigger_result:
+                        triggered_pairs.append(trigger_result)
+            
+            if triggered_pairs:
+                return {
+                    "alert_id": alert_id,
+                    "alert_name": alert_name,
+                    "user_id": alert.get("user_id"),
+                    "user_email": alert.get("user_email"),
+                    "calculation_mode": calculation_mode,
+                    "triggered_pairs": triggered_pairs,
+                    "alert_config": alert,
+                    "triggered_at": datetime.now(timezone.utc).isoformat()
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking single RSI correlation alert: {e}")
+            return None
+    
+    async def _check_rsi_threshold_mode(
+        self, 
+        alert: Dict[str, Any], 
+        symbol1: str, 
+        symbol2: str, 
+        timeframe: str,
+        market_data1: Dict[str, Any], 
+        market_data2: Dict[str, Any],
+        alert_conditions: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Check RSI threshold mode conditions"""
+        
+        try:
+            # RSI settings
+            rsi_period = alert.get("rsi_period", 14)
+            rsi_overbought = alert.get("rsi_overbought_threshold", 70)
+            rsi_oversold = alert.get("rsi_oversold_threshold", 30)
+            
+            # Calculate RSI for both symbols
+            rsi1 = await self._calculate_rsi(market_data1, rsi_period)
+            rsi2 = await self._calculate_rsi(market_data2, rsi_period)
+            
+            if rsi1 is None or rsi2 is None:
+                return None
+            
+            # Check RSI threshold conditions
+            trigger_condition = self._check_rsi_threshold_conditions(
+                rsi1, rsi2, alert_conditions, rsi_overbought, rsi_oversold
+            )
+            
+            if trigger_condition:
+                return {
+                    "symbol1": symbol1,
+                    "symbol2": symbol2,
+                    "timeframe": timeframe,
+                    "rsi1": round(rsi1, 2),
+                    "rsi2": round(rsi2, 2),
+                    "trigger_condition": trigger_condition,
+                    "current_price1": market_data1.get("close", 0),
+                    "current_price2": market_data2.get("close", 0),
+                    "price_change1": self._calculate_price_change_percent(market_data1),
+                    "price_change2": self._calculate_price_change_percent(market_data2),
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking RSI threshold mode: {e}")
+            return None
+    
+    async def _check_real_correlation_mode(
+        self, 
+        alert: Dict[str, Any], 
+        symbol1: str, 
+        symbol2: str, 
+        timeframe: str,
+        market_data1: Dict[str, Any], 
+        market_data2: Dict[str, Any],
+        alert_conditions: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Check real correlation mode conditions"""
+        
+        try:
+            # Correlation settings
+            correlation_window = alert.get("correlation_window", 50)
+            strong_threshold = alert.get("strong_correlation_threshold", 0.70)
+            moderate_threshold = alert.get("moderate_correlation_threshold", 0.30)
+            weak_threshold = alert.get("weak_correlation_threshold", 0.15)
+            
+            # Calculate correlation between the two symbols
+            correlation_value = await self._calculate_correlation(
+                market_data1, market_data2, correlation_window
+            )
+            
+            if correlation_value is None:
+                return None
+            
+            # Check correlation conditions
+            trigger_condition = self._check_correlation_conditions(
+                correlation_value, alert_conditions, strong_threshold, moderate_threshold, weak_threshold
+            )
+            
+            if trigger_condition:
+                return {
+                    "symbol1": symbol1,
+                    "symbol2": symbol2,
+                    "timeframe": timeframe,
+                    "correlation_value": round(correlation_value, 3),
+                    "trigger_condition": trigger_condition,
+                    "current_price1": market_data1.get("close", 0),
+                    "current_price2": market_data2.get("close", 0),
+                    "price_change1": self._calculate_price_change_percent(market_data1),
+                    "price_change2": self._calculate_price_change_percent(market_data2),
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking real correlation mode: {e}")
+            return None
+    
+    def _get_market_data_for_symbol(self, symbol: str, timeframe: str, tick_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Get market data for a specific symbol and timeframe"""
+        
+        try:
+            # This is a simplified implementation
+            # In a real system, you'd get actual market data from your data source
+            
+            tick_symbols = tick_data.get("symbols", [])
+            tick_market_data = tick_data.get("tick_data", {})
+            
+            if symbol in tick_symbols and symbol in tick_market_data:
+                return tick_market_data[symbol]
+            
+            # Fallback: simulate market data
+            return {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "open": 1.1000,
+                "high": 1.1010,
+                "low": 1.0990,
+                "close": 1.1005,
+                "volume": 1000,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting market data for {symbol}: {e}")
+            return None
+    
+    async def _calculate_rsi(self, market_data: Dict[str, Any], period: int = 14) -> Optional[float]:
+        """Calculate RSI for the given market data"""
+        
+        try:
+            # This is a simplified RSI calculation
+            # In a real system, you'd calculate actual RSI using historical data
+            
+            close_price = market_data.get("close", 1.1000)
+            
+            # Simulate RSI calculation based on price movement
+            # This is just for demonstration - real RSI needs historical data
+            price_factor = (close_price - 1.1000) * 1000
+            rsi_value = 50 + price_factor * 2  # Simulate RSI between 0-100
+            
+            # Ensure RSI is within valid range
+            rsi_value = max(0, min(100, rsi_value))
+            
+            return rsi_value
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculating RSI: {e}")
+            return None
+    
+    async def _calculate_correlation(self, market_data1: Dict[str, Any], market_data2: Dict[str, Any], window: int = 50) -> Optional[float]:
+        """Calculate correlation between two symbols"""
+        
+        try:
+            # This is a simplified correlation calculation
+            # In a real system, you'd calculate actual correlation using historical data
+            
+            price1 = market_data1.get("close", 1.1000)
+            price2 = market_data2.get("close", 1.1000)
+            volume1 = market_data1.get("volume", 1000)
+            volume2 = market_data2.get("volume", 1000)
+            
+            # Simulate correlation calculation
+            # This is just for demonstration - real correlation needs historical price data
+            price_diff = abs(price1 - price2)
+            volume_ratio = min(volume1 / volume2, volume2 / volume1) if volume2 > 0 else 1
+            
+            # Simulate correlation based on price and volume similarity
+            correlation = 1.0 - (price_diff * 100) - (1 - volume_ratio) * 0.5
+            correlation = max(-1, min(1, correlation))  # Ensure -1 to 1 range
+            
+            return correlation
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculating correlation: {e}")
+            return None
+    
+    def _check_rsi_threshold_conditions(
+        self, 
+        rsi1: float, 
+        rsi2: float, 
+        alert_conditions: List[str],
+        rsi_overbought: int,
+        rsi_oversold: int
+    ) -> Optional[str]:
+        """Check RSI threshold mode conditions"""
+        
+        try:
+            for condition in alert_conditions:
+                if condition == "positive_mismatch":
+                    # Both RSI in opposite zones (one overbought, one oversold)
+                    if (rsi1 >= rsi_overbought and rsi2 <= rsi_oversold) or (rsi1 <= rsi_oversold and rsi2 >= rsi_overbought):
+                        return "positive_mismatch"
+                
+                elif condition == "negative_mismatch":
+                    # Both RSI in same extreme zone (both overbought or both oversold)
+                    if (rsi1 >= rsi_overbought and rsi2 >= rsi_overbought) or (rsi1 <= rsi_oversold and rsi2 <= rsi_oversold):
+                        return "negative_mismatch"
+                
+                elif condition == "neutral_break":
+                    # Both RSI in neutral zone (between oversold and overbought)
+                    if rsi_oversold < rsi1 < rsi_overbought and rsi_oversold < rsi2 < rsi_overbought:
+                        return "neutral_break"
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking RSI threshold conditions: {e}")
+            return None
+    
+    def _check_correlation_conditions(
+        self, 
+        correlation_value: float, 
+        alert_conditions: List[str],
+        strong_threshold: float,
+        moderate_threshold: float,
+        weak_threshold: float
+    ) -> Optional[str]:
+        """Check real correlation mode conditions"""
+        
+        try:
+            abs_correlation = abs(correlation_value)
+            
+            for condition in alert_conditions:
+                if condition == "strong_positive":
+                    if correlation_value >= strong_threshold:
+                        return "strong_positive"
+                
+                elif condition == "strong_negative":
+                    if correlation_value <= -strong_threshold:
+                        return "strong_negative"
+                
+                elif condition == "weak_correlation":
+                    if abs_correlation <= weak_threshold:
+                        return "weak_correlation"
+                
+                elif condition == "correlation_break":
+                    # Correlation breaking from strong to moderate or weak
+                    if strong_threshold > abs_correlation >= moderate_threshold:
+                        return "correlation_break"
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error checking correlation conditions: {e}")
+            return None
+    
+    def _calculate_price_change_percent(self, market_data: Dict[str, Any]) -> float:
+        """Calculate price change percentage"""
+        
+        try:
+            open_price = market_data.get("open", 1.1000)
+            close_price = market_data.get("close", 1.1000)
+            
+            if open_price == 0:
+                return 0.0
+            
+            change_percent = ((close_price - open_price) / open_price) * 100
+            return round(change_percent, 2)
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculating price change: {e}")
+            return 0.0
+    
+    async def _send_rsi_correlation_alert_notification(self, trigger_data: Dict[str, Any]):
+        """Send RSI correlation alert notification via email"""
+        
+        try:
+            user_email = trigger_data.get("user_email")
+            alert_name = trigger_data.get("alert_name")
+            calculation_mode = trigger_data.get("calculation_mode")
+            triggered_pairs = trigger_data.get("triggered_pairs", [])
+            alert_config = trigger_data.get("alert_config", {})
+            
+            if not user_email:
+                logger.warning("No user email found for RSI correlation alert notification")
+                return
+            
+            # Send email notification
+            success = await email_service.send_rsi_correlation_alert(
+                user_email=user_email,
+                alert_name=alert_name,
+                calculation_mode=calculation_mode,
+                triggered_pairs=triggered_pairs,
+                alert_config=alert_config
+            )
+            
+            if success:
+                logger.info(f"✅ RSI correlation alert email sent to {user_email}")
+            else:
+                logger.warning(f"⚠️ Failed to send RSI correlation alert email to {user_email}")
+            
+            # Log the trigger in database
+            await self._log_rsi_correlation_alert_trigger(trigger_data)
+            
+        except Exception as e:
+            logger.error(f"❌ Error sending RSI correlation alert notification: {e}")
+    
+    async def _log_rsi_correlation_alert_trigger(self, trigger_data: Dict[str, Any]):
+        """Log RSI correlation alert trigger to database"""
+        
+        try:
+            if not self.supabase_service_key:
+                logger.warning("Supabase service key not configured, skipping trigger logging")
+                return
+            
+            headers = {
+                "apikey": self.supabase_service_key,
+                "Authorization": f"Bearer {self.supabase_service_key}",
+                "Content-Type": "application/json"
+            }
+            
+            url = f"{self.supabase_url}/rest/v1/rsi_correlation_alert_triggers"
+            
+            # Log each triggered pair
+            for pair_data in trigger_data.get("triggered_pairs", []):
+                trigger_record = {
+                    "alert_id": trigger_data.get("alert_id"),
+                    "trigger_condition": pair_data.get("trigger_condition"),
+                    "symbol1": pair_data.get("symbol1"),
+                    "symbol2": pair_data.get("symbol2"),
+                    "timeframe": pair_data.get("timeframe"),
+                    "rsi1": pair_data.get("rsi1"),
+                    "rsi2": pair_data.get("rsi2"),
+                    "correlation_value": pair_data.get("correlation_value"),
+                    "current_price1": pair_data.get("current_price1"),
+                    "current_price2": pair_data.get("current_price2"),
+                    "price_change1": pair_data.get("price_change1"),
+                    "price_change2": pair_data.get("price_change2"),
+                    "triggered_at": datetime.now(timezone.utc).isoformat()
+                }
+                
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, headers=headers, json=trigger_record) as response:
+                        if response.status not in [200, 201]:
+                            logger.error(f"Failed to log RSI correlation trigger: {response.status}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error logging RSI correlation alert trigger: {e}")
+    
+    async def create_rsi_correlation_alert(self, alert_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create a new RSI correlation alert in Supabase"""
+        
+        try:
+            headers = {
+                "apikey": self.supabase_service_key,
+                "Authorization": f"Bearer {self.supabase_service_key}",
+                "Content-Type": "application/json"
+            }
+            
+            url = f"{self.supabase_url}/rest/v1/rsi_correlation_alerts"
+            
+            # Prepare alert data for Supabase
+            supabase_data = {
+                "alert_name": alert_data.get("alert_name"),
+                "user_email": alert_data.get("user_email"),
+                "correlation_pairs": alert_data.get("correlation_pairs", []),
+                "timeframes": alert_data.get("timeframes", ["1H"]),
+                "calculation_mode": alert_data.get("calculation_mode", "rsi_threshold"),
+                "rsi_period": alert_data.get("rsi_period", 14),
+                "rsi_overbought_threshold": alert_data.get("rsi_overbought_threshold", 70),
+                "rsi_oversold_threshold": alert_data.get("rsi_oversold_threshold", 30),
+                "correlation_window": alert_data.get("correlation_window", 50),
+                "alert_conditions": alert_data.get("alert_conditions", []),
+                "strong_correlation_threshold": alert_data.get("strong_correlation_threshold", 0.70),
+                "moderate_correlation_threshold": alert_data.get("moderate_correlation_threshold", 0.30),
+                "weak_correlation_threshold": alert_data.get("weak_correlation_threshold", 0.15),
+                "notification_methods": alert_data.get("notification_methods", ["email"]),
+                "alert_frequency": alert_data.get("alert_frequency", "once"),
+                "is_active": True,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=supabase_data) as response:
+                    if response.status in [200, 201]:
+                        result = await response.json()
+                        logger.info(f"✅ RSI correlation alert created: {result.get('id')}")
+                        return result
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"❌ Failed to create RSI correlation alert: {response.status} - {error_text}")
+                        return None
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating RSI correlation alert: {e}")
+            return None
+
+# Create global instance
+rsi_correlation_alert_service = RSICorrelationAlertService()

@@ -1,0 +1,203 @@
+================================================================================
+                        FX TRADING ALERT CACHE DATA BACKUP
+================================================================================
+Generated: 2025-09-18 10:56:40
+Cache Status: ACTIVE
+Total Users: 1
+Total Alerts: 3
+Last Refresh: 2025-09-18 05:26:42.560977+00:00
+================================================================================
+
+USER #1: 8d8562e0-47f9-4a74-9e36-3ae96b900c97
+================================================================================
+Total Alerts: 3
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ALERT #1: HEATMAP ALERT                                                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Type: heatmap                                                               │
+│ ID: d31c8cc9-19db-457f-bf4e-d0fb9e92583b                                   │
+│ Name: Testing                                                               │
+│ Active: True                                                                │
+│                                                                             │
+│ CONFIGURATION:                                                              │
+│ ├─ Pairs: ["EURUSD", "GBPUSD"]                                             │
+│ ├─ Timeframes: ["1H", "5M"]                                                │
+│ ├─ Selected Indicators: ["RSI", "EMA50"]                                   │
+│ ├─ Trading Style: dayTrader                                                │
+│ ├─ Buy Threshold: 70-100                                                   │
+│ ├─ Sell Threshold: 0-30                                                    │
+│ ├─ Notification Methods: ["browser"]                                        │
+│ ├─ Alert Frequency: every_15min                                            │
+│ └─ Trigger on Crossing: True                                               │
+│                                                                             │
+│ METADATA:                                                                   │
+│ ├─ Created At: 2025-09-18T03:51:17.555478+00:00                           │
+│ └─ Updated At: 2025-09-18T03:51:17.555478+00:00                           │
+│                                                                             │
+│ RAW JSON DATA:                                                              │
+│ {                                                                           │
+│   "type": "heatmap",                                                        │
+│   "id": "d31c8cc9-19db-457f-bf4e-d0fb9e92583b",                            │
+│   "alert_name": "Testing",                                                  │
+│   "is_active": true,                                                        │
+│   "pairs": ["EURUSD", "GBPUSD"],                                           │
+│   "timeframes": ["1H", "5M"],                                              │
+│   "selected_indicators": ["RSI", "EMA50"],                                 │
+│   "trading_style": "dayTrader",                                            │
+│   "buy_threshold_min": 70,                                                  │
+│   "buy_threshold_max": 100,                                                 │
+│   "sell_threshold_min": 0,                                                  │
+│   "sell_threshold_max": 30,                                                 │
+│   "notification_methods": ["browser"],                                      │
+│   "alert_frequency": "every_15min",                                        │
+│   "trigger_on_crossing": true,                                              │
+│   "created_at": "2025-09-18T03:51:17.555478+00:00",                       │
+│   "updated_at": "2025-09-18T03:51:17.555478+00:00"                        │
+│ }                                                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ALERT #2: RSI ALERT                                                         │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Type: rsi                                                                   │
+│ ID: 8754894e-cc4f-4a0f-b89c-4763226373fb                                   │
+│ Name: Test2                                                                 │
+│ Active: True                                                                │
+│                                                                             │
+│ CONFIGURATION:                                                              │
+│ ├─ Pairs: ["EURUSD"]                                                       │
+│ ├─ Timeframes: ["1H"]                                                      │
+│ ├─ RSI Period: 14                                                          │
+│ ├─ Overbought Threshold: 70                                                │
+│ ├─ Oversold Threshold: 30                                                  │
+│ ├─ Notification Methods: ["browser"]                                        │
+│ ├─ Alert Frequency: once                                                   │
+│ └─ Trigger on Crossing: True                                               │
+│                                                                             │
+│ METADATA:                                                                   │
+│ ├─ Created At: 2025-09-18T05:21:53.73207+00:00                            │
+│ └─ Updated At: 2025-09-18T05:21:53.73207+00:00                            │
+│                                                                             │
+│ RAW JSON DATA:                                                              │
+│ {                                                                           │
+│   "type": "rsi",                                                            │
+│   "id": "8754894e-cc4f-4a0f-b89c-4763226373fb",                            │
+│   "alert_name": "Test2",                                                    │
+│   "is_active": true,                                                        │
+│   "pairs": ["EURUSD"],                                                      │
+│   "timeframes": ["1H"],                                                     │
+│   "rsi_period": 14,                                                         │
+│   "overbought_threshold": 70,                                               │
+│   "oversold_threshold": 30,                                                 │
+│   "notification_methods": ["browser"],                                      │
+│   "alert_frequency": "once",                                                │
+│   "trigger_on_crossing": true,                                              │
+│   "created_at": "2025-09-18T05:21:53.73207+00:00",                        │
+│   "updated_at": "2025-09-18T05:21:53.73207+00:00"                         │
+│ }                                                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ALERT #3: RSI CORRELATION ALERT                                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ Type: rsi_correlation                                                       │
+│ ID: 9cedcc8b-7977-4877-863c-c5fe3aa56a5d                                   │
+│ Name: Test2                                                                 │
+│ Active: True                                                                │
+│                                                                             │
+│ CONFIGURATION:                                                              │
+│ ├─ Pairs: [] (Empty - No specific pairs)                                   │
+│ ├─ Timeframes: ["1H", "1M", "5M"]                                          │
+│ ├─ RSI Period: 16                                                          │
+│ ├─ Correlation Threshold: 0.7                                              │
+│ ├─ Notification Methods: ["browser"]                                        │
+│ ├─ Alert Frequency: once                                                   │
+│ └─ Trigger on Crossing: True                                               │
+│                                                                             │
+│ METADATA:                                                                   │
+│ ├─ Created At: 2025-09-18T03:38:25.27983+00:00                            │
+│ └─ Updated At: 2025-09-18T03:38:25.27983+00:00                            │
+│                                                                             │
+│ RAW JSON DATA:                                                              │
+│ {                                                                           │
+│   "type": "rsi_correlation",                                                │
+│   "id": "9cedcc8b-7977-4877-863c-c5fe3aa56a5d",                            │
+│   "alert_name": "Test2",                                                    │
+│   "is_active": true,                                                        │
+│   "pairs": [],                                                              │
+│   "timeframes": ["1H", "1M", "5M"],                                        │
+│   "rsi_period": 16,                                                         │
+│   "correlation_threshold": 0.7,                                             │
+│   "notification_methods": ["browser"],                                      │
+│   "alert_frequency": "once",                                                │
+│   "trigger_on_crossing": true,                                              │
+│   "created_at": "2025-09-18T03:38:25.27983+00:00",                        │
+│   "updated_at": "2025-09-18T03:38:25.27983+00:00"                         │
+│ }                                                                           │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+                                SUMMARY STATISTICS
+================================================================================
+Alert Type Distribution:
+├─ HEATMAP: 1 alert (33.3%)
+├─ RSI: 1 alert (33.3%)
+└─ RSI_CORRELATION: 1 alert (33.3%)
+
+Configuration Analysis:
+├─ Most Common Pairs: EURUSD (2 alerts), GBPUSD (1 alert)
+├─ Most Common Timeframes: 1H (3 alerts), 5M (2 alerts), 1M (1 alert)
+├─ Trading Styles: dayTrader (1 alert)
+├─ Alert Frequencies: once (2 alerts), every_15min (1 alert)
+├─ Notification Methods: browser (3 alerts)
+└─ All Alerts: Active (3 alerts)
+
+Technical Details:
+├─ Cache System: In-Memory Hashmap
+├─ Refresh Interval: 5 minutes
+├─ Database: Supabase (hyajwhtkwldrmlhfiuwg.supabase.co)
+├─ Authentication: Service Role Key (bypasses RLS)
+├─ Data Format: JSON with Pydantic validation
+└─ API Endpoints: /api/alerts/cache, /api/alerts/user/{id}, /api/alerts/refresh
+
+================================================================================
+                                SYSTEM STATUS
+================================================================================
+✅ Alert Cache: ACTIVE
+✅ Supabase Connection: CONNECTED
+✅ Data Integrity: VERIFIED
+✅ API Endpoints: READY
+✅ Background Refresh: ENABLED
+✅ Error Handling: IMPLEMENTED
+✅ Security: SERVICE ROLE KEY (RLS BYPASS)
+
+================================================================================
+                                USAGE EXAMPLES
+================================================================================
+1. Get All Cached Alerts:
+   curl -H "X-API-Key: your_token" "http://localhost:8000/api/alerts/cache"
+
+2. Get User-Specific Alerts:
+   curl -H "X-API-Key: your_token" "http://localhost:8000/api/alerts/user/8d8562e0-47f9-4a74-9e36-3ae96b900c97"
+
+3. Manual Cache Refresh:
+   curl -X POST -H "X-API-Key: your_token" "http://localhost:8000/api/alerts/refresh"
+
+4. Test Alert Cache:
+   python3 test_all_alerts_data.py
+
+================================================================================
+                                NOTES
+================================================================================
+- This backup contains the complete alert configuration data as of the generation time
+- All alert data is stored in memory and refreshed every 5 minutes
+- The service role key bypasses Row Level Security (RLS) policies
+- Alert cache is fully integrated with the FastAPI server
+- Data structure supports all three alert types: heatmap, rsi, rsi_correlation
+- Cache automatically handles new alerts created through the frontend
+- All timestamps are in UTC format
+
+================================================================================
+                                END OF BACKUP
+================================================================================

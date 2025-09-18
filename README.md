@@ -1,6 +1,6 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, and AI-powered news analysis for trading applications.
+A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, AI-powered news analysis, and comprehensive alert systems for trading applications.
 
 ## 🏗️ Architecture Overview
 
@@ -24,6 +24,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Real-time Data Streaming**: Live tick and OHLC data via WebSocket
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
+- **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
 - **Intelligent Caching**: Memory-efficient selective data caching
 - **High Performance**: 99.9% bandwidth reduction through selective streaming
 - **Scalable Architecture**: Async/await design for high concurrency
@@ -132,6 +133,11 @@ JBLANKED_API_URL=https://www.jblanked.com/news/api/forex-factory/calendar/week/
 JBLANKED_API_KEY=your_jblanked_key
 NEWS_UPDATE_INTERVAL_HOURS=24
 NEWS_CACHE_MAX_ITEMS=100
+
+# Alert System Configuration
+SENDGRID_API_KEY=your_sendgrid_api_key
+FROM_EMAIL=your_email@domain.com
+FROM_NAME=FX Labs Alerts
 ```
 
 ## 📡 API Documentation
@@ -158,6 +164,12 @@ NEWS_CACHE_MAX_ITEMS=100
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
 | `/api/news/refresh` | POST | Manual news refresh | Yes |
+| `/api/heatmap-alerts` | POST | Create heatmap alert | Yes |
+| `/api/heatmap-alerts/user/{email}` | GET | Get user heatmap alerts | Yes |
+| `/api/rsi-alerts` | POST | Create RSI alert | Yes |
+| `/api/rsi-alerts/user/{email}` | GET | Get user RSI alerts | Yes |
+| `/api/rsi-correlation-alerts` | POST | Create RSI correlation alert | Yes |
+| `/api/rsi-correlation-alerts/user/{email}` | GET | Get user RSI correlation alerts | Yes |
 
 ### 📰 News API Usage (External Source + Internal Endpoints)
 
@@ -319,18 +331,26 @@ ingress:
 ```
 Fxlabs.ai_Back_end/
 ├── app/
-│   ├── __init__.py             # App package
-│   ├── config.py               # Env-backed configuration (no functional change)
-│   ├── models.py               # Pydantic models and enums
-│   ├── mt5_utils.py            # MT5 helpers, OHLC cache, timeframe logic
-│   └── news.py                 # News fetching, AI analysis, scheduler, cache
-├── server.py                   # FastAPI app, routes & websockets (imports from app/*)
-├── requirements.txt            # Python dependencies
-├── config.yml                  # Cloudflare tunnel config
-├── config.env.example          # Environment variables template
-├── test_websocket_client.py    # WebSocket test client
-├── test_websocket.html         # HTML test client
-└── README.md                   # This file
+│   ├── __init__.py                    # App package
+│   ├── config.py                      # Env-backed configuration (no functional change)
+│   ├── models.py                      # Pydantic models and enums
+│   ├── mt5_utils.py                   # MT5 helpers, OHLC cache, timeframe logic
+│   ├── news.py                        # News fetching, AI analysis, scheduler, cache
+│   ├── alert_cache.py                 # Alert configuration cache management
+│   ├── email_service.py               # SendGrid email service for alerts
+│   ├── heatmap_alert_service.py       # Heatmap alert processing
+│   ├── rsi_alert_service.py           # RSI alert processing
+│   └── rsi_correlation_alert_service.py # RSI correlation alert processing
+├── server.py                          # FastAPI app, routes & websockets (imports from app/*)
+├── requirements.txt                   # Python dependencies
+├── config.yml                         # Cloudflare tunnel config
+├── config.env.example                 # Environment variables template
+├── test_websocket_client.py           # WebSocket test client
+├── test_websocket.html                # HTML test client
+├── generate_alert_backup.py           # Alert data backup utility
+├── alert_data_backup.txt              # Alert configuration backup
+├── alert_system_test_results_*.txt    # Comprehensive test results
+└── README.md                          # This file
 ```
 
 The modular structure isolates responsibilities while preserving all existing behavior and endpoints. Environment variable names and usage remain unchanged.
@@ -341,6 +361,8 @@ The modular structure isolates responsibilities while preserving all existing be
 - **WebSockets**: Real-time communication
 - **Pydantic**: Data validation and serialization
 - **aiohttp**: Async HTTP client for external APIs
+- **SendGrid**: Email service for alert notifications
+- **Supabase**: Database for alert configurations
 
 ## 📊 Supported Data Types
 

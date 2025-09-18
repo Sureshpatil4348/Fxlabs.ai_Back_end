@@ -15,4 +15,9 @@ NEWS_CACHE_MAX_ITEMS = int(os.environ.get("NEWS_CACHE_MAX_ITEMS", "100"))
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8000"))
 
+# Email service configuration
+SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
+FROM_EMAIL = os.environ.get("FROM_EMAIL", "alerts@fxlabs.ai")
+FROM_NAME = os.environ.get("FROM_NAME", "FX Labs Alerts")
+
 
