@@ -1,6 +1,7 @@
 import os
 import asyncio
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail, Email, To, Content
@@ -11,19 +12,175 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class EmailService:
-    """SendGrid email service for sending heatmap alerts"""
+    """SendGrid email service for sending heatmap alerts with cooldown mechanism"""
     
     def __init__(self):
-        self.sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
-        self.from_email = os.environ.get("FROM_EMAIL", "Pinaxalabs@gmail.com")
+        self.sendgrid_api_key = os.environ.get("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")
+        self.from_email = os.environ.get("FROM_EMAIL", "civawoc344@camjoint.com")
         self.from_name = os.environ.get("FROM_NAME", "FX Labs Alerts")
+        
+        # Smart cooldown mechanism - value-based cooldown for similar alerts
+        self.cooldown_minutes = 10  # Reduced to 10 minutes for better responsiveness
+        self.rsi_threshold = 5.0  # RSI values within 5 points are considered similar
+        self.alert_cooldowns = {}  # {alert_hash: last_sent_timestamp}
+        self.alert_values = {}  # {alert_hash: last_sent_values} for value comparison
         
         if not self.sendgrid_api_key:
             logger.warning("⚠️ SendGrid API key not found. Email notifications will be disabled.")
             self.sg = None
         else:
             self.sg = SendGridAPIClient(api_key=self.sendgrid_api_key)
-            logger.info("✅ SendGrid email service initialized")
+            logger.info("✅ SendGrid email service initialized with smart value-based cooldown (10min, 5 RSI threshold)")
+    
+    def _generate_alert_hash(self, user_email: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], calculation_mode: str = None) -> str:
+        """Generate a unique hash for similar alerts to implement value-based cooldown (supports all alert types)"""
+        # Create a normalized string from alert data including actual values
+        pairs_summary = []
+        
+        for pair in triggered_pairs:
+            # RSI Alerts: {symbol: "EURUSD", rsi: 70.1, condition: "overbought"}
+            if 'rsi' in pair and 'symbol' in pair:
+                symbol = pair['symbol']
+                condition = pair.get('condition', '')
+                rsi_value = pair['rsi']
+                rsi_rounded = round(float(rsi_value), 1)
+                pairs_summary.append(f"{symbol}:{condition}:{rsi_rounded}")
+            
+            # RSI Correlation Alerts: {symbol1: "EURUSD", symbol2: "GBPUSD", rsi1: 70.1, rsi2: 30.2}
+            elif 'rsi1' in pair and 'symbol1' in pair:
+                symbol1 = pair['symbol1']
+                symbol2 = pair['symbol2']
+                rsi1 = round(float(pair['rsi1']), 1)
+                rsi2 = round(float(pair['rsi2']), 1)
+                condition = pair.get('trigger_condition', '')
+                pairs_summary.append(f"{symbol1}_{symbol2}:{condition}:{rsi1}_{rsi2}")
+            
+            # Heatmap Alerts: {symbol: "EURUSD", strength: 75.5, signal: "buy"}
+            elif 'strength' in pair and 'symbol' in pair:
+                symbol = pair['symbol']
+                signal = pair.get('signal', '')
+                strength = round(float(pair['strength']), 1)
+                pairs_summary.append(f"{symbol}:{signal}:{strength}")
+                
+                # Also include RSI if available in indicators
+                indicators = pair.get('indicators', {})
+                if 'rsi' in indicators:
+                    rsi = round(float(indicators['rsi']), 1)
+                    pairs_summary.append(f"{symbol}:rsi:{rsi}")
+            
+            # Fallback for unknown structure
+            else:
+                symbol = pair.get('symbol', pair.get('symbol1', 'unknown'))
+                condition = pair.get('condition', pair.get('trigger_condition', 'unknown'))
+                pairs_summary.append(f"{symbol}:{condition}")
+        
+        # Sort to ensure consistent hashing
+        pairs_summary.sort()
+        alert_data = f"{user_email}:{alert_name}:{':'.join(pairs_summary)}"
+        
+        # Include calculation mode for RSI correlation alerts
+        if calculation_mode:
+            alert_data += f":{calculation_mode}"
+        
+        # Generate hash
+        return hashlib.md5(alert_data.encode()).hexdigest()
+    
+    def _is_alert_in_cooldown(self, alert_hash: str, triggered_pairs: List[Dict[str, Any]] = None) -> bool:
+        """Check if alert is still in cooldown period with value-based intelligence"""
+        if alert_hash not in self.alert_cooldowns:
+            return False
+        
+        last_sent = self.alert_cooldowns[alert_hash]
+        cooldown_duration = timedelta(minutes=self.cooldown_minutes)
+        
+        # Check time-based cooldown first
+        if datetime.now(timezone.utc) - last_sent >= cooldown_duration:
+            return False
+        
+        # If we have triggered pairs, check value-based cooldown
+        if triggered_pairs and alert_hash in self.alert_values:
+            return self._is_value_similar(triggered_pairs, self.alert_values[alert_hash])
+        
+        # Fallback to time-based cooldown
+        return True
+    
+    def _is_value_similar(self, current_pairs: List[Dict[str, Any]], last_pairs: List[Dict[str, Any]]) -> bool:
+        """Check if current values are similar to last sent values (supports all alert types)"""
+        if not current_pairs or not last_pairs:
+            return True  # If no data, apply cooldown
+        
+        # Extract values based on alert type
+        current_values = self._extract_alert_values(current_pairs)
+        last_values = self._extract_alert_values(last_pairs)
+        
+        # Check if any values are significantly different
+        for key, current_value in current_values.items():
+            if key in last_values:
+                last_value = last_values[key]
+                value_diff = abs(float(current_value) - float(last_value))
+                
+                # If value difference is significant, allow the alert
+                if value_diff >= self.rsi_threshold:
+                    logger.info(f"🔄 Value difference {value_diff:.1f} >= {self.rsi_threshold} for {key}. Allowing alert despite cooldown.")
+                    return False
+        
+        # All values are similar, apply cooldown
+        return True
+    
+    def _extract_alert_values(self, pairs: List[Dict[str, Any]]) -> Dict[str, float]:
+        """Extract comparable values from different alert types"""
+        values = {}
+        
+        for pair in pairs:
+            # RSI Alerts: {symbol: "EURUSD", rsi: 70.1, condition: "overbought"}
+            if 'rsi' in pair and 'symbol' in pair:
+                symbol = pair['symbol']
+                rsi = pair['rsi']
+                values[f"{symbol}_rsi"] = rsi
+            
+            # RSI Correlation Alerts: {symbol1: "EURUSD", symbol2: "GBPUSD", rsi1: 70.1, rsi2: 30.2}
+            elif 'rsi1' in pair and 'symbol1' in pair:
+                symbol1 = pair['symbol1']
+                symbol2 = pair['symbol2']
+                rsi1 = pair['rsi1']
+                rsi2 = pair['rsi2']
+                values[f"{symbol1}_{symbol2}_rsi1"] = rsi1
+                values[f"{symbol1}_{symbol2}_rsi2"] = rsi2
+            
+            # Heatmap Alerts: {symbol: "EURUSD", strength: 75.5, indicators: {rsi: 70.1}}
+            elif 'strength' in pair and 'symbol' in pair:
+                symbol = pair['symbol']
+                strength = pair['strength']
+                values[f"{symbol}_strength"] = strength
+                
+                # Also check for RSI in indicators if available
+                indicators = pair.get('indicators', {})
+                if 'rsi' in indicators:
+                    rsi = indicators['rsi']
+                    values[f"{symbol}_rsi"] = rsi
+        
+        return values
+    
+    def _update_alert_cooldown(self, alert_hash: str, triggered_pairs: List[Dict[str, Any]] = None):
+        """Update the last sent timestamp and values for an alert"""
+        self.alert_cooldowns[alert_hash] = datetime.now(timezone.utc)
+        if triggered_pairs:
+            self.alert_values[alert_hash] = triggered_pairs.copy()
+    
+    def _cleanup_old_cooldowns(self):
+        """Clean up old cooldown entries to prevent memory leaks"""
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)  # Keep only last 24 hours
+        self.alert_cooldowns = {
+            alert_hash: timestamp 
+            for alert_hash, timestamp in self.alert_cooldowns.items()
+            if timestamp > cutoff_time
+        }
+        # Also cleanup values for removed cooldowns
+        self.alert_values = {
+            alert_hash: values 
+            for alert_hash, values in self.alert_values.items()
+            if alert_hash in self.alert_cooldowns
+        }
     
     async def send_heatmap_alert(
         self, 
@@ -32,11 +189,21 @@ class EmailService:
         triggered_pairs: List[Dict[str, Any]],
         alert_config: Dict[str, Any]
     ) -> bool:
-        """Send heatmap alert email to user"""
+        """Send heatmap alert email to user with cooldown protection"""
         
         if not self.sg:
             logger.warning("SendGrid not configured, skipping email")
             return False
+        
+        # Check smart cooldown before sending
+        alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
+        
+        if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
+            logger.info(f"🕐 Heatmap alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
+            return False
+        
+        # Clean up old cooldowns periodically
+        self._cleanup_old_cooldowns()
         
         try:
             # Create email content
@@ -63,6 +230,8 @@ class EmailService:
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ Heatmap alert email sent to {user_email}")
+                # Update cooldown after successful send
+                self._update_alert_cooldown(alert_hash, triggered_pairs)
                 return True
             else:
                 logger.error(f"❌ Failed to send email: {response.status_code} - {response.body}")
@@ -240,11 +409,21 @@ class EmailService:
         triggered_pairs: List[Dict[str, Any]],
         alert_config: Dict[str, Any]
     ) -> bool:
-        """Send RSI alert email to user"""
+        """Send RSI alert email to user with cooldown protection"""
         
         if not self.sg:
             logger.warning("SendGrid not configured, skipping RSI alert email")
             return False
+        
+        # Check smart cooldown before sending
+        alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
+        
+        if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
+            logger.info(f"🕐 RSI alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
+            return False
+        
+        # Clean up old cooldowns periodically
+        self._cleanup_old_cooldowns()
         
         try:
             # Create email content
@@ -271,6 +450,8 @@ class EmailService:
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ RSI alert email sent to {user_email}")
+                # Update cooldown after successful send
+                self._update_alert_cooldown(alert_hash, triggered_pairs)
                 return True
             else:
                 logger.error(f"❌ Failed to send RSI alert email: {response.status_code} - {response.body}")
@@ -442,11 +623,21 @@ class EmailService:
         triggered_pairs: List[Dict[str, Any]],
         alert_config: Dict[str, Any]
     ) -> bool:
-        """Send RSI correlation alert email to user"""
+        """Send RSI correlation alert email to user with cooldown protection"""
         
         if not self.sg:
             logger.warning("SendGrid not configured, skipping RSI correlation alert email")
             return False
+        
+        # Check smart cooldown before sending
+        alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs, calculation_mode)
+        
+        if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
+            logger.info(f"🕐 RSI correlation alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
+            return False
+        
+        # Clean up old cooldowns periodically
+        self._cleanup_old_cooldowns()
         
         try:
             # Create email content
@@ -473,6 +664,8 @@ class EmailService:
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ RSI correlation alert email sent to {user_email}")
+                # Update cooldown after successful send
+                self._update_alert_cooldown(alert_hash, triggered_pairs)
                 return True
             else:
                 logger.error(f"❌ Failed to send RSI correlation alert email: {response.status_code} - {response.body}")

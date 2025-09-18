@@ -25,6 +25,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
+- **Smart Email Cooldown**: Value-based cooldown prevents spam while allowing significant RSI changes
 - **Intelligent Caching**: Memory-efficient selective data caching
 - **High Performance**: 99.9% bandwidth reduction through selective streaming
 - **Scalable Architecture**: Async/await design for high concurrency
@@ -477,6 +478,58 @@ The system provides comprehensive logging for:
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🧠 Smart Email Alert Cooldown System
+
+### Overview
+The email service includes an intelligent value-based cooldown mechanism that prevents spam emails while allowing significant market movements to trigger alerts.
+
+### How It Works
+- **10-minute base cooldown**: Once an alert email is sent, similar alerts are blocked for 10 minutes
+- **Value-based intelligence**: RSI values within 5 points are considered similar and trigger cooldown
+- **Smart breakthrough**: If RSI changes by 5+ points, the alert breaks through cooldown and is sent
+- **Automatic cleanup**: Old cooldown entries are automatically cleaned up after 24 hours
+
+### Example Scenarios
+```
+✅ SMART COOLDOWN EXAMPLES:
+
+1. RSI 70.1 for EURUSD → Email sent ✅
+2. RSI 70.2 for EURUSD → Email blocked (cooldown, <5 point diff) 🕐
+3. RSI 70.5 for EURUSD → Email blocked (cooldown, <5 point diff) 🕐
+4. RSI 75.1 for EURUSD → Email sent ✅ (5+ point difference breaks cooldown)
+5. RSI 30.1 for EURUSD → Email sent ✅ (oversold, completely different)
+
+❌ OLD SYSTEM PROBLEMS (FIXED):
+- RSI 70.1 → 80.1 → 30.1 all blocked (same "overbought" condition)
+- User missed strong signals and oversold opportunities
+```
+
+### Benefits
+- **Prevents spam**: No more multiple emails for similar RSI values
+- **Allows important signals**: Significant RSI changes (5+ points) break through cooldown
+- **Market-aware**: Understands that RSI 70 vs 80 vs 30 are different trading signals
+- **User-friendly**: Users get meaningful alerts without email fatigue
+- **Efficient**: Reduces email costs while maintaining alert quality
+
+### Configuration
+```python
+self.cooldown_minutes = 10      # Base cooldown period
+self.rsi_threshold = 5.0        # RSI difference threshold for breakthrough
+```
+
+### Technical Details
+- **Multi-alert support**: Works with RSI, Heatmap, and RSI Correlation alerts
+- **Smart value extraction**: Handles different data structures for each alert type
+- **Hash generation**: Includes actual values (RSI, strength, correlation) rounded to 1 decimal
+- **Value comparison**: Compares current vs last sent values for breakthrough detection
+- **Breakthrough logic**: If any value difference ≥ threshold, alert is sent
+- **Memory management**: Automatic cleanup prevents memory leaks
+
+### Alert Type Support
+- **RSI Alerts**: Tracks `rsi` values (e.g., 70.1 → 75.1 = breakthrough)
+- **Heatmap Alerts**: Tracks `strength` values and RSI from indicators
+- **RSI Correlation Alerts**: Tracks `rsi1` and `rsi2` values separately
 
 ## 🆘 Support
 
