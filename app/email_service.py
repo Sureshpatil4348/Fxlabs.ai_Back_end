@@ -14,7 +14,7 @@ class EmailService:
     """SendGrid email service for sending heatmap alerts"""
     
     def __init__(self):
-        self.sendgrid_api_key = os.environ.get("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")
+        self.sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
         self.from_email = os.environ.get("FROM_EMAIL", "Pinaxalabs@gmail.com")
         self.from_name = os.environ.get("FROM_NAME", "FX Labs Alerts")
         
