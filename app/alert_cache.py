@@ -19,6 +19,13 @@ class AlertCache:
         self.supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
         self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5YWp3aHRrd2xkcm1saGZpdXdnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjI5NjUzNCwiZXhwIjoyMDcxODcyNTM0fQ.UDqYHY5Io0o-fQTswCYQmMdC6UCPQI2gf3aTb9o09SE")
         
+        # HTTP timeout configuration for network requests
+        self.timeout = aiohttp.ClientTimeout(
+            connect=3,      # 3 seconds to establish connection
+            sock_read=7,    # 7 seconds to read data from socket
+            total=10        # 10 seconds total timeout for entire request
+        )
+        
         if not self.supabase_url or not self.supabase_service_key:
             print("⚠️ Supabase credentials not found. Alert caching will be disabled.")
     
@@ -182,7 +189,7 @@ class AlertCache:
                 "is_active": "eq.true"
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
                 async with session.get(url, headers=headers, params=params) as response:
                     if response.status == 200:
                         return await response.json()
@@ -202,7 +209,7 @@ class AlertCache:
                 "is_active": "eq.true"
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
                 async with session.get(url, headers=headers, params=params) as response:
                     if response.status == 200:
                         return await response.json()
@@ -222,7 +229,7 @@ class AlertCache:
                 "is_active": "eq.true"
             }
             
-            async with aiohttp.ClientSession() as session:
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
                 async with session.get(url, headers=headers, params=params) as response:
                     if response.status == 200:
                         return await response.json()

@@ -8,8 +8,8 @@ from sendgrid.helpers.mail import Mail, Email, To, Content
 import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 class EmailService:
     """SendGrid email service for sending heatmap alerts with cooldown mechanism"""
@@ -38,11 +38,12 @@ class EmailService:
         pairs_summary = []
         
         for pair in triggered_pairs:
-            # RSI Alerts: {symbol: "EURUSD", rsi: 70.1, condition: "overbought"}
-            if 'rsi' in pair and 'symbol' in pair:
+            # RSI Alerts: {symbol: "EURUSD", rsi: 70.1, condition: "overbought"} or {symbol: "EURUSD", rsi_value: 70.1, trigger_condition: "overbought"}
+            if ('rsi' in pair or 'rsi_value' in pair) and 'symbol' in pair:
                 symbol = pair['symbol']
-                condition = pair.get('condition', '')
-                rsi_value = pair['rsi']
+                # Support both field name variants
+                condition = pair.get('condition', pair.get('trigger_condition', ''))
+                rsi_value = pair.get('rsi', pair.get('rsi_value'))
                 rsi_rounded = round(float(rsi_value), 1)
                 pairs_summary.append(f"{symbol}:{condition}:{rsi_rounded}")
             
@@ -71,6 +72,7 @@ class EmailService:
             # Fallback for unknown structure
             else:
                 symbol = pair.get('symbol', pair.get('symbol1', 'unknown'))
+                # Support both field name variants
                 condition = pair.get('condition', pair.get('trigger_condition', 'unknown'))
                 pairs_summary.append(f"{symbol}:{condition}")
         
@@ -82,8 +84,8 @@ class EmailService:
         if calculation_mode:
             alert_data += f":{calculation_mode}"
         
-        # Generate hash
-        return hashlib.md5(alert_data.encode()).hexdigest()
+        # Generate hash using secure algorithm
+        return hashlib.blake2b(alert_data.encode(), digest_size=32).hexdigest()
     
     def _is_alert_in_cooldown(self, alert_hash: str, triggered_pairs: List[Dict[str, Any]] = None) -> bool:
         """Check if alert is still in cooldown period with value-based intelligence"""

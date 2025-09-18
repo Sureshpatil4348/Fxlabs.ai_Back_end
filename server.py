@@ -2,10 +2,11 @@ import asyncio
 import os
 import signal
 import sys
-from collections import deque
+from collections import deque, defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Tuple
+import re
 
 import MetaTrader5 as mt5
 import orjson
@@ -100,10 +101,54 @@ news_cache_metadata: Dict[str, any] = {
     "is_updating": False
 }
 
+# Rate limiting for test emails
+test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
+TEST_EMAIL_RATE_LIMIT = 5  # Max 5 test emails per hour per API key
+TEST_EMAIL_RATE_WINDOW = timedelta(hours=1)
+
+# Allowed domains for test emails (configurable via environment)
+ALLOWED_EMAIL_DOMAINS = os.environ.get("ALLOWED_EMAIL_DOMAINS", "gmail.com,yahoo.com,outlook.com,hotmail.com").split(",")
+ALLOWED_EMAIL_DOMAINS = [domain.strip().lower() for domain in ALLOWED_EMAIL_DOMAINS if domain.strip()]
+
 def require_api_token_header(x_api_key: Optional[str] = None):
     # For REST: expect header "X-API-Key"
     if API_TOKEN and x_api_key != API_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+def check_test_email_rate_limit(api_key: str) -> bool:
+    """Check if API key has exceeded test email rate limit"""
+    now = datetime.now(timezone.utc)
+    cutoff_time = now - TEST_EMAIL_RATE_WINDOW
+    
+    # Clean old entries
+    test_email_rate_limits[api_key] = [
+        timestamp for timestamp in test_email_rate_limits[api_key] 
+        if timestamp > cutoff_time
+    ]
+    
+    # Check if under limit
+    if len(test_email_rate_limits[api_key]) >= TEST_EMAIL_RATE_LIMIT:
+        return False
+    
+    # Record this request
+    test_email_rate_limits[api_key].append(now)
+    return True
+
+def validate_test_email_recipient(email: str) -> bool:
+    """Validate that email recipient is allowed"""
+    if not email or not isinstance(email, str):
+        return False
+    
+    # Basic email format validation
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    if not re.match(email_pattern, email):
+        return False
+    
+    # Extract domain
+    domain = email.split('@')[1].lower()
+    
+    # Check if domain is allowed
+    return domain in ALLOWED_EMAIL_DOMAINS
 
 def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
     """Convert MT5 rate data to OHLC model"""
@@ -422,6 +467,14 @@ async def test_heatmap_alert_email(
 ):
     """Send a test email to verify email service is working"""
     try:
+        # Check rate limit
+        if not check_test_email_rate_limit(x_api_key or "anonymous"):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Maximum 5 test emails per hour.")
+        
+        # Validate recipient email
+        if not validate_test_email_recipient(user_email):
+            raise HTTPException(status_code=403, detail="Forbidden recipient. Only allowed domains are permitted.")
+        
         success = await email_service.send_test_email(user_email)
         
         if success:
@@ -429,6 +482,8 @@ async def test_heatmap_alert_email(
         else:
             raise HTTPException(status_code=500, detail="Failed to send test email")
             
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -512,6 +567,14 @@ async def test_rsi_alert_email(
 ):
     """Send a test RSI alert email to verify email service is working"""
     try:
+        # Check rate limit
+        if not check_test_email_rate_limit(x_api_key or "anonymous"):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Maximum 5 test emails per hour.")
+        
+        # Validate recipient email
+        if not validate_test_email_recipient(user_email):
+            raise HTTPException(status_code=403, detail="Forbidden recipient. Only allowed domains are permitted.")
+        
         success = await email_service.send_test_email(user_email)
         
         if success:
@@ -519,6 +582,8 @@ async def test_rsi_alert_email(
         else:
             raise HTTPException(status_code=500, detail="Failed to send test email")
             
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -609,6 +674,14 @@ async def test_rsi_correlation_alert_email(
 ):
     """Send a test RSI correlation alert email to verify email service is working"""
     try:
+        # Check rate limit
+        if not check_test_email_rate_limit(x_api_key or "anonymous"):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Maximum 5 test emails per hour.")
+        
+        # Validate recipient email
+        if not validate_test_email_recipient(user_email):
+            raise HTTPException(status_code=403, detail="Forbidden recipient. Only allowed domains are permitted.")
+        
         success = await email_service.send_test_email(user_email)
         
         if success:
@@ -616,6 +689,8 @@ async def test_rsi_correlation_alert_email(
         else:
             raise HTTPException(status_code=500, detail="Failed to send test email")
             
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -648,6 +723,26 @@ async def check_rsi_correlation_alerts_manual(
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+async def _check_alerts_safely(tick_data: Dict[str, Any]) -> None:
+    """Safely check all alert types without blocking the main loop"""
+    try:
+        # Check heatmap alerts
+        await heatmap_alert_service.check_heatmap_alerts(tick_data)
+    except Exception as e:
+        print(f"❌ Error checking heatmap alerts: {e}")
+    
+    try:
+        # Check RSI alerts
+        await rsi_alert_service.check_rsi_alerts(tick_data)
+    except Exception as e:
+        print(f"❌ Error checking RSI alerts: {e}")
+    
+    try:
+        # Check RSI correlation alerts
+        await rsi_correlation_alert_service.check_rsi_correlation_alerts(tick_data)
+    except Exception as e:
+        print(f"❌ Error checking RSI correlation alerts: {e}")
 
 class WSClient:
     def __init__(self, websocket: WebSocket, token: str):
@@ -745,22 +840,14 @@ class WSClient:
         if updates:
             await self.websocket.send_bytes(orjson.dumps({"type": "ticks", "data": updates}))
             
-            # Check for heatmap alerts on tick updates
-            try:
-                tick_data = {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "symbols": list(tick_symbols),
-                    "tick_data": updates
-                }
-                await heatmap_alert_service.check_heatmap_alerts(tick_data)
-                
-                # Check RSI alerts
-                await rsi_alert_service.check_rsi_alerts(tick_data)
-                
-                # Check RSI correlation alerts
-                await rsi_correlation_alert_service.check_rsi_correlation_alerts(tick_data)
-            except Exception as e:
-                print(f"❌ Error checking alerts: {e}")
+            # Check for alerts on tick updates (non-blocking background task)
+            tick_data = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "symbols": list(tick_symbols),
+                "tick_data": updates
+            }
+            # Create background task to check alerts without blocking the tick loop
+            asyncio.create_task(_check_alerts_safely(tick_data))
     
     async def _send_scheduled_ohlc_updates(self):
         """Send OHLC updates when timeframe periods complete"""

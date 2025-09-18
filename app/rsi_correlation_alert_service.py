@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import aiohttp
 import json
@@ -23,6 +23,36 @@ class RSICorrelationAlertService:
         self.supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
         self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
         self.last_triggered_alerts: Dict[str, datetime] = {}  # Track last trigger time per alert
+    
+    def _should_trigger_alert(self, alert: Dict[str, Any]) -> bool:
+        """Check if alert should be triggered based on alert_frequency setting"""
+        alert_id = alert.get("id")
+        if not alert_id:
+            return True  # If no ID, allow trigger (shouldn't happen in normal operation)
+        
+        alert_frequency = alert.get("alert_frequency", "once")
+        
+        # If never triggered before, allow trigger
+        if alert_id not in self.last_triggered_alerts:
+            return True
+        
+        last_triggered = self.last_triggered_alerts[alert_id]
+        now = datetime.now(timezone.utc)
+        
+        # Determine cooldown period based on frequency
+        if alert_frequency == "once":
+            return False  # Once means never trigger again after first trigger
+        elif alert_frequency == "hourly":
+            cooldown_duration = timedelta(hours=1)
+        elif alert_frequency == "daily":
+            cooldown_duration = timedelta(days=1)
+        elif alert_frequency == "weekly":
+            cooldown_duration = timedelta(weeks=1)
+        else:
+            # Default to 5 minutes for unknown frequencies
+            cooldown_duration = timedelta(minutes=5)
+        
+        return now - last_triggered >= cooldown_duration
         
     async def check_rsi_correlation_alerts(self, tick_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Check all RSI correlation alerts against current tick data"""
@@ -36,11 +66,22 @@ class RSICorrelationAlertService:
             for user_id, user_alerts in all_alerts.items():
                 for alert in user_alerts:
                     if alert.get("type") == "rsi_correlation" and alert.get("is_active", True):
+                        alert_id = alert.get("id")
+                        if not alert_id:
+                            continue
+                        
+                        # Check if this alert should be triggered based on frequency
+                        if not self._should_trigger_alert(alert):
+                            continue
+                        
                         # Check if this alert should be triggered
                         trigger_result = await self._check_single_rsi_correlation_alert(alert, tick_data)
                         
                         if trigger_result:
                             triggered_alerts.append(trigger_result)
+                            
+                            # Update last triggered time immediately after determining trigger
+                            self.last_triggered_alerts[alert_id] = datetime.now(timezone.utc)
                             
                             # Send email notification if configured
                             if "email" in alert.get("notification_methods", []):
@@ -58,7 +99,8 @@ class RSICorrelationAlertService:
         try:
             alert_id = alert.get("id")
             alert_name = alert.get("alert_name")
-            correlation_pairs = alert.get("correlation_pairs", [])
+            # Support both field names for backward compatibility
+            correlation_pairs = alert.get("pairs", alert.get("correlation_pairs", []))
             timeframes = alert.get("timeframes", ["1H"])
             calculation_mode = alert.get("calculation_mode", "rsi_threshold")
             alert_conditions = alert.get("alert_conditions", [])
@@ -474,7 +516,7 @@ class RSICorrelationAlertService:
             supabase_data = {
                 "alert_name": alert_data.get("alert_name"),
                 "user_email": alert_data.get("user_email"),
-                "correlation_pairs": alert_data.get("correlation_pairs", []),
+                "correlation_pairs": alert_data.get("pairs", alert_data.get("correlation_pairs", [])),
                 "timeframes": alert_data.get("timeframes", ["1H"]),
                 "calculation_mode": alert_data.get("calculation_mode", "rsi_threshold"),
                 "rsi_period": alert_data.get("rsi_period", 14),

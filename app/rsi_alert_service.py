@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 import aiohttp
 import json
@@ -22,6 +22,20 @@ class RSIAlertService:
         self.supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
         self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
         self.last_triggered_alerts: Dict[str, datetime] = {}  # Track last trigger time per alert
+        self.default_cooldown_seconds = 300  # 5 minutes default cooldown
+    
+    def _should_trigger_alert(self, alert_id: str, cooldown_seconds: int = None) -> bool:
+        """Check if alert should be triggered based on cooldown period"""
+        if cooldown_seconds is None:
+            cooldown_seconds = self.default_cooldown_seconds
+        
+        if alert_id not in self.last_triggered_alerts:
+            return True
+        
+        last_triggered = self.last_triggered_alerts[alert_id]
+        cooldown_duration = timedelta(seconds=cooldown_seconds)
+        
+        return datetime.now(timezone.utc) - last_triggered >= cooldown_duration
         
     async def check_rsi_alerts(self, tick_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Check all RSI alerts against current tick data"""
@@ -35,11 +49,22 @@ class RSIAlertService:
             for user_id, user_alerts in all_alerts.items():
                 for alert in user_alerts:
                     if alert.get("type") == "rsi" and alert.get("is_active", True):
+                        alert_id = alert.get("id")
+                        if not alert_id:
+                            continue
+                        
+                        # Check if this alert should be triggered based on cooldown
+                        if not self._should_trigger_alert(alert_id):
+                            continue
+                        
                         # Check if this alert should be triggered
                         trigger_result = await self._check_single_rsi_alert(alert, tick_data)
                         
                         if trigger_result:
                             triggered_alerts.append(trigger_result)
+                            
+                            # Update last triggered time
+                            self.last_triggered_alerts[alert_id] = datetime.now(timezone.utc)
                             
                             # Send email notification if configured
                             if "email" in alert.get("notification_methods", []):

@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Timeframe(str, Enum):
@@ -145,7 +145,7 @@ class RSICorrelationAlertRequest(BaseModel):
     alert_name: str
     user_id: Optional[str] = None
     user_email: str
-    correlation_pairs: List[List[str]]  # List of [symbol1, symbol2] pairs
+    pairs: List[List[str]] = Field(alias="correlation_pairs")  # List of [symbol1, symbol2] pairs
     timeframes: List[str] = ["1H"]
     calculation_mode: str = "rsi_threshold"  # "rsi_threshold" or "real_correlation"
     rsi_period: int = 14
@@ -158,6 +158,9 @@ class RSICorrelationAlertRequest(BaseModel):
     weak_correlation_threshold: float = 0.15
     notification_methods: List[str] = ["email"]
     alert_frequency: str = "once"
+    
+    class Config:
+        allow_population_by_field_name = True
 
 
 class RSICorrelationAlertResponse(BaseModel):
@@ -165,7 +168,7 @@ class RSICorrelationAlertResponse(BaseModel):
     alert_name: str
     user_id: Optional[str] = None
     user_email: str
-    correlation_pairs: List[List[str]]
+    pairs: List[List[str]] = Field(alias="correlation_pairs")
     timeframes: List[str]
     calculation_mode: str
     rsi_period: int
@@ -181,6 +184,9 @@ class RSICorrelationAlertResponse(BaseModel):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    
+    class Config:
+        allow_population_by_field_name = True
 
 
 class HeatmapAlertTrigger(BaseModel):
