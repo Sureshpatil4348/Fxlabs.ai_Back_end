@@ -12,6 +12,10 @@ JBLANKED_API_KEY = os.environ.get("JBLANKED_API_KEY", "OZaABMUo")
 NEWS_UPDATE_INTERVAL_HOURS = int(os.environ.get("NEWS_UPDATE_INTERVAL_HOURS", "24"))
 NEWS_CACHE_MAX_ITEMS = int(os.environ.get("NEWS_CACHE_MAX_ITEMS", "100"))
 
+# Filesystem-backed news cache
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+NEWS_CACHE_FILE = os.environ.get("NEWS_CACHE_FILE", os.path.join(BASE_DIR, "news_cache.json"))
+
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8000"))
 

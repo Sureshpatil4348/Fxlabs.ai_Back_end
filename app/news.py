@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 import re
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
@@ -12,6 +13,7 @@ from .config import (
     NEWS_CACHE_MAX_ITEMS,
     NEWS_UPDATE_INTERVAL_HOURS,
     PERPLEXITY_API_KEY,
+    NEWS_CACHE_FILE,
 )
 from .models import NewsAnalysis, NewsItem
 
@@ -104,6 +106,121 @@ news_cache_metadata: Dict[str, any] = {
     "next_update_time": None,
     "is_updating": False,
 }
+
+
+def _ensure_parent_dir(file_path: str) -> None:
+    try:
+        parent = os.path.dirname(file_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+    except Exception:
+        pass
+
+
+def _serialize_datetime(dt: Optional[datetime]) -> Optional[str]:
+    if dt is None:
+        return None
+    try:
+        # Ensure UTC ISO with Z
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt.isoformat().replace("+00:00", "Z")
+    except Exception:
+        return None
+
+
+def _parse_datetime(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def load_news_cache_from_disk() -> None:
+    """Load news cache and metadata from filesystem if available.
+
+    JSON shape:
+    {
+      "metadata": {"last_updated": iso|None, "next_update_time": iso|None},
+      "data": [NewsAnalysis-like dict]
+    }
+    """
+    global global_news_cache, news_cache_metadata
+    try:
+        if not NEWS_CACHE_FILE:
+            return
+        if not os.path.exists(NEWS_CACHE_FILE):
+            return
+        with open(NEWS_CACHE_FILE, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        items = payload.get("data", []) if isinstance(payload, dict) else []
+        loaded: List[NewsAnalysis] = []
+        for obj in items:
+            try:
+                # Ensure analyzed_at is parsed
+                analyzed_at = obj.get("analyzed_at")
+                if isinstance(analyzed_at, str):
+                    obj["analyzed_at"] = _parse_datetime(analyzed_at) or datetime.now(timezone.utc)
+                loaded.append(NewsAnalysis(**obj))
+            except Exception:
+                continue
+
+        # Sort and trim
+        loaded.sort(key=lambda x: _iso_to_dt(x.time), reverse=True)
+        if len(loaded) > NEWS_CACHE_MAX_ITEMS:
+            loaded = loaded[:NEWS_CACHE_MAX_ITEMS]
+
+        global_news_cache = loaded
+
+        meta = payload.get("metadata", {}) if isinstance(payload, dict) else {}
+        lu = _parse_datetime(meta.get("last_updated")) if isinstance(meta, dict) else None
+        nu = _parse_datetime(meta.get("next_update_time")) if isinstance(meta, dict) else None
+        news_cache_metadata["last_updated"] = lu
+        news_cache_metadata["next_update_time"] = nu
+        news_cache_metadata["is_updating"] = False
+        print(f"🗂️ [cache] Loaded {len(global_news_cache)} news items from disk: {NEWS_CACHE_FILE}")
+    except Exception as e:
+        print(f"❌ [cache] Failed to load news cache: {e}")
+
+
+def _save_news_cache_to_disk() -> None:
+    """Persist current news cache and metadata to filesystem (atomic write)."""
+    try:
+        if not NEWS_CACHE_FILE:
+            return
+        _ensure_parent_dir(NEWS_CACHE_FILE)
+        tmp_path = f"{NEWS_CACHE_FILE}.tmp"
+
+        data_list: List[dict] = []
+        for item in global_news_cache:
+            try:
+                obj = item.model_dump()
+                # Convert analyzed_at datetime to ISO string
+                aa = obj.get("analyzed_at")
+                if isinstance(aa, datetime):
+                    obj["analyzed_at"] = _serialize_datetime(aa)
+                data_list.append(obj)
+            except Exception:
+                continue
+
+        payload = {
+            "metadata": {
+                "last_updated": _serialize_datetime(news_cache_metadata.get("last_updated")),
+                "next_update_time": _serialize_datetime(news_cache_metadata.get("next_update_time")),
+            },
+            "data": data_list,
+        }
+
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp_path, NEWS_CACHE_FILE)
+        print(f"💾 [cache] Saved {len(global_news_cache)} items to disk: {NEWS_CACHE_FILE}")
+    except Exception as e:
+        print(f"❌ [cache] Failed to save news cache: {e}")
 
 
 def _split_headline(headline: Optional[str]) -> tuple:
@@ -651,6 +768,8 @@ async def update_news_cache():
         global_news_cache = updated_cache
         news_cache_metadata["last_updated"] = datetime.now(timezone.utc)
         news_cache_metadata["next_update_time"] = datetime.now(timezone.utc) + timedelta(hours=NEWS_UPDATE_INTERVAL_HOURS)
+        # Persist to disk after successful update
+        _save_news_cache_to_disk()
         print(f"✅ [update] Cache size now: {len(global_news_cache)} (max {NEWS_CACHE_MAX_ITEMS})")
         print(f"⏰ [update] Next update scheduled for: {news_cache_metadata['next_update_time']}")
     except Exception as e:
@@ -663,6 +782,8 @@ async def update_news_cache():
 
 
 async def news_scheduler():
+    # Load cache from disk on scheduler start
+    load_news_cache_from_disk()
     while True:
         try:
             current_time = datetime.now(timezone.utc)

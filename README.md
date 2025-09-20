@@ -283,6 +283,22 @@ global_ohlc_cache = {
 - Consistent data across clients
 - Automatic cleanup of unused caches
 
+### Filesystem-backed News Cache
+
+- **What**: News analysis cache is persisted to disk to survive restarts.
+- **Default location**: `news_cache.json` at the project root.
+- **Configure**: Set `NEWS_CACHE_FILE` in `.env` to change the path.
+- **Lifecycle**:
+  - On startup, the scheduler loads existing cache from the file if present.
+  - After each successful refresh, the cache and metadata are saved atomically.
+  - File format: JSON with `metadata` (timestamps) and `data` (array of news items).
+
+Example `.env`:
+
+```env
+NEWS_CACHE_FILE=/var/fxlabs/news_cache.json
+```
+
 ### Performance Characteristics
 
 | Metric | Before Optimization | After Optimization | Improvement |

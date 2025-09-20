@@ -55,7 +55,7 @@ async def lifespan(app: FastAPI):
     v = mt5.version()
     print(f"MT5 initialized. Version: {v}", flush=True)
     
-    # Initialize news cache and start scheduler
+    # Initialize news cache and start scheduler (loads FS cache on start)
     news_task = asyncio.create_task(news.news_scheduler())
     
     # Initialize alert cache and start scheduler
