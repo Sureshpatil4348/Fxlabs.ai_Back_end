@@ -527,27 +527,22 @@ class EmailService:
         pairs_table = ""
         for pair in triggered_pairs:
             symbol = pair.get("symbol", "N/A")
-            timeframe = pair.get("timeframe", "N/A")
             rsi_value = pair.get("rsi_value", 0)
-            rfi_score = pair.get("rfi_score", 0)
-            condition = pair.get("trigger_condition", "N/A")
             price = pair.get("current_price", 0)
             price_change = pair.get("price_change_percent", 0)
             
-            # Color code based on condition
-            condition_color = "#e74c3c"  # Red for overbought
-            if condition == "oversold":
-                condition_color = "#27ae60"  # Green for oversold
-            elif condition == "rfi_strong":
-                condition_color = "#f39c12"  # Orange for RFI strong
-            elif condition == "rfi_moderate":
-                condition_color = "#3498db"  # Blue for RFI moderate
+            # Color code RSI value
+            rsi_color = "#4a5568"  # Default gray
+            if rsi_value >= 70:
+                rsi_color = "#e74c3c"  # Red for overbought
+            elif rsi_value <= 30:
+                rsi_color = "#27ae60"  # Green for oversold
             
             pairs_table += f"""
             <tr style="border-bottom: 1px solid #e9ecef;">
                 <td style="padding: 12px 8px; font-weight: 600; color: #1a1a1a;">{symbol}</td>
-                <td style="padding: 12px 8px; color: {condition_color}; font-weight: 500;">{rsi_value}</td>
-                <td style="padding: 12px 8px; color: #4a5568;">{price}</td>
+                <td style="padding: 12px 8px; color: {rsi_color}; font-weight: 500;">{rsi_value:.2f}</td>
+                <td style="padding: 12px 8px; color: #4a5568;">{price:.5f}</td>
                 <td style="padding: 12px 8px; color: {'#059669' if price_change >= 0 else '#dc2626'}; font-weight: 500;">{price_change:+.2f}%</td>
             </tr>
             """
@@ -619,10 +614,7 @@ class EmailService:
                             <thead>
                                 <tr style="background-color: #34495e; color: white;">
                                     <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Symbol</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Timeframe</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Condition</th>
                                     <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">RSI Value</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">RFI Score</th>
                                     <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Current Price</th>
                                     <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Price Change</th>
                                 </tr>
