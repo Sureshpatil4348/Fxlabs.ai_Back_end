@@ -19,7 +19,7 @@ from app.models import Timeframe
 # Try to import MT5 - if it fails, we'll use a fallback
 try:
     import MetaTrader5 as mt5
-    from app.mt5_utils import get_ohlc_data, get_current_tick
+    from app.mt5_utils import get_ohlc_data
     MT5_AVAILABLE = True
     print("✅ MT5 module available - using real market data")
 except ImportError:
@@ -90,7 +90,7 @@ class RealMT5DataTester:
                 return self._get_simulated_data(symbol, timeframe)
             
             # Get current tick
-            tick_data = get_current_tick(symbol)
+            tick_data = mt5.symbol_info_tick(symbol)
             
             # Extract closes for RSI calculation
             closes = [bar.close for bar in ohlc_data]
@@ -177,8 +177,8 @@ class RealMT5DataTester:
         """Create RSI alert data using real MT5 market data"""
         real_data = []
         
-        # Test symbols (using broker-specific names)
-        test_symbols = ["EURUSDm", "GBPUSDm", "USDJPYm"]
+        # Test symbols (using broker-specific names that are actually available)
+        test_symbols = ["MBTUSDm", "USDAED", "USDAMD"]
         timeframe = Timeframe.H1
         
         for symbol in test_symbols:
