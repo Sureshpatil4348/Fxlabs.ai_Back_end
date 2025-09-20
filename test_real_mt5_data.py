@@ -140,13 +140,13 @@ class RealMT5DataTester:
         """Fallback simulated data when MT5 is not available"""
         import random
         
-        # Simulate realistic market data
+        # Simulate realistic market data (using broker-specific names)
         base_prices = {
-            "EURUSD": 1.0856,
-            "GBPUSD": 1.2634,
-            "USDJPY": 149.23,
-            "USDCHF": 0.8756,
-            "AUDUSD": 0.6523
+            "EURUSDm": 1.0856,
+            "GBPUSDm": 1.2634,
+            "USDJPYm": 149.23,
+            "USDCHFm": 0.8756,
+            "AUDUSDm": 0.6523
         }
         
         base_price = base_prices.get(symbol, 1.1000)
@@ -177,8 +177,8 @@ class RealMT5DataTester:
         """Create RSI alert data using real MT5 market data"""
         real_data = []
         
-        # Test symbols
-        test_symbols = ["EURUSD", "GBPUSD", "USDJPY"]
+        # Test symbols (using broker-specific names)
+        test_symbols = ["EURUSDm", "GBPUSDm", "USDJPYm"]
         timeframe = Timeframe.H1
         
         for symbol in test_symbols:

@@ -70,7 +70,15 @@ def test_mt5_data_retrieval(mt5):
         print("❌ MT5 module not available")
         return False
     
-    test_symbols = ["EURUSD", "GBPUSD", "USDJPY"]
+    # Get available symbols first
+    symbols = mt5.symbols_get()
+    if symbols:
+        print(f"📊 Available symbols: {[s.name for s in symbols[:10]]}")
+        # Look for EUR, GBP, USD pairs
+        forex_symbols = [s.name for s in symbols if any(pair in s.name.upper() for pair in ["EUR", "GBP", "USD", "JPY"])]
+        test_symbols = forex_symbols[:3] if forex_symbols else ["EURUSDm", "GBPUSDm", "USDJPYm"]
+    else:
+        test_symbols = ["EURUSDm", "GBPUSDm", "USDJPYm"]
     
     for symbol in test_symbols:
         print(f"\n🔍 Testing {symbol}:")
@@ -126,7 +134,7 @@ def test_mt5_utils():
         
         # Test get_ohlc_data
         print("\n📊 Testing get_ohlc_data:")
-        ohlc_data = get_ohlc_data("EURUSD", Timeframe.H1, 5)
+        ohlc_data = get_ohlc_data("EURUSDm", Timeframe.H1, 5)
         if ohlc_data:
             print(f"  ✅ Got {len(ohlc_data)} OHLC bars")
             for i, bar in enumerate(ohlc_data):
@@ -136,7 +144,7 @@ def test_mt5_utils():
         
         # Test get_current_ohlc
         print("\n📊 Testing get_current_ohlc:")
-        current_ohlc = get_current_ohlc("EURUSD", Timeframe.H1)
+        current_ohlc = get_current_ohlc("EURUSDm", Timeframe.H1)
         if current_ohlc:
             print(f"  ✅ Current OHLC: O={current_ohlc.open:.5f} H={current_ohlc.high:.5f} L={current_ohlc.low:.5f} C={current_ohlc.close:.5f}")
         else:

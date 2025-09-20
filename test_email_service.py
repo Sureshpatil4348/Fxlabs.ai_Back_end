@@ -26,7 +26,7 @@ class EmailServiceTester:
         """Create mock heatmap alert data for testing"""
         return [
             {
-                "symbol": "EURUSD",
+                "symbol": "EURUSDm",
                 "strength": 75.5,
                 "indicators": {
                     "rsi": 70.1,
@@ -37,7 +37,7 @@ class EmailServiceTester:
                 "trading_style": "scalping"
             },
             {
-                "symbol": "GBPUSD", 
+                "symbol": "GBPUSDm", 
                 "strength": 68.2,
                 "indicators": {
                     "rsi": 65.8,
@@ -48,7 +48,7 @@ class EmailServiceTester:
                 "trading_style": "swing"
             },
             {
-                "symbol": "USDJPY",
+                "symbol": "USDJPYm",
                 "strength": 82.1,
                 "indicators": {
                     "rsi": 78.5,
@@ -64,14 +64,14 @@ class EmailServiceTester:
         """Create mock RSI alert data for testing"""
         return [
             {
-                "symbol": "EURUSD",
+                "symbol": "EURUSDm",
                 "rsi": 75.2,
                 "condition": "overbought",
                 "timeframe": "1h",
                 "rsi_period": 14
             },
             {
-                "symbol": "GBPUSD",
+                "symbol": "GBPUSDm",
                 "rsi_value": 25.8,  # Test the new rsi_value field
                 "trigger_condition": "oversold",
                 "timeframe": "4h", 
@@ -83,15 +83,15 @@ class EmailServiceTester:
         """Create mock RSI correlation alert data for testing"""
         return [
             {
-                "symbol1": "EURUSD",
-                "symbol2": "GBPUSD", 
+                "symbol1": "EURUSDm",
+                "symbol2": "GBPUSDm", 
                 "rsi1": 72.1,
                 "rsi2": 28.5,
                 "correlation": 0.85,
                 "timeframe": "1h"
             },
             {
-                "symbol1": "USDJPY",
+                "symbol1": "USDJPYm",
                 "symbol2": "USDCHF",
                 "rsi1_value": 68.3,  # Test the new rsi1_value field
                 "rsi2_value": 31.7,  # Test the new rsi2_value field
@@ -144,8 +144,8 @@ class EmailServiceTester:
         
         # Create test data
         test_pairs = [
-            {"symbol": "EURUSD", "rsi": 70.1, "condition": "overbought"},
-            {"symbol": "GBPUSD", "rsi_value": 25.8, "trigger_condition": "oversold"}
+            {"symbol": "EURUSDm", "rsi": 70.1, "condition": "overbought"},
+            {"symbol": "GBPUSDm", "rsi_value": 25.8, "trigger_condition": "oversold"}
         ]
         
         # Test hash generation
@@ -176,8 +176,8 @@ class EmailServiceTester:
         
         # Test with similar values (should still be in cooldown)
         similar_pairs = [
-            {"symbol": "EURUSD", "rsi": 70.5, "condition": "overbought"},  # Only 0.4 difference
-            {"symbol": "GBPUSD", "rsi_value": 26.1, "trigger_condition": "oversold"}  # Only 0.3 difference
+            {"symbol": "EURUSDm", "rsi": 70.5, "condition": "overbought"},  # Only 0.4 difference
+            {"symbol": "GBPUSDm", "rsi_value": 26.1, "trigger_condition": "oversold"}  # Only 0.3 difference
         ]
         is_similar_cooldown = self.email_service._is_alert_in_cooldown(
             alert_hash, 
@@ -187,8 +187,8 @@ class EmailServiceTester:
         
         # Test with significantly different values (should allow alert)
         different_pairs = [
-            {"symbol": "EURUSD", "rsi": 80.1, "condition": "overbought"},  # 10 point difference
-            {"symbol": "GBPUSD", "rsi_value": 35.8, "trigger_condition": "oversold"}  # 10 point difference
+            {"symbol": "EURUSDm", "rsi": 80.1, "condition": "overbought"},  # 10 point difference
+            {"symbol": "GBPUSDm", "rsi_value": 35.8, "trigger_condition": "oversold"}  # 10 point difference
         ]
         is_different_cooldown = self.email_service._is_alert_in_cooldown(
             alert_hash, 
@@ -257,17 +257,17 @@ class EmailServiceTester:
         print("🧪 Testing RSI Value Extraction...")
         
         # Test with 'rsi' key
-        pair_with_rsi = {"symbol": "EURUSD", "rsi": 70.1, "condition": "overbought"}
+        pair_with_rsi = {"symbol": "EURUSDm", "rsi": 70.1, "condition": "overbought"}
         rsi_value = self.email_service._get_rsi_value(pair_with_rsi, "rsi")
         print(f"📊 RSI from 'rsi' key: {rsi_value}")
         
         # Test with 'rsi_value' key
-        pair_with_rsi_value = {"symbol": "GBPUSD", "rsi_value": 25.8, "condition": "oversold"}
+        pair_with_rsi_value = {"symbol": "GBPUSDm", "rsi_value": 25.8, "condition": "oversold"}
         rsi_value_alt = self.email_service._get_rsi_value(pair_with_rsi_value, "rsi")
         print(f"📊 RSI from 'rsi_value' key: {rsi_value_alt}")
         
         # Test with both keys (should prefer 'rsi')
-        pair_with_both = {"symbol": "USDJPY", "rsi": 75.2, "rsi_value": 80.5, "condition": "overbought"}
+        pair_with_both = {"symbol": "USDJPYm", "rsi": 75.2, "rsi_value": 80.5, "condition": "overbought"}
         rsi_value_both = self.email_service._get_rsi_value(pair_with_both, "rsi")
         print(f"📊 RSI with both keys (prefers 'rsi'): {rsi_value_both}")
         

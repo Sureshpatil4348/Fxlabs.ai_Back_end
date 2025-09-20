@@ -499,11 +499,26 @@ async def check_heatmap_alerts_manual(
 ):
     """Manually trigger heatmap alert checking (for testing)"""
     try:
-        # Simulate tick data for testing
+        # Use real MT5 data for testing
         test_tick_data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "symbols": ["EURUSD", "GBPUSD", "USDJPY"]
+            "symbols": ["EURUSDm", "GBPUSDm", "USDJPYm"],
+            "tick_data": {}
         }
+        
+        # Get real tick data from MT5
+        if MT5_AVAILABLE:
+            for symbol in test_tick_data["symbols"]:
+                try:
+                    tick = mt5.symbol_info_tick(symbol)
+                    if tick:
+                        test_tick_data["tick_data"][symbol] = {
+                            "bid": tick.bid,
+                            "ask": tick.ask,
+                            "time": tick.time
+                        }
+                except Exception as e:
+                    print(f"⚠️ Could not get real data for {symbol}: {e}")
         
         triggered_alerts = await heatmap_alert_service.check_heatmap_alerts(test_tick_data)
         
@@ -599,18 +614,27 @@ async def check_rsi_alerts_manual(
 ):
     """Manually trigger RSI alert checking (for testing)"""
     try:
-        # Simulate tick data for testing
+        # Use real MT5 data for testing
         test_tick_data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "symbols": ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSD"],
-            "tick_data": {
-                "EURUSD": {"close": 1.1005, "volume": 1000},
-                "GBPUSD": {"close": 1.2750, "volume": 800},
-                "USDJPY": {"close": 150.25, "volume": 1200},
-                "XAUUSD": {"close": 2000.50, "volume": 500},
-                "BTCUSD": {"close": 45000.00, "volume": 200}
-            }
+            "symbols": ["EURUSDm", "GBPUSDm", "USDJPYm"],
+            "tick_data": {}
         }
+        
+        # Get real tick data from MT5
+        if MT5_AVAILABLE:
+            for symbol in test_tick_data["symbols"]:
+                try:
+                    tick = mt5.symbol_info_tick(symbol)
+                    if tick:
+                        test_tick_data["tick_data"][symbol] = {
+                            "bid": tick.bid,
+                            "ask": tick.ask,
+                            "time": tick.time,
+                            "volume": 1000  # Default volume
+                        }
+                except Exception as e:
+                    print(f"⚠️ Could not get real data for {symbol}: {e}")
         
         triggered_alerts = await rsi_alert_service.check_rsi_alerts(test_tick_data)
         
@@ -706,18 +730,27 @@ async def check_rsi_correlation_alerts_manual(
 ):
     """Manually trigger RSI correlation alert checking (for testing)"""
     try:
-        # Simulate tick data for testing
+        # Use real MT5 data for testing
         test_tick_data = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
-            "symbols": ["EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSD"],
-            "tick_data": {
-                "EURUSD": {"close": 1.1005, "volume": 1000},
-                "GBPUSD": {"close": 1.2750, "volume": 800},
-                "USDJPY": {"close": 150.25, "volume": 1200},
-                "XAUUSD": {"close": 2000.50, "volume": 500},
-                "BTCUSD": {"close": 45000.00, "volume": 200}
-            }
+            "symbols": ["EURUSDm", "GBPUSDm", "USDJPYm"],
+            "tick_data": {}
         }
+        
+        # Get real tick data from MT5
+        if MT5_AVAILABLE:
+            for symbol in test_tick_data["symbols"]:
+                try:
+                    tick = mt5.symbol_info_tick(symbol)
+                    if tick:
+                        test_tick_data["tick_data"][symbol] = {
+                            "bid": tick.bid,
+                            "ask": tick.ask,
+                            "time": tick.time,
+                            "volume": 1000  # Default volume
+                        }
+                except Exception as e:
+                    print(f"⚠️ Could not get real data for {symbol}: {e}")
         
         triggered_alerts = await rsi_correlation_alert_service.check_rsi_correlation_alerts(test_tick_data)
         
