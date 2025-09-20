@@ -158,8 +158,9 @@ class HeatmapAlertService:
         try:
             # Try to get real MT5 data first
             try:
-                from .mt5_utils import get_ohlc_data, get_current_tick
+                from .mt5_utils import get_ohlc_data
                 from .models import Timeframe as MT5Timeframe
+                import MetaTrader5 as mt5
                 
                 # Convert timeframe string to MT5 Timeframe enum
                 timeframe_map = {
@@ -179,7 +180,9 @@ class HeatmapAlertService:
                     ohlc_data = get_ohlc_data(symbol, mt5_timeframe, 1)
                     if ohlc_data and len(ohlc_data) > 0:
                         latest_bar = ohlc_data[-1]
-                        tick_data = get_current_tick(symbol)
+                        
+                        # Get real tick data from MT5
+                        tick_info = mt5.symbol_info_tick(symbol)
                         
                         logger.info(f"✅ Using real MT5 data for {symbol} {timeframe}")
                         return {
@@ -191,8 +194,8 @@ class HeatmapAlertService:
                             "close": latest_bar.close,
                             "volume": latest_bar.volume,
                             "timestamp": latest_bar.time_iso,
-                            "bid": tick_data.bid if tick_data else None,
-                            "ask": tick_data.ask if tick_data else None,
+                            "bid": tick_info.bid if tick_info else None,
+                            "ask": tick_info.ask if tick_info else None,
                             "data_source": "MT5_REAL"
                         }
             except ImportError:
@@ -228,9 +231,6 @@ class HeatmapAlertService:
         """Calculate indicator strength for the given market data"""
         
         try:
-            # This is a simplified implementation
-            # In a real system, you'd calculate actual technical indicators
-            
             indicators = {}
             overall_strength = 0
             
@@ -239,11 +239,11 @@ class HeatmapAlertService:
                 indicator_lower = indicator.lower()
                 
                 if indicator_lower == "rsi":
-                    # Simulate RSI calculation
-                    rsi_value = 50 + (market_data.get("close", 1.1) - 1.1) * 100
-                    rsi_value = max(0, min(100, rsi_value))
-                    indicators["rsi"] = rsi_value
-                    overall_strength += rsi_value
+                    # Calculate real RSI using MT5 data
+                    rsi_value = await self._calculate_real_rsi(market_data)
+                    if rsi_value is not None:
+                        indicators["rsi"] = rsi_value
+                        overall_strength += rsi_value
                 
                 elif indicator_lower == "macd":
                     # Simulate MACD calculation
@@ -320,6 +320,82 @@ class HeatmapAlertService:
             logger.error(f"❌ Error calculating indicators strength: {e}")
             return None
     
+    async def _calculate_real_rsi(self, market_data: Dict[str, Any]) -> Optional[float]:
+        """Calculate real RSI using MT5 data"""
+        try:
+            symbol = market_data.get("symbol")
+            timeframe = market_data.get("timeframe")
+            
+            if not symbol or not timeframe:
+                return None
+            
+            # Get more OHLC data for RSI calculation (need at least 14 periods)
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as MT5Timeframe
+            
+            timeframe_map = {
+                "1M": MT5Timeframe.M1,
+                "5M": MT5Timeframe.M5,
+                "15M": MT5Timeframe.M15,
+                "30M": MT5Timeframe.M30,
+                "1H": MT5Timeframe.H1,
+                "4H": MT5Timeframe.H4,
+                "1D": MT5Timeframe.D1,
+                "1W": MT5Timeframe.W1
+            }
+            
+            mt5_timeframe = timeframe_map.get(timeframe)
+            if not mt5_timeframe:
+                return None
+            
+            # Get 20 periods of data for RSI calculation
+            ohlc_data = get_ohlc_data(symbol, mt5_timeframe, 20)
+            if len(ohlc_data) < 14:
+                return None
+            
+            # Calculate RSI
+            closes = [bar.close for bar in ohlc_data]
+            rsi_value = self._calculate_rsi_from_closes(closes, 14)
+            
+            logger.info(f"✅ Calculated real RSI for {symbol}: {rsi_value:.2f}")
+            return rsi_value
+            
+        except Exception as e:
+            logger.error(f"❌ Error calculating real RSI: {e}")
+            return None
+    
+    def _calculate_rsi_from_closes(self, closes: List[float], period: int = 14) -> float:
+        """Calculate RSI from a list of closing prices"""
+        if len(closes) < period + 1:
+            return 50.0  # Default neutral RSI
+        
+        # Calculate price changes
+        deltas = []
+        for i in range(1, len(closes)):
+            deltas.append(closes[i] - closes[i-1])
+        
+        # Separate gains and losses
+        gains = [delta if delta > 0 else 0 for delta in deltas]
+        losses = [-delta if delta < 0 else 0 for delta in deltas]
+        
+        # Calculate initial averages
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+        
+        # Calculate RSI using Wilder's smoothing
+        for i in range(period, len(deltas)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        
+        # Calculate RSI
+        if avg_loss == 0:
+            return 100.0
+        
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        
+        return max(0, min(100, rsi))
+    
     def _determine_signal(
         self, 
         strength_data: Dict[str, Any],
@@ -330,15 +406,19 @@ class HeatmapAlertService:
     ) -> Optional[str]:
         """Determine if the strength data triggers a buy or sell signal"""
         
-        overall_strength = strength_data.get("overall_strength", 50)
+        indicators = strength_data.get("indicators", {})
+        rsi_value = indicators.get("rsi")
         
-        # Check for buy signal
-        if buy_threshold_min <= overall_strength <= buy_threshold_max:
-            return "BUY"
+        if rsi_value is None:
+            return None
         
-        # Check for sell signal
-        if sell_threshold_min <= overall_strength <= sell_threshold_max:
-            return "SELL"
+        # Check for buy signal (oversold - RSI below threshold)
+        if sell_threshold_min <= rsi_value <= sell_threshold_max:
+            return "BUY"  # Oversold = Buy opportunity
+        
+        # Check for sell signal (overbought - RSI above threshold)
+        if buy_threshold_min <= rsi_value <= buy_threshold_max:
+            return "SELL"  # Overbought = Sell opportunity
         
         return None
     
