@@ -294,8 +294,42 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                     text = await resp.text()
                     print(f"🔎 [analyze] Attempt {attempt} status={resp.status} body_len={len(text)}")
                     if resp.status == 200:
-                        data = json.loads(text)
-                        analysis_text = data["choices"][0]["message"]["content"]
+                        try:
+                            data = json.loads(text)
+                        except json.JSONDecodeError as e:
+                            print(f"❌ [analyze] JSON decode error: {e}")
+                            print(f"📄 [analyze] Response body: {text[:500]}...")
+                            print(f"📊 [analyze] Response status: {resp.status}")
+                            continue  # Try next attempt
+                        
+                        # Validate response structure
+                        choices = data.get("choices")
+                        if not choices or not isinstance(choices, list) or len(choices) == 0:
+                            print(f"❌ [analyze] Invalid choices structure: {choices}")
+                            print(f"📄 [analyze] Response body: {text[:500]}...")
+                            print(f"📊 [analyze] Response status: {resp.status}")
+                            continue  # Try next attempt
+                        
+                        first_choice = choices[0]
+                        if not isinstance(first_choice, dict):
+                            print(f"❌ [analyze] Invalid choice structure: {first_choice}")
+                            print(f"📄 [analyze] Response body: {text[:500]}...")
+                            print(f"📊 [analyze] Response status: {resp.status}")
+                            continue  # Try next attempt
+                        
+                        message = first_choice.get("message")
+                        if not message or not isinstance(message, dict):
+                            print(f"❌ [analyze] Invalid message structure: {message}")
+                            print(f"📄 [analyze] Response body: {text[:500]}...")
+                            print(f"📊 [analyze] Response status: {resp.status}")
+                            continue  # Try next attempt
+                        
+                        analysis_text = message.get("content")
+                        if not analysis_text or not isinstance(analysis_text, str):
+                            print(f"❌ [analyze] Invalid content: {analysis_text}")
+                            print(f"📄 [analyze] Response body: {text[:500]}...")
+                            print(f"📊 [analyze] Response status: {resp.status}")
+                            continue  # Try next attempt
 
                         def _normalize_effect(token: Optional[str]) -> str:
                             if not token:
@@ -457,6 +491,23 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                 if attempt >= len(backoff):
                     raise
                 continue
+        
+        # If all attempts failed, return a safe default analysis
+        print("❌ [analyze] All attempts failed, returning safe default analysis")
+        return NewsAnalysis(
+            headline=news_item.headline,
+            forecast=news_item.forecast,
+            previous=news_item.previous,
+            actual=news_item.actual,
+            currency=news_item.currency,
+            time=news_item.time,
+            analysis={
+                "effect": "neutral",
+                "impact": "medium",
+                "full_analysis": "Analysis unavailable due to API response format issues.",
+            },
+            analyzed_at=datetime.now(timezone.utc),
+        )
 
 
 async def update_news_cache():

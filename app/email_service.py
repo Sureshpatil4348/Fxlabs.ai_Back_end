@@ -15,9 +15,10 @@ class EmailService:
     """SendGrid email service for sending heatmap alerts with cooldown mechanism"""
     
     def __init__(self):
-        self.sendgrid_api_key = os.environ.get("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")
-        self.from_email = os.environ.get("FROM_EMAIL", "civawoc344@camjoint.com")
-        self.from_name = os.environ.get("FROM_NAME", "FX Labs Alerts")
+        # Hardcoded SendGrid API key - replace with your actual API key
+        self.sendgrid_api_key = "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"
+        self.from_email = "civawoc344@camjoint.com"
+        self.from_name = "FX Labs Alerts"
         
         # Smart cooldown mechanism - value-based cooldown for similar alerts
         self.cooldown_minutes = 10  # Reduced to 10 minutes for better responsiveness
@@ -25,12 +26,9 @@ class EmailService:
         self.alert_cooldowns = {}  # {alert_hash: last_sent_timestamp}
         self.alert_values = {}  # {alert_hash: last_sent_values} for value comparison
         
-        if not self.sendgrid_api_key:
-            logger.warning("⚠️ SendGrid API key not found. Email notifications will be disabled.")
-            self.sg = None
-        else:
-            self.sg = SendGridAPIClient(api_key=self.sendgrid_api_key)
-            logger.info("✅ SendGrid email service initialized with smart value-based cooldown (10min, 5 RSI threshold)")
+        # Always initialize SendGrid with the hardcoded API key
+        self.sg = SendGridAPIClient(api_key=self.sendgrid_api_key)
+        logger.info("✅ SendGrid email service initialized with smart value-based cooldown (10min, 5 RSI threshold)")
     
     def _generate_alert_hash(self, user_email: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], calculation_mode: str = None) -> str:
         """Generate a unique hash for similar alerts to implement value-based cooldown (supports all alert types)"""
@@ -129,37 +127,72 @@ class EmailService:
         # All values are similar, apply cooldown
         return True
     
+    def _safe_float_conversion(self, value: Any) -> Optional[float]:
+        """Safely convert value to float with fallback for unparsable values"""
+        if value is None:
+            return None
+        
+        try:
+            return float(value)
+        except (ValueError, TypeError):
+            logger.warning(f"⚠️ Could not convert value '{value}' to float, skipping")
+            return None
+    
+    def _get_rsi_value(self, pair: Dict[str, Any], rsi_key: str) -> Optional[float]:
+        """Get RSI value from pair, checking both 'rsi' and 'rsi_value' keys"""
+        # Try primary key first (e.g., 'rsi', 'rsi1', 'rsi2')
+        if rsi_key in pair:
+            return self._safe_float_conversion(pair[rsi_key])
+        
+        # Try alternative key with '_value' suffix (e.g., 'rsi_value', 'rsi1_value', 'rsi2_value')
+        alt_key = f"{rsi_key}_value"
+        if alt_key in pair:
+            return self._safe_float_conversion(pair[alt_key])
+        
+        return None
+
     def _extract_alert_values(self, pairs: List[Dict[str, Any]]) -> Dict[str, float]:
         """Extract comparable values from different alert types"""
         values = {}
         
         for pair in pairs:
             # RSI Alerts: {symbol: "EURUSD", rsi: 70.1, condition: "overbought"}
-            if 'rsi' in pair and 'symbol' in pair:
+            # Also handles: {symbol: "EURUSD", rsi_value: 70.1, condition: "overbought"}
+            if ('rsi' in pair or 'rsi_value' in pair) and 'symbol' in pair:
                 symbol = pair['symbol']
-                rsi = pair['rsi']
-                values[f"{symbol}_rsi"] = rsi
+                rsi = self._get_rsi_value(pair, 'rsi')
+                if rsi is not None:
+                    values[f"{symbol}_rsi"] = rsi
             
             # RSI Correlation Alerts: {symbol1: "EURUSD", symbol2: "GBPUSD", rsi1: 70.1, rsi2: 30.2}
-            elif 'rsi1' in pair and 'symbol1' in pair:
+            # Also handles: {symbol1: "EURUSD", symbol2: "GBPUSD", rsi1_value: 70.1, rsi2_value: 30.2}
+            elif (('rsi1' in pair or 'rsi1_value' in pair) and 
+                  ('rsi2' in pair or 'rsi2_value' in pair) and 
+                  'symbol1' in pair and 'symbol2' in pair):
                 symbol1 = pair['symbol1']
                 symbol2 = pair['symbol2']
-                rsi1 = pair['rsi1']
-                rsi2 = pair['rsi2']
-                values[f"{symbol1}_{symbol2}_rsi1"] = rsi1
-                values[f"{symbol1}_{symbol2}_rsi2"] = rsi2
+                rsi1 = self._get_rsi_value(pair, 'rsi1')
+                rsi2 = self._get_rsi_value(pair, 'rsi2')
+                
+                if rsi1 is not None:
+                    values[f"{symbol1}_{symbol2}_rsi1"] = rsi1
+                if rsi2 is not None:
+                    values[f"{symbol1}_{symbol2}_rsi2"] = rsi2
             
             # Heatmap Alerts: {symbol: "EURUSD", strength: 75.5, indicators: {rsi: 70.1}}
             elif 'strength' in pair and 'symbol' in pair:
                 symbol = pair['symbol']
-                strength = pair['strength']
-                values[f"{symbol}_strength"] = strength
+                strength = self._safe_float_conversion(pair['strength'])
+                if strength is not None:
+                    values[f"{symbol}_strength"] = strength
                 
                 # Also check for RSI in indicators if available
+                # Handles both 'rsi' and 'rsi_value' in indicators
                 indicators = pair.get('indicators', {})
-                if 'rsi' in indicators:
-                    rsi = indicators['rsi']
-                    values[f"{symbol}_rsi"] = rsi
+                if indicators:
+                    rsi = self._get_rsi_value(indicators, 'rsi')
+                    if rsi is not None:
+                        values[f"{symbol}_rsi"] = rsi
         
         return values
     

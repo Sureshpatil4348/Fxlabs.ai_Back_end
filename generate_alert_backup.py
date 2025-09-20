@@ -2,6 +2,18 @@
 """
 Alert Data Backup Generator
 Creates a comprehensive text file with all alert data for future reference
+
+USAGE:
+    From Fxlabs.ai_Back_end directory:
+        python generate_alert_backup.py
+    
+    As a module (from any directory):
+        python -m generate_alert_backup
+
+REQUIREMENTS:
+    - Must be run from the Fxlabs.ai_Back_end directory, OR
+    - Must be run as a module with proper Python path setup
+    - Requires app/alert_cache.py to be accessible
 """
 import asyncio
 import sys
@@ -9,8 +21,18 @@ import os
 import json
 from datetime import datetime
 
-# Add the app directory to the path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
+# Add the repository root to the path to enable proper imports
+# This allows imports like 'app.alert_cache' to resolve correctly
+repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+# Runtime check to ensure script is run from correct location
+if not os.path.exists(os.path.join(repo_root, 'app', 'alert_cache.py')):
+    print("❌ Error: Cannot find app/alert_cache.py")
+    print("💡 Make sure to run this script from the Fxlabs.ai_Back_end directory")
+    print("   or use: python -m generate_alert_backup")
+    sys.exit(1)
 
 from app.alert_cache import alert_cache
 
