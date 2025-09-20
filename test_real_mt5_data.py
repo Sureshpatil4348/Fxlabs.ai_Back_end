@@ -36,11 +36,17 @@ class RealMT5DataTester:
         
         if MT5_AVAILABLE:
             # Initialize MT5 connection
+            print("🔌 Attempting to connect to MT5...")
             if mt5.initialize():
                 print("✅ MT5 connected successfully")
                 self.mt5_connected = True
             else:
                 print("❌ MT5 initialization failed")
+                print("💡 Make sure MetaTrader 5 is running and logged in")
+                print("💡 Check if MT5 terminal path is correct")
+                # Get MT5 error details
+                error_code = mt5.last_error()
+                print(f"💡 MT5 Error Code: {error_code}")
                 self.mt5_connected = False
     
     def calculate_real_rsi(self, closes: List[float], period: int = 14) -> Optional[float]:
@@ -223,6 +229,7 @@ class RealMT5DataTester:
         print()
         
         try:
+            print("📤 Attempting to send RSI alert email...")
             success = await self.email_service.send_rsi_alert(
                 user_email=self.test_email,
                 alert_name=alert_name,
@@ -236,10 +243,12 @@ class RealMT5DataTester:
                 return True
             else:
                 print("❌ Failed to send real MT5 RSI alert")
+                print("💡 Check SendGrid API key configuration")
                 return False
                 
         except Exception as e:
             print(f"❌ Error sending real MT5 RSI alert: {e}")
+            print("💡 This is likely a SendGrid API key issue")
             return False
     
     async def run_real_mt5_test(self):
@@ -251,6 +260,7 @@ class RealMT5DataTester:
         
         if not self.email_service.sg:
             print("❌ SendGrid not configured!")
+            print("💡 Check your SendGrid API key in email_service.py")
             return False
         
         print(f"📧 From: {self.email_service.from_email}")
