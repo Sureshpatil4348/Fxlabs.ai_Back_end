@@ -153,15 +153,56 @@ class HeatmapAlertService:
         return True  # Default to allowing trigger
     
     async def _get_market_data(self, symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
-        """Get current market data for a symbol and timeframe"""
+        """Get current market data for a symbol and timeframe using real MT5 data"""
         
         try:
-            # This would typically fetch from MT5 or your market data source
-            # For now, we'll simulate with some basic data
-            # In a real implementation, you'd integrate with your MT5 data source
+            # Try to get real MT5 data first
+            try:
+                from .mt5_utils import get_ohlc_data, get_current_tick
+                from .models import Timeframe as MT5Timeframe
+                
+                # Convert timeframe string to MT5 Timeframe enum
+                timeframe_map = {
+                    "1M": MT5Timeframe.M1,
+                    "5M": MT5Timeframe.M5,
+                    "15M": MT5Timeframe.M15,
+                    "30M": MT5Timeframe.M30,
+                    "1H": MT5Timeframe.H1,
+                    "4H": MT5Timeframe.H4,
+                    "1D": MT5Timeframe.D1,
+                    "1W": MT5Timeframe.W1
+                }
+                
+                mt5_timeframe = timeframe_map.get(timeframe)
+                if mt5_timeframe:
+                    # Get real OHLC data from MT5
+                    ohlc_data = get_ohlc_data(symbol, mt5_timeframe, 1)
+                    if ohlc_data and len(ohlc_data) > 0:
+                        latest_bar = ohlc_data[-1]
+                        tick_data = get_current_tick(symbol)
+                        
+                        logger.info(f"✅ Using real MT5 data for {symbol} {timeframe}")
+                        return {
+                            "symbol": symbol,
+                            "timeframe": timeframe,
+                            "open": latest_bar.open,
+                            "high": latest_bar.high,
+                            "low": latest_bar.low,
+                            "close": latest_bar.close,
+                            "volume": latest_bar.volume,
+                            "timestamp": latest_bar.time_iso,
+                            "bid": tick_data.bid if tick_data else None,
+                            "ask": tick_data.ask if tick_data else None,
+                            "data_source": "MT5_REAL"
+                        }
+            except ImportError:
+                logger.warning(f"⚠️ MT5 not available, using fallback data for {symbol}")
+            except Exception as mt5_error:
+                logger.warning(f"⚠️ MT5 error for {symbol}: {mt5_error}, using fallback data")
             
-            # Simulate market data (replace with actual MT5 integration)
+            # Fallback: simulate market data
             import random
+            logger.warning(f"⚠️ Using simulated data for {symbol} - no real data available")
             
             return {
                 "symbol": symbol,
@@ -171,7 +212,8 @@ class HeatmapAlertService:
                 "low": 1.0980 + random.uniform(-0.01, 0.01),
                 "close": 1.1005 + random.uniform(-0.01, 0.01),
                 "volume": random.randint(1000, 10000),
-                "timestamp": datetime.now(timezone.utc).isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "data_source": "SIMULATED"
             }
             
         except Exception as e:

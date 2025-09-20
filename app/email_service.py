@@ -16,9 +16,9 @@ class EmailService:
     
     def __init__(self):
         # Hardcoded SendGrid API key - replace with your actual API key
-        self.sendgrid_api_key = "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"
-        self.from_email = "civawoc344@camjoint.com"
-        self.from_name = "FX Labs Alerts"
+        self.sendgrid_api_key = "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"
+        self.from_email = "alerts@fxlabs.ai"
+        self.from_name = "FX Labs"
         
         # Smart cooldown mechanism - value-based cooldown for similar alerts
         self.cooldown_minutes = 10  # Reduced to 10 minutes for better responsiveness
@@ -127,6 +127,15 @@ class EmailService:
         # All values are similar, apply cooldown
         return True
     
+    def _add_transactional_headers(self, mail: Mail, category: str = "fx-labs-alerts"):
+        """Add transactional email headers to avoid spam filters"""
+        # Use SendGrid's proper way to mark as transactional
+        mail.add_header("X-SMTPAPI", f'{{"category": ["{category}"]}}')
+        mail.add_header("X-Mailer", "FX Labs Alert System")
+        # Add unsubscribe header for transactional emails
+        mail.add_header("List-Unsubscribe", "<mailto:unsubscribe@fxlabs.ai>")
+        return mail
+
     def _safe_float_conversion(self, value: Any) -> Optional[float]:
         """Safely convert value to float with fallback for unparsable values"""
         if value is None:
@@ -242,7 +251,7 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"🔥 Heatmap Alert: {alert_name}"
+            subject = f"Trading Alert: {alert_name}"
             
             # Build email body
             body = self._build_heatmap_alert_email_body(
@@ -398,18 +407,28 @@ class EmailService:
             return False
         
         try:
-            subject = "🧪 FX Labs - Email Service Test"
+            subject = "System Test - FX Labs"
             
             body = f"""
             <!DOCTYPE html>
             <html>
-            <body style="font-family: Arial, sans-serif; padding: 20px;">
-                <h2>✅ Email Service Test Successful</h2>
-                <p>Your email notifications are working correctly!</p>
-                <p><strong>Test Time:</strong> {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}</p>
-                <p>You will receive heatmap alerts at this email address.</p>
-                <hr>
-                <p style="color: #666; font-size: 12px;">Powered by FX Labs</p>
+            <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 0; padding: 0; background-color: #ffffff;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 40px 20px;">
+                    <div style="text-align: center; margin-bottom: 30px;">
+                        <h1 style="color: #1a1a1a; font-size: 24px; font-weight: 600; margin: 0;">FX Labs</h1>
+                        <p style="color: #666666; font-size: 14px; margin: 5px 0 0 0;">Trading System</p>
+                    </div>
+                    
+                    <div style="background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
+                        <h2 style="color: #1a1a1a; font-size: 18px; font-weight: 600; margin: 0 0 16px 0;">System Test</h2>
+                        <p style="color: #4a5568; line-height: 1.6; margin: 0 0 12px 0;">Email delivery system operational.</p>
+                        <p style="color: #718096; font-size: 14px; margin: 0;">{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}</p>
+                    </div>
+                    
+                    <div style="text-align: center; padding-top: 20px; border-top: 1px solid #e9ecef;">
+                        <p style="color: #a0aec0; font-size: 12px; margin: 0;">FX Labs Trading System</p>
+                    </div>
+                </div>
             </body>
             </html>
             """
@@ -462,7 +481,7 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"📊 RSI Alert: {alert_name}"
+            subject = f"RSI Alert - {alert_name}"
             
             # Build email body
             body = self._build_rsi_alert_email_body(
@@ -525,14 +544,11 @@ class EmailService:
                 condition_color = "#3498db"  # Blue for RFI moderate
             
             pairs_table += f"""
-            <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 12px; font-weight: bold; color: #2c3e50;">{symbol}</td>
-                <td style="padding: 12px; color: #7f8c8d;">{timeframe}</td>
-                <td style="padding: 12px; font-weight: bold; color: {condition_color};">{condition.replace('_', ' ').title()}</td>
-                <td style="padding: 12px; color: #2c3e50;">{rsi_value}</td>
-                <td style="padding: 12px; color: #2c3e50;">{rfi_score if rfi_score else 'N/A'}</td>
-                <td style="padding: 12px; color: #2c3e50;">{price}</td>
-                <td style="padding: 12px; color: {'#27ae60' if price_change >= 0 else '#e74c3c'};">{price_change:+.2f}%</td>
+            <tr style="border-bottom: 1px solid #e9ecef;">
+                <td style="padding: 12px 8px; font-weight: 600; color: #1a1a1a;">{symbol}</td>
+                <td style="padding: 12px 8px; color: {condition_color}; font-weight: 500;">{rsi_value}</td>
+                <td style="padding: 12px 8px; color: #4a5568;">{price}</td>
+                <td style="padding: 12px 8px; color: {'#059669' if price_change >= 0 else '#dc2626'}; font-weight: 500;">{price_change:+.2f}%</td>
             </tr>
             """
         
@@ -676,7 +692,7 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"🔗 RSI Correlation Alert: {alert_name}"
+            subject = f"Trading Alert: {alert_name}"
             
             # Build email body
             body = self._build_rsi_correlation_alert_email_body(

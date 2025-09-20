@@ -40,12 +40,15 @@ async def send_test_email():
     
     try:
         # Send test email
+        print("🔄 Sending test email...")
         success = await email_service.send_test_email(test_email)
+        print(f"📊 Email send result: {success}")
         
         if success:
             print("✅ Test email sent successfully!")
             print(f"📧 Check your inbox: {test_email}")
             print("📱 Check spam folder if not in inbox")
+            print("⏰ Email delivery may take 1-5 minutes")
             print()
             print("🎉 Email service is working perfectly!")
             return True
