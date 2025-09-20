@@ -85,10 +85,11 @@ def get_real_mt5_ohlc_data(symbols: List[str]) -> Dict[str, Any]:
     for symbol in symbols:
         try:
             # Get H1 OHLC data
-            ohlc = get_ohlc_data(symbol, Timeframe.H1, 1)
-            if ohlc and len(ohlc) > 0:
-                ohlc_data[symbol] = ohlc[0]
-                print(f"✅ Real OHLC data for {symbol}: Open={ohlc[0]['open']:.5f}, High={ohlc[0]['high']:.5f}, Low={ohlc[0]['low']:.5f}, Close={ohlc[0]['close']:.5f}")
+            ohlc_list = get_ohlc_data(symbol, Timeframe.H1, 1)
+            if ohlc_list and len(ohlc_list) > 0:
+                ohlc = ohlc_list[0]  # Get the first (latest) OHLC object
+                ohlc_data[symbol] = ohlc
+                print(f"✅ Real OHLC data for {symbol}: Open={ohlc.open:.5f}, High={ohlc.high:.5f}, Low={ohlc.low:.5f}, Close={ohlc.close:.5f}")
             else:
                 print(f"⚠️ No OHLC data available for {symbol}")
         except Exception as e:
