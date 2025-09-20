@@ -8,7 +8,13 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 import re
 
-import MetaTrader5 as mt5
+try:
+    import MetaTrader5 as mt5
+    MT5_AVAILABLE = True
+except ImportError:
+    print("Warning: MetaTrader5 not available on this platform. Some features may be limited.")
+    mt5 = None
+    MT5_AVAILABLE = False
 import orjson
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
