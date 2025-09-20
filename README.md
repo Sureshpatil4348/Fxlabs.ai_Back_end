@@ -150,6 +150,21 @@ FROM_NAME=FX Labs Alerts
 - **Purpose**: Real-time tick and OHLC data streaming
 - **Features**: Selective timeframe subscriptions, intelligent caching
 
+Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services.
+
+Internal alert tick_data shape:
+
+```json
+{
+  "timestamp": "2025-09-20T12:34:56.000Z",
+  "symbols": ["EURUSDm", "GBPUSDm"],
+  "tick_data": {
+    "EURUSDm": {"bid": 1.1001, "ask": 1.1003, "time": 1695200096000, "volume": 123},
+    "GBPUSDm": {"bid": 1.2501, "ask": 1.2504, "time": 1695200096000, "volume": 456}
+  }
+}
+```
+
 #### Legacy Tick WebSocket (`/ws/ticks`)
 - **URL**: `ws://localhost:8000/ws/ticks`
 - **Purpose**: Backward-compatible tick-only streaming
@@ -380,6 +395,12 @@ The modular structure isolates responsibilities while preserving all existing be
 - **aiohttp**: Async HTTP client for external APIs
 - **SendGrid**: Email service for alert notifications
 - **Supabase**: Database for alert configurations
+
+### New Helpers
+
+- `app/mt5_utils.py:get_current_tick(symbol: str) -> Optional[Tick]`
+  - Ensures the symbol is selected and returns a `Tick` from `mt5.symbol_info_tick`.
+  - Used by RSI alert services to avoid ImportErrors and simulated fallbacks.
 
 ## 📊 Supported Data Types
 

@@ -880,10 +880,22 @@ class WSClient:
             await self.websocket.send_bytes(orjson.dumps({"type": "ticks", "data": updates}))
             
             # Check for alerts on tick updates (non-blocking background task)
+            # Provide tick_data in a dict keyed by symbol as expected by alert services
+            tick_data_map = {}
+            for td in updates:
+                sym = td.get("symbol")
+                if not sym:
+                    continue
+                tick_data_map[sym] = {
+                    "bid": td.get("bid"),
+                    "ask": td.get("ask"),
+                    "time": td.get("time"),
+                    "volume": td.get("volume"),
+                }
             tick_data = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "symbols": list(tick_symbols),
-                "tick_data": updates
+                "tick_data": tick_data_map
             }
             # Create background task to check alerts without blocking the tick loop
             asyncio.create_task(_check_alerts_safely(tick_data))
