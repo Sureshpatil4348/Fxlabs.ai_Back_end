@@ -16,7 +16,7 @@ class EmailService:
     
     def __init__(self):
         # Hardcoded SendGrid API key - replace with your actual API key
-        self.sendgrid_api_key = "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"
+        self.sendgrid_api_key = "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"
         self.from_email = "alerts@fxlabs.ai"
         self.from_name = "FX Labs"
         
