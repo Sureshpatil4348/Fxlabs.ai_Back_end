@@ -16,7 +16,7 @@ class EmailService:
     
     def __init__(self):
         # Hardcoded SendGrid API key - replace with your actual API key
-        self.sendgrid_api_key = "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"
+        self.sendgrid_api_key = "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"
         self.from_email = "alerts@fxlabs.ai"
         self.from_name = "FX Labs"
         
@@ -465,16 +465,24 @@ class EmailService:
     ) -> bool:
         """Send RSI alert email to user with cooldown protection"""
         
+        logger.info(f"📧 RSI Alert Email Service - Starting email process")
+        logger.info(f"   User: {user_email}")
+        logger.info(f"   Alert: {alert_name}")
+        logger.info(f"   Triggered pairs: {len(triggered_pairs)}")
+        
         if not self.sg:
-            logger.warning("SendGrid not configured, skipping RSI alert email")
+            logger.warning("⚠️ SendGrid not configured, skipping RSI alert email")
             return False
         
         # Check smart cooldown before sending
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
+        logger.info(f"🔍 Generated alert hash: {alert_hash[:16]}...")
         
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
             logger.info(f"🕐 RSI alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
+        
+        logger.info(f"✅ RSI alert passed cooldown check, proceeding with email")
         
         # Clean up old cooldowns periodically
         self._cleanup_old_cooldowns()
@@ -482,11 +490,14 @@ class EmailService:
         try:
             # Create email content
             subject = f"RSI Alert - {alert_name}"
+            logger.info(f"📝 Email subject: {subject}")
             
             # Build email body
+            logger.info(f"🔨 Building RSI alert email body...")
             body = self._build_rsi_alert_email_body(
                 alert_name, triggered_pairs, alert_config
             )
+            logger.info(f"✅ Email body built successfully ({len(body)} characters)")
             
             # Create email
             from_email = Email(self.from_email, self.from_name)
@@ -494,25 +505,38 @@ class EmailService:
             content = Content("text/html", body)
             
             mail = Mail(from_email, to_email, subject, content)
+            logger.info(f"📧 Email object created successfully")
             
             # Send email asynchronously
+            logger.info(f"📤 Sending RSI alert email via SendGrid...")
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(
                 None, 
                 lambda: self.sg.send(mail)
             )
             
+            logger.info(f"📊 SendGrid response: Status {response.status_code}")
+            
             if response.status_code in [200, 201, 202]:
-                logger.info(f"✅ RSI alert email sent to {user_email}")
+                logger.info(f"✅ RSI alert email sent successfully to {user_email}")
+                logger.info(f"   Alert: {alert_name}")
+                logger.info(f"   Pairs: {len(triggered_pairs)}")
+                logger.info(f"   Response: {response.status_code}")
+                
                 # Update cooldown after successful send
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
+                logger.info(f"⏰ Updated cooldown for alert hash: {alert_hash[:16]}...")
                 return True
             else:
                 logger.error(f"❌ Failed to send RSI alert email: {response.status_code} - {response.body}")
+                logger.error(f"   User: {user_email}")
+                logger.error(f"   Alert: {alert_name}")
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Error sending RSI alert email: {e}")
+            logger.error(f"   User: {user_email}")
+            logger.error(f"   Alert: {alert_name}")
             return False
     
     def _build_rsi_alert_email_body(

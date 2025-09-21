@@ -69,6 +69,13 @@ def _to_tick(symbol: str, info) -> Optional[Tick]:
     )
 
 
+def get_current_tick(symbol: str) -> Optional[Tick]:
+    """Return the current tick for a symbol as a Tick model, or None if unavailable."""
+    ensure_symbol_selected(symbol)
+    info = mt5.symbol_info_tick(symbol)
+    return _to_tick(symbol, info)
+
+
 def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
     if rate_data is None:
         return None
