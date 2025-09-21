@@ -41,11 +41,8 @@ class RSIAlertService:
         """Check all RSI alerts against current tick data"""
         
         try:
-            logger.info(f"🔍 Starting RSI alert check for {len(tick_data.get('symbols', []))} symbols")
-            
             # Get all active RSI alerts from cache
             all_alerts = await alert_cache.get_all_alerts()
-            logger.info(f"📊 Retrieved {sum(len(alerts) for alerts in all_alerts.values())} total alerts from cache")
             
             triggered_alerts = []
             total_rsi_alerts = 0
@@ -58,18 +55,13 @@ class RSIAlertService:
                         alert_name = alert.get("alert_name", "Unknown")
                         user_email = alert.get("user_email", "Unknown")
                         
-                        logger.info(f"🔍 Processing RSI Alert: ID={alert_id}, Name='{alert_name}', User={user_email}")
-                        
                         if not alert_id:
                             logger.warning(f"⚠️ Alert {alert_name} has no ID, skipping")
                             continue
                         
                         # Check if this alert should be triggered based on cooldown
                         if not self._should_trigger_alert(alert_id):
-                            logger.info(f"⏰ Alert {alert_name} (ID: {alert_id}) is in cooldown period, skipping")
                             continue
-                        
-                        logger.info(f"✅ Alert {alert_name} (ID: {alert_id}) passed cooldown check, checking conditions...")
                         
                         # Check if this alert should be triggered
                         trigger_result = await self._check_single_rsi_alert(alert, tick_data)
@@ -82,7 +74,6 @@ class RSIAlertService:
                             
                             # Update last triggered time
                             self.last_triggered_alerts[alert_id] = datetime.now(timezone.utc)
-                            logger.info(f"⏰ Updated last triggered time for alert {alert_id}")
                             
                             # Send email notification if configured
                             if "email" in alert.get("notification_methods", []):
@@ -90,10 +81,11 @@ class RSIAlertService:
                                 await self._send_rsi_alert_notification(trigger_result)
                             else:
                                 logger.info(f"📧 Email notification not configured for alert {alert_name}")
-                        else:
-                            logger.info(f"ℹ️ No conditions met for alert {alert_name} (ID: {alert_id})")
             
-            logger.info(f"📊 RSI Alert Check Complete: {total_rsi_alerts} alerts processed, {len(triggered_alerts)} triggered")
+            # Only log summary if there are alerts or triggers
+            if total_rsi_alerts > 0 or len(triggered_alerts) > 0:
+                logger.info(f"📊 RSI Alert Check Complete: {total_rsi_alerts} alerts processed, {len(triggered_alerts)} triggered")
+            
             return triggered_alerts
             
         except Exception as e:
@@ -110,11 +102,6 @@ class RSIAlertService:
             timeframes = alert.get("timeframes", ["1H"])
             alert_conditions = alert.get("alert_conditions", [])
             
-            logger.info(f"🔍 Checking alert '{alert_name}' (ID: {alert_id})")
-            logger.info(f"   Pairs: {pairs}")
-            logger.info(f"   Timeframes: {timeframes}")
-            logger.info(f"   Conditions: {alert_conditions}")
-            
             # RSI settings
             rsi_period = alert.get("rsi_period", 14)
             rsi_overbought = alert.get("rsi_overbought_threshold", 70)
@@ -124,9 +111,6 @@ class RSIAlertService:
             rfi_strong_threshold = alert.get("rfi_strong_threshold", 0.80)
             rfi_moderate_threshold = alert.get("rfi_moderate_threshold", 0.60)
             
-            logger.info(f"   RSI Settings: Period={rsi_period}, Overbought={rsi_overbought}, Oversold={rsi_oversold}")
-            logger.info(f"   RFI Settings: Strong={rfi_strong_threshold}, Moderate={rfi_moderate_threshold}")
-            
             triggered_pairs = []
             total_checks = 0
             
@@ -134,7 +118,7 @@ class RSIAlertService:
             for symbol in pairs:
                 for timeframe in timeframes:
                     total_checks += 1
-                    logger.info(f"🔍 Checking {symbol} {timeframe} (Check {total_checks})")
+                    logger.debug(f"🔍 Checking {symbol} {timeframe} (Check {total_checks})")
                     
                     # Get market data for this symbol/timeframe
                     market_data = self._get_market_data_for_symbol(symbol, timeframe, tick_data)
@@ -143,7 +127,7 @@ class RSIAlertService:
                         logger.warning(f"⚠️ No market data available for {symbol} {timeframe}")
                         continue
                     
-                    logger.info(f"✅ Market data retrieved for {symbol} {timeframe}: {market_data.get('data_source', 'Unknown')}")
+                    logger.debug(f"✅ Market data retrieved for {symbol} {timeframe}: {market_data.get('data_source', 'Unknown')}")
                     
                     # Calculate RSI
                     rsi_value = await self._calculate_rsi(market_data, rsi_period)
@@ -152,13 +136,13 @@ class RSIAlertService:
                         logger.warning(f"⚠️ Could not calculate RSI for {symbol} {timeframe}")
                         continue
                     
-                    logger.info(f"📊 RSI calculated for {symbol} {timeframe}: {rsi_value:.2f}")
+                    logger.debug(f"📊 RSI calculated for {symbol} {timeframe}: {rsi_value:.2f}")
                     
                     # Calculate RFI score
                     rfi_score = await self._calculate_rfi_score(market_data, rsi_value)
                     
                     if rfi_score is not None:
-                        logger.info(f"📊 RFI calculated for {symbol} {timeframe}: {rfi_score:.3f}")
+                        logger.debug(f"📊 RFI calculated for {symbol} {timeframe}: {rfi_score:.3f}")
                     
                     # Check alert conditions
                     trigger_condition = self._check_rsi_conditions(
@@ -184,9 +168,9 @@ class RSIAlertService:
                             "timestamp": datetime.now(timezone.utc).isoformat()
                         })
                     else:
-                        logger.info(f"ℹ️ No conditions met for {symbol} {timeframe} (RSI: {rsi_value:.2f})")
+                        logger.debug(f"ℹ️ No conditions met for {symbol} {timeframe} (RSI: {rsi_value:.2f})")
             
-            logger.info(f"📊 Alert check complete: {total_checks} checks, {len(triggered_pairs)} triggers")
+            logger.debug(f"📊 Alert check complete: {total_checks} checks, {len(triggered_pairs)} triggers")
             
             if triggered_pairs:
                 logger.info(f"🚨 ALERT TRIGGERED: {alert_name} with {len(triggered_pairs)} triggered pairs")
@@ -203,7 +187,7 @@ class RSIAlertService:
                     "triggered_at": datetime.now(timezone.utc).isoformat()
                 }
             
-            logger.info(f"ℹ️ No triggers for alert '{alert_name}'")
+            logger.debug(f"ℹ️ No triggers for alert '{alert_name}'")
             return None
             
         except Exception as e:
@@ -239,7 +223,7 @@ class RSIAlertService:
                         latest_bar = ohlc_data[-1]
                         tick_data = get_current_tick(symbol)
                         
-                        logger.info(f"✅ Using real MT5 data for {symbol} {timeframe}")
+                        logger.debug(f"✅ Using real MT5 data for {symbol} {timeframe}")
                         return {
                             "symbol": symbol,
                             "timeframe": timeframe,
@@ -266,7 +250,7 @@ class RSIAlertService:
                 return tick_market_data[symbol]
             
             # Final fallback: simulate market data
-            logger.warning(f"⚠️ Using simulated data for {symbol} - no real data available")
+            logger.debug(f"⚠️ Using simulated data for {symbol} - no real data available")
             return {
                 "symbol": symbol,
                 "timeframe": timeframe,
@@ -319,7 +303,7 @@ class RSIAlertService:
                             # Calculate real RSI
                             rsi_value = self._calculate_rsi_from_closes(closes, period)
                             if rsi_value is not None:
-                                logger.info(f"✅ Calculated real RSI for {symbol}: {rsi_value:.2f}")
+                                logger.debug(f"✅ Calculated real RSI for {symbol}: {rsi_value:.2f}")
                                 return rsi_value
                 except Exception as mt5_error:
                     logger.warning(f"⚠️ MT5 RSI calculation failed: {mt5_error}")
@@ -330,7 +314,7 @@ class RSIAlertService:
             rsi_value = 50 + price_factor * 2
             rsi_value = max(0, min(100, rsi_value))
             
-            logger.warning(f"⚠️ Using simulated RSI for {market_data.get('symbol', 'unknown')}: {rsi_value:.2f}")
+            logger.debug(f"⚠️ Using simulated RSI for {market_data.get('symbol', 'unknown')}: {rsi_value:.2f}")
             return rsi_value
             
         except Exception as e:

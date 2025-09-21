@@ -25,11 +25,8 @@ class HeatmapAlertService:
         """Check all heatmap alerts against current tick data"""
         
         try:
-            logger.info(f"🔍 Starting Heatmap alert check for {len(tick_data.get('symbols', []))} symbols")
-            
             # Get all active heatmap alerts from cache
             all_alerts = await alert_cache.get_all_alerts()
-            logger.info(f"📊 Retrieved {sum(len(alerts) for alerts in all_alerts.values())} total alerts from cache")
             
             triggered_alerts = []
             total_heatmap_alerts = 0
@@ -42,13 +39,9 @@ class HeatmapAlertService:
                         alert_name = alert.get("alert_name", "Unknown")
                         user_email = alert.get("user_email", "Unknown")
                         
-                        logger.info(f"🔍 Processing Heatmap Alert: ID={alert_id}, Name='{alert_name}', User={user_email}")
-                        
                         if not alert_id:
                             logger.warning(f"⚠️ Alert {alert_name} has no ID, skipping")
                             continue
-                        
-                        logger.info(f"✅ Alert {alert_name} (ID: {alert_id}) checking conditions...")
                         
                         # Check if this alert should be triggered
                         trigger_result = await self._check_single_heatmap_alert(alert, tick_data)
@@ -65,10 +58,11 @@ class HeatmapAlertService:
                                 await self._send_alert_notification(trigger_result)
                             else:
                                 logger.info(f"📧 Email notification not configured for alert {alert_name}")
-                        else:
-                            logger.info(f"ℹ️ No conditions met for alert {alert_name} (ID: {alert_id})")
             
-            logger.info(f"📊 Heatmap Alert Check Complete: {total_heatmap_alerts} alerts processed, {len(triggered_alerts)} triggered")
+            # Only log summary if there are alerts or triggers
+            if total_heatmap_alerts > 0 or len(triggered_alerts) > 0:
+                logger.info(f"📊 Heatmap Alert Check Complete: {total_heatmap_alerts} alerts processed, {len(triggered_alerts)} triggered")
+            
             return triggered_alerts
             
         except Exception as e:
@@ -210,7 +204,7 @@ class HeatmapAlertService:
                         # Get real tick data from MT5
                         tick_info = mt5.symbol_info_tick(symbol)
                         
-                        logger.info(f"✅ Using real MT5 data for {symbol} {timeframe}")
+                        logger.debug(f"✅ Using real MT5 data for {symbol} {timeframe}")
                         return {
                             "symbol": symbol,
                             "timeframe": timeframe,
@@ -231,7 +225,7 @@ class HeatmapAlertService:
             
             # Fallback: simulate market data
             import random
-            logger.warning(f"⚠️ Using simulated data for {symbol} - no real data available")
+            logger.debug(f"⚠️ Using simulated data for {symbol} - no real data available")
             
             return {
                 "symbol": symbol,
@@ -383,7 +377,7 @@ class HeatmapAlertService:
             closes = [bar.close for bar in ohlc_data]
             rsi_value = self._calculate_rsi_from_closes(closes, 14)
             
-            logger.info(f"✅ Calculated real RSI for {symbol}: {rsi_value:.2f}")
+            logger.debug(f"✅ Calculated real RSI for {symbol}: {rsi_value:.2f}")
             return rsi_value
             
         except Exception as e:
