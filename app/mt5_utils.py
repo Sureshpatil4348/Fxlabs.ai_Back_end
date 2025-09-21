@@ -107,7 +107,10 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[O
         raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, count)
     if rates is None or len(rates) == 0:
-        print(f"⚠️ No rates from MT5 for {symbol}")
+        # Only log at debug level to reduce noise
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"⚠️ No rates from MT5 for {symbol}")
         return []
     ohlc_data = []
     for rate in rates:
@@ -192,7 +195,10 @@ def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 250) -> List
     if symbol not in global_ohlc_cache:
         global_ohlc_cache[symbol] = {}
     if timeframe.value not in global_ohlc_cache[symbol]:
-        print(f"📡 Cache miss - fetching from MT5: {symbol} {timeframe.value}")
+        # Only log cache miss at debug level to reduce noise
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"📡 Cache miss - fetching from MT5: {symbol} {timeframe.value}")
         ohlc_data = get_ohlc_data(symbol, timeframe, count)
         global_ohlc_cache[symbol][timeframe.value] = deque(ohlc_data, maxlen=count)
         return ohlc_data

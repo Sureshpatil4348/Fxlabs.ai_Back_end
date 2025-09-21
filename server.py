@@ -196,7 +196,10 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[O
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, count)
     
     if rates is None or len(rates) == 0:
-        print(f"⚠️ No rates from MT5 for {symbol}")
+        # Only log at debug level to reduce noise
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"⚠️ No rates from MT5 for {symbol}")
         return []
     
     
@@ -302,7 +305,10 @@ def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 100) -> List
     
     if timeframe.value not in global_ohlc_cache[symbol]:
         # Not cached, fetch from MT5
-        print(f"📡 Cache miss - fetching from MT5: {symbol} {timeframe.value}")
+        # Only log cache miss at debug level to reduce noise
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"📡 Cache miss - fetching from MT5: {symbol} {timeframe.value}")
         ohlc_data = get_ohlc_data(symbol, timeframe, count)
         global_ohlc_cache[symbol][timeframe.value] = deque(ohlc_data, maxlen=count)
         return ohlc_data
@@ -518,7 +524,10 @@ async def check_heatmap_alerts_manual(
                             "time": tick.time
                         }
                 except Exception as e:
-                    print(f"⚠️ Could not get real data for {symbol}: {e}")
+                    # Only log at debug level to reduce noise
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"⚠️ Could not get real data for {symbol}: {e}")
         
         triggered_alerts = await heatmap_alert_service.check_heatmap_alerts(test_tick_data)
         
@@ -634,7 +643,10 @@ async def check_rsi_alerts_manual(
                             "volume": 1000  # Default volume
                         }
                 except Exception as e:
-                    print(f"⚠️ Could not get real data for {symbol}: {e}")
+                    # Only log at debug level to reduce noise
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"⚠️ Could not get real data for {symbol}: {e}")
         
         triggered_alerts = await rsi_alert_service.check_rsi_alerts(test_tick_data)
         
@@ -750,7 +762,10 @@ async def check_rsi_correlation_alerts_manual(
                             "volume": 1000  # Default volume
                         }
                 except Exception as e:
-                    print(f"⚠️ Could not get real data for {symbol}: {e}")
+                    # Only log at debug level to reduce noise
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.debug(f"⚠️ Could not get real data for {symbol}: {e}")
         
         triggered_alerts = await rsi_correlation_alert_service.check_rsi_correlation_alerts(test_tick_data)
         
@@ -997,7 +1012,10 @@ class WSClient:
                                 "data": [ohlc.model_dump() for ohlc in ohlc_data]
                             })
                         else:
-                            print(f"⚠️ No OHLC data available for {symbol}")
+                            # Only log at debug level to reduce noise
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.debug(f"⚠️ No OHLC data available for {symbol}")
                         
                         # Schedule next OHLC update
                         self.next_ohlc_updates[symbol] = calculate_next_update_time(

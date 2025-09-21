@@ -59,9 +59,13 @@ class HeatmapAlertService:
                             else:
                                 logger.info(f"📧 Email notification not configured for alert {alert_name}")
             
-            # Only log summary if there are alerts or triggers
-            if total_heatmap_alerts > 0 or len(triggered_alerts) > 0:
-                logger.info(f"📊 Heatmap Alert Check Complete: {total_heatmap_alerts} alerts processed, {len(triggered_alerts)} triggered")
+            # Only log summary if there are alerts to process or triggers occurred
+            if total_heatmap_alerts > 0:
+                if len(triggered_alerts) > 0:
+                    logger.info(f"📊 Heatmap Alert Check Complete: {total_heatmap_alerts} alerts processed, {len(triggered_alerts)} triggered")
+                else:
+                    # Only log debug level when no triggers to reduce noise
+                    logger.debug(f"📊 Heatmap Alert Check Complete: {total_heatmap_alerts} alerts processed, 0 triggered")
             
             return triggered_alerts
             

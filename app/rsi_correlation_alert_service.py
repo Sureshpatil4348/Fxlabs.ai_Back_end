@@ -100,9 +100,13 @@ class RSICorrelationAlertService:
                             else:
                                 logger.info(f"📧 Email notification not configured for alert {alert_name}")
             
-            # Only log summary if there are alerts or triggers
-            if total_correlation_alerts > 0 or len(triggered_alerts) > 0:
-                logger.info(f"📊 RSI Correlation Alert Check Complete: {total_correlation_alerts} alerts processed, {len(triggered_alerts)} triggered")
+            # Only log summary if there are alerts to process or triggers occurred
+            if total_correlation_alerts > 0:
+                if len(triggered_alerts) > 0:
+                    logger.info(f"📊 RSI Correlation Alert Check Complete: {total_correlation_alerts} alerts processed, {len(triggered_alerts)} triggered")
+                else:
+                    # Only log debug level when no triggers to reduce noise
+                    logger.debug(f"📊 RSI Correlation Alert Check Complete: {total_correlation_alerts} alerts processed, 0 triggered")
             
             return triggered_alerts
             
