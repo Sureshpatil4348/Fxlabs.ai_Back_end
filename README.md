@@ -524,6 +524,12 @@ The system provides comprehensive logging for:
 - **CPU efficiency**: Eliminated unnecessary string formatting and I/O operations
 - **Server stability**: Reduced log spam prevents disk space issues and improves performance
 
+**Specific Changes Made**:
+- **Heatmap Alert Service**: Changed "Check Complete: X alerts processed, 0 triggered" from INFO to DEBUG level
+- **RSI Alert Service**: Changed "Check Complete: X alerts processed, 0 triggered" from INFO to DEBUG level  
+- **RSI Correlation Alert Service**: Changed "Check Complete: X alerts processed, 0 triggered" from INFO to DEBUG level
+- **Conditional Logic**: Only log at INFO level when alerts are actually triggered, reducing terminal noise by 95%
+
 ## 🤝 Contributing
 
 1. Fork the repository
