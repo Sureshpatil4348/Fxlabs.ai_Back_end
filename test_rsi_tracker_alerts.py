@@ -101,13 +101,9 @@ async def get_supabase_rsi_alerts():
     try:
         import aiohttp
         
-        # Get Supabase credentials from environment
-        supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
-        supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
-        
-        if not supabase_service_key:
-            print("❌ SUPABASE_SERVICE_KEY not found in environment variables")
-            return []
+        # Use hardcoded Supabase credentials (same as other services)
+        supabase_url = "https://hyajwhtkwldrmlhfiuwg.supabase.co"
+        supabase_service_key = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5YWp3aHRrd2xkcm1saGZpdXdnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjI5NjUzNCwiZXhwIjoyMDcxODcyNTM0fQ.UDqYHY5Io0o-fQTswCYQmMdC6UCPQI2gf3aTb9o09SE"
         
         headers = {
             "apikey": supabase_service_key,
