@@ -168,8 +168,10 @@ class RSIAlertService:
                     )
                     
                     if trigger_condition:
+                        
                         logger.info(f"🚨 CONDITION MATCHED: {symbol} {timeframe} - {trigger_condition}")
-                        logger.info(f"   RSI: {rsi_value:.2f}, RFI: {rfi_score:.3f if rfi_score else 'N/A'}")
+                        rfi_display = f"{rfi_score:.3f}" if rfi_score is not None else "N/A"
+                        logger.info(f"   RSI: {rsi_value:.2f}, RFI: {rfi_display}")
                         
                         triggered_pairs.append({
                             "symbol": symbol,
