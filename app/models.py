@@ -159,8 +159,10 @@ class RSICorrelationAlertRequest(BaseModel):
     notification_methods: List[str] = ["email"]
     alert_frequency: str = "once"
     
-    class Config:
-        allow_population_by_field_name = True
+    # Pydantic v2 config
+    model_config = {
+        "populate_by_name": True
+    }
 
 
 class RSICorrelationAlertResponse(BaseModel):
@@ -185,8 +187,10 @@ class RSICorrelationAlertResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        allow_population_by_field_name = True
+    # Pydantic v2 config
+    model_config = {
+        "populate_by_name": True
+    }
 
 
 class HeatmapAlertTrigger(BaseModel):

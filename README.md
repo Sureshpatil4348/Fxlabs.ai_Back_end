@@ -606,3 +606,36 @@ For support and questions:
 **Version**: 2.0.0  
 **Last Updated**: December 2024  
 **Compatibility**: Python 3.8+, MT5 Python API, FastAPI 0.100+
+
+## 🛠️ Troubleshooting
+
+### "ModuleNotFoundError: No module named 'sendgrid'"
+- Ensure dependencies are installed inside your virtual environment:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # PowerShell: .venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+- Set SendGrid credentials in `.env` (or environment):
+```env
+SENDGRID_API_KEY=your_sendgrid_api_key
+FROM_EMAIL=alerts@yourdomain.com
+FROM_NAME=FX Labs Alerts
+```
+- Behavior without SendGrid: The server will start and log a warning; email sending is disabled but other features work.
+
+### Pydantic v2 Config Warning
+If you saw:
+```
+UserWarning: Valid config keys have changed in V2: 'allow_population_by_field_name' → 'populate_by_name'
+```
+This is resolved by migrating models to Pydantic v2 `model_config` with `populate_by_name=True` (already updated in `app/models.py`). No action required on your part.
+
+### Windows Global Python vs venv
+If you still get missing modules on Windows, confirm you're running inside the venv:
+```powershell
+$env:VIRTUAL_ENV
+python -c "import sys; print(sys.executable)"
+```
+It should point to your project's `.venv` path. If not, re-run activation and reinstall requirements.

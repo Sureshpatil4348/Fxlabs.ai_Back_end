@@ -3,22 +3,29 @@ import asyncio
 import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Email, To, Content
+try:
+    from sendgrid import SendGridAPIClient
+    from sendgrid.helpers.mail import Mail, Email, To, Content
+except Exception:  # Module may be missing in some environments
+    SendGridAPIClient = None
+    Mail = Email = To = Content = None
 import logging
 
 # Configure logging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
+from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME
+
+
 class EmailService:
     """SendGrid email service for sending heatmap alerts with cooldown mechanism"""
     
     def __init__(self):
-        # Hardcoded SendGrid API key - replace with your actual API key
-        self.sendgrid_api_key = "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"
-        self.from_email = "alerts@fxlabs.ai"
-        self.from_name = "FX Labs"
+        # Load from environment-driven config
+        self.sendgrid_api_key = (SENDGRID_API_KEY or os.environ.get("SENDGRID_API_KEY", "")).strip()
+        self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@fxlabs.ai")).strip()
+        self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs")).strip()
         
         # Smart cooldown mechanism - value-based cooldown for similar alerts
         self.cooldown_minutes = 10  # Reduced to 10 minutes for better responsiveness
@@ -26,9 +33,20 @@ class EmailService:
         self.alert_cooldowns = {}  # {alert_hash: last_sent_timestamp}
         self.alert_values = {}  # {alert_hash: last_sent_values} for value comparison
         
-        # Always initialize SendGrid with the hardcoded API key
-        self.sg = SendGridAPIClient(api_key=self.sendgrid_api_key)
-        logger.info("✅ SendGrid email service initialized with smart value-based cooldown (10min, 5 RSI threshold)")
+        # Initialize SendGrid client if available and configured
+        if SendGridAPIClient and self.sendgrid_api_key:
+            try:
+                self.sg = SendGridAPIClient(api_key=self.sendgrid_api_key)
+                logger.info("✅ SendGrid email service initialized with smart value-based cooldown (10min, 5 RSI threshold)")
+            except Exception as e:
+                self.sg = None
+                logger.warning(f"⚠️ Could not initialize SendGrid client: {e}")
+        else:
+            self.sg = None
+            if not SendGridAPIClient:
+                logger.warning("⚠️ SendGrid library not installed. Email sending is disabled.")
+            elif not self.sendgrid_api_key:
+                logger.warning("⚠️ SENDGRID_API_KEY not configured. Email sending is disabled.")
     
     def _generate_alert_hash(self, user_email: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], calculation_mode: str = None) -> str:
         """Generate a unique hash for similar alerts to implement value-based cooldown (supports all alert types)"""
