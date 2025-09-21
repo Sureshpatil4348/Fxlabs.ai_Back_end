@@ -58,35 +58,60 @@ class RSICorrelationAlertService:
         """Check all RSI correlation alerts against current tick data"""
         
         try:
+            logger.info(f"🔍 Starting RSI Correlation alert check for {len(tick_data.get('symbols', []))} symbols")
+            
             # Get all active RSI correlation alerts from cache
             all_alerts = await alert_cache.get_all_alerts()
+            logger.info(f"📊 Retrieved {sum(len(alerts) for alerts in all_alerts.values())} total alerts from cache")
             
             triggered_alerts = []
+            total_correlation_alerts = 0
             
             for user_id, user_alerts in all_alerts.items():
                 for alert in user_alerts:
                     if alert.get("type") == "rsi_correlation" and alert.get("is_active", True):
+                        total_correlation_alerts += 1
                         alert_id = alert.get("id")
+                        alert_name = alert.get("alert_name", "Unknown")
+                        user_email = alert.get("user_email", "Unknown")
+                        calculation_mode = alert.get("calculation_mode", "rsi_threshold")
+                        
+                        logger.info(f"🔍 Processing RSI Correlation Alert: ID={alert_id}, Name='{alert_name}', User={user_email}, Mode={calculation_mode}")
+                        
                         if not alert_id:
+                            logger.warning(f"⚠️ Alert {alert_name} has no ID, skipping")
                             continue
                         
                         # Check if this alert should be triggered based on frequency
                         if not self._should_trigger_alert(alert):
+                            logger.info(f"⏰ Alert {alert_name} (ID: {alert_id}) is in cooldown period, skipping")
                             continue
+                        
+                        logger.info(f"✅ Alert {alert_name} (ID: {alert_id}) passed cooldown check, checking conditions...")
                         
                         # Check if this alert should be triggered
                         trigger_result = await self._check_single_rsi_correlation_alert(alert, tick_data)
                         
                         if trigger_result:
+                            logger.info(f"🚨 ALERT TRIGGERED: {alert_name} (ID: {alert_id}) for user {user_email}")
+                            logger.info(f"   Triggered pairs: {len(trigger_result.get('triggered_pairs', []))}")
+                            
                             triggered_alerts.append(trigger_result)
                             
                             # Update last triggered time immediately after determining trigger
                             self.last_triggered_alerts[alert_id] = datetime.now(timezone.utc)
+                            logger.info(f"⏰ Updated last triggered time for alert {alert_id}")
                             
                             # Send email notification if configured
                             if "email" in alert.get("notification_methods", []):
+                                logger.info(f"📧 Sending email notification for alert {alert_name} to {user_email}")
                                 await self._send_rsi_correlation_alert_notification(trigger_result)
+                            else:
+                                logger.info(f"📧 Email notification not configured for alert {alert_name}")
+                        else:
+                            logger.info(f"ℹ️ No conditions met for alert {alert_name} (ID: {alert_id})")
             
+            logger.info(f"📊 RSI Correlation Alert Check Complete: {total_correlation_alerts} alerts processed, {len(triggered_alerts)} triggered")
             return triggered_alerts
             
         except Exception as e:
@@ -531,15 +556,29 @@ class RSICorrelationAlertService:
         try:
             user_email = trigger_data.get("user_email")
             alert_name = trigger_data.get("alert_name")
+            alert_id = trigger_data.get("alert_id")
             calculation_mode = trigger_data.get("calculation_mode")
             triggered_pairs = trigger_data.get("triggered_pairs", [])
             alert_config = trigger_data.get("alert_config", {})
             
+            logger.info(f"📧 Preparing RSI Correlation alert email for user: {user_email}")
+            logger.info(f"   Alert: {alert_name} (ID: {alert_id})")
+            logger.info(f"   Mode: {calculation_mode}")
+            logger.info(f"   Triggered pairs: {len(triggered_pairs)}")
+            
             if not user_email:
-                logger.warning("No user email found for RSI correlation alert notification")
+                logger.warning("⚠️ No user email found for RSI correlation alert notification")
                 return
             
+            # Log triggered pairs details
+            for i, pair in enumerate(triggered_pairs, 1):
+                symbol1 = pair.get('symbol1', pair.get('symbol', 'Unknown'))
+                symbol2 = pair.get('symbol2', 'Unknown')
+                condition = pair.get('trigger_condition', 'Unknown')
+                logger.info(f"   Pair {i}: {symbol1}-{symbol2} - {condition}")
+            
             # Send email notification
+            logger.info(f"📤 Sending RSI Correlation alert email to {user_email}...")
             success = await email_service.send_rsi_correlation_alert(
                 user_email=user_email,
                 alert_name=alert_name,
@@ -549,9 +588,14 @@ class RSICorrelationAlertService:
             )
             
             if success:
-                logger.info(f"✅ RSI correlation alert email sent to {user_email}")
+                logger.info(f"✅ RSI Correlation alert email sent successfully to {user_email}")
+                logger.info(f"   Alert: {alert_name} (ID: {alert_id})")
+                logger.info(f"   Mode: {calculation_mode}")
+                logger.info(f"   Pairs: {len(triggered_pairs)}")
             else:
-                logger.warning(f"⚠️ Failed to send RSI correlation alert email to {user_email}")
+                logger.warning(f"⚠️ Failed to send RSI Correlation alert email to {user_email}")
+                logger.warning(f"   Alert: {alert_name} (ID: {alert_id})")
+                logger.warning(f"   Mode: {calculation_mode}")
             
             # Log the trigger in database
             await self._log_rsi_correlation_alert_trigger(trigger_data)

@@ -25,24 +25,50 @@ class HeatmapAlertService:
         """Check all heatmap alerts against current tick data"""
         
         try:
+            logger.info(f"🔍 Starting Heatmap alert check for {len(tick_data.get('symbols', []))} symbols")
+            
             # Get all active heatmap alerts from cache
             all_alerts = await alert_cache.get_all_alerts()
+            logger.info(f"📊 Retrieved {sum(len(alerts) for alerts in all_alerts.values())} total alerts from cache")
             
             triggered_alerts = []
+            total_heatmap_alerts = 0
             
             for user_id, user_alerts in all_alerts.items():
                 for alert in user_alerts:
                     if alert.get("type") == "heatmap" and alert.get("is_active", True):
+                        total_heatmap_alerts += 1
+                        alert_id = alert.get("id")
+                        alert_name = alert.get("alert_name", "Unknown")
+                        user_email = alert.get("user_email", "Unknown")
+                        
+                        logger.info(f"🔍 Processing Heatmap Alert: ID={alert_id}, Name='{alert_name}', User={user_email}")
+                        
+                        if not alert_id:
+                            logger.warning(f"⚠️ Alert {alert_name} has no ID, skipping")
+                            continue
+                        
+                        logger.info(f"✅ Alert {alert_name} (ID: {alert_id}) checking conditions...")
+                        
                         # Check if this alert should be triggered
                         trigger_result = await self._check_single_heatmap_alert(alert, tick_data)
                         
                         if trigger_result:
+                            logger.info(f"🚨 ALERT TRIGGERED: {alert_name} (ID: {alert_id}) for user {user_email}")
+                            logger.info(f"   Triggered pairs: {len(trigger_result.get('triggered_pairs', []))}")
+                            
                             triggered_alerts.append(trigger_result)
                             
                             # Send email notification if configured
                             if "email" in alert.get("notification_methods", []):
+                                logger.info(f"📧 Sending email notification for alert {alert_name} to {user_email}")
                                 await self._send_alert_notification(trigger_result)
+                            else:
+                                logger.info(f"📧 Email notification not configured for alert {alert_name}")
+                        else:
+                            logger.info(f"ℹ️ No conditions met for alert {alert_name} (ID: {alert_id})")
             
+            logger.info(f"📊 Heatmap Alert Check Complete: {total_heatmap_alerts} alerts processed, {len(triggered_alerts)} triggered")
             return triggered_alerts
             
         except Exception as e:
@@ -428,14 +454,24 @@ class HeatmapAlertService:
         try:
             user_email = trigger_data.get("user_email")
             alert_name = trigger_data.get("alert_name")
+            alert_id = trigger_data.get("alert_id")
             triggered_pairs = trigger_data.get("triggered_pairs", [])
             alert_config = trigger_data.get("alert_config", {})
             
+            logger.info(f"📧 Preparing Heatmap alert email for user: {user_email}")
+            logger.info(f"   Alert: {alert_name} (ID: {alert_id})")
+            logger.info(f"   Triggered pairs: {len(triggered_pairs)}")
+            
             if not user_email:
-                logger.warning("No user email found for alert notification")
+                logger.warning("⚠️ No user email found for alert notification")
                 return
             
+            # Log triggered pairs details
+            for i, pair in enumerate(triggered_pairs, 1):
+                logger.info(f"   Pair {i}: {pair.get('symbol')} - {pair.get('trigger_condition')} (Score: {pair.get('trigger_score')})")
+            
             # Send email using the email service
+            logger.info(f"📤 Sending Heatmap alert email to {user_email}...")
             success = await email_service.send_heatmap_alert(
                 user_email=user_email,
                 alert_name=alert_name,
@@ -444,9 +480,12 @@ class HeatmapAlertService:
             )
             
             if success:
-                logger.info(f"✅ Alert notification sent to {user_email} for {alert_name}")
+                logger.info(f"✅ Heatmap alert email sent successfully to {user_email}")
+                logger.info(f"   Alert: {alert_name} (ID: {alert_id})")
+                logger.info(f"   Pairs: {len(triggered_pairs)}")
             else:
-                logger.error(f"❌ Failed to send alert notification to {user_email}")
+                logger.warning(f"⚠️ Failed to send Heatmap alert email to {user_email}")
+                logger.warning(f"   Alert: {alert_name} (ID: {alert_id})")
                 
         except Exception as e:
             logger.error(f"❌ Error sending alert notification: {e}")

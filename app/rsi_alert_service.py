@@ -41,35 +41,59 @@ class RSIAlertService:
         """Check all RSI alerts against current tick data"""
         
         try:
+            logger.info(f"🔍 Starting RSI alert check for {len(tick_data.get('symbols', []))} symbols")
+            
             # Get all active RSI alerts from cache
             all_alerts = await alert_cache.get_all_alerts()
+            logger.info(f"📊 Retrieved {sum(len(alerts) for alerts in all_alerts.values())} total alerts from cache")
             
             triggered_alerts = []
+            total_rsi_alerts = 0
             
             for user_id, user_alerts in all_alerts.items():
                 for alert in user_alerts:
                     if alert.get("type") == "rsi" and alert.get("is_active", True):
+                        total_rsi_alerts += 1
                         alert_id = alert.get("id")
+                        alert_name = alert.get("alert_name", "Unknown")
+                        user_email = alert.get("user_email", "Unknown")
+                        
+                        logger.info(f"🔍 Processing RSI Alert: ID={alert_id}, Name='{alert_name}', User={user_email}")
+                        
                         if not alert_id:
+                            logger.warning(f"⚠️ Alert {alert_name} has no ID, skipping")
                             continue
                         
                         # Check if this alert should be triggered based on cooldown
                         if not self._should_trigger_alert(alert_id):
+                            logger.info(f"⏰ Alert {alert_name} (ID: {alert_id}) is in cooldown period, skipping")
                             continue
+                        
+                        logger.info(f"✅ Alert {alert_name} (ID: {alert_id}) passed cooldown check, checking conditions...")
                         
                         # Check if this alert should be triggered
                         trigger_result = await self._check_single_rsi_alert(alert, tick_data)
                         
                         if trigger_result:
+                            logger.info(f"🚨 ALERT TRIGGERED: {alert_name} (ID: {alert_id}) for user {user_email}")
+                            logger.info(f"   Triggered pairs: {len(trigger_result.get('triggered_pairs', []))}")
+                            
                             triggered_alerts.append(trigger_result)
                             
                             # Update last triggered time
                             self.last_triggered_alerts[alert_id] = datetime.now(timezone.utc)
+                            logger.info(f"⏰ Updated last triggered time for alert {alert_id}")
                             
                             # Send email notification if configured
                             if "email" in alert.get("notification_methods", []):
+                                logger.info(f"📧 Sending email notification for alert {alert_name} to {user_email}")
                                 await self._send_rsi_alert_notification(trigger_result)
+                            else:
+                                logger.info(f"📧 Email notification not configured for alert {alert_name}")
+                        else:
+                            logger.info(f"ℹ️ No conditions met for alert {alert_name} (ID: {alert_id})")
             
+            logger.info(f"📊 RSI Alert Check Complete: {total_rsi_alerts} alerts processed, {len(triggered_alerts)} triggered")
             return triggered_alerts
             
         except Exception as e:
@@ -86,6 +110,11 @@ class RSIAlertService:
             timeframes = alert.get("timeframes", ["1H"])
             alert_conditions = alert.get("alert_conditions", [])
             
+            logger.info(f"🔍 Checking alert '{alert_name}' (ID: {alert_id})")
+            logger.info(f"   Pairs: {pairs}")
+            logger.info(f"   Timeframes: {timeframes}")
+            logger.info(f"   Conditions: {alert_conditions}")
+            
             # RSI settings
             rsi_period = alert.get("rsi_period", 14)
             rsi_overbought = alert.get("rsi_overbought_threshold", 70)
@@ -95,25 +124,41 @@ class RSIAlertService:
             rfi_strong_threshold = alert.get("rfi_strong_threshold", 0.80)
             rfi_moderate_threshold = alert.get("rfi_moderate_threshold", 0.60)
             
+            logger.info(f"   RSI Settings: Period={rsi_period}, Overbought={rsi_overbought}, Oversold={rsi_oversold}")
+            logger.info(f"   RFI Settings: Strong={rfi_strong_threshold}, Moderate={rfi_moderate_threshold}")
+            
             triggered_pairs = []
+            total_checks = 0
             
             # Check each pair and timeframe
             for symbol in pairs:
                 for timeframe in timeframes:
+                    total_checks += 1
+                    logger.info(f"🔍 Checking {symbol} {timeframe} (Check {total_checks})")
+                    
                     # Get market data for this symbol/timeframe
                     market_data = self._get_market_data_for_symbol(symbol, timeframe, tick_data)
                     
                     if not market_data:
+                        logger.warning(f"⚠️ No market data available for {symbol} {timeframe}")
                         continue
+                    
+                    logger.info(f"✅ Market data retrieved for {symbol} {timeframe}: {market_data.get('data_source', 'Unknown')}")
                     
                     # Calculate RSI
                     rsi_value = await self._calculate_rsi(market_data, rsi_period)
                     
                     if rsi_value is None:
+                        logger.warning(f"⚠️ Could not calculate RSI for {symbol} {timeframe}")
                         continue
+                    
+                    logger.info(f"📊 RSI calculated for {symbol} {timeframe}: {rsi_value:.2f}")
                     
                     # Calculate RFI score
                     rfi_score = await self._calculate_rfi_score(market_data, rsi_value)
+                    
+                    if rfi_score is not None:
+                        logger.info(f"📊 RFI calculated for {symbol} {timeframe}: {rfi_score:.3f}")
                     
                     # Check alert conditions
                     trigger_condition = self._check_rsi_conditions(
@@ -123,6 +168,9 @@ class RSIAlertService:
                     )
                     
                     if trigger_condition:
+                        logger.info(f"🚨 CONDITION MATCHED: {symbol} {timeframe} - {trigger_condition}")
+                        logger.info(f"   RSI: {rsi_value:.2f}, RFI: {rfi_score:.3f if rfi_score else 'N/A'}")
+                        
                         triggered_pairs.append({
                             "symbol": symbol,
                             "timeframe": timeframe,
@@ -133,8 +181,16 @@ class RSIAlertService:
                             "price_change_percent": self._calculate_price_change_percent(market_data),
                             "timestamp": datetime.now(timezone.utc).isoformat()
                         })
+                    else:
+                        logger.info(f"ℹ️ No conditions met for {symbol} {timeframe} (RSI: {rsi_value:.2f})")
+            
+            logger.info(f"📊 Alert check complete: {total_checks} checks, {len(triggered_pairs)} triggers")
             
             if triggered_pairs:
+                logger.info(f"🚨 ALERT TRIGGERED: {alert_name} with {len(triggered_pairs)} triggered pairs")
+                for pair in triggered_pairs:
+                    logger.info(f"   - {pair['symbol']} {pair['timeframe']}: {pair['trigger_condition']} (RSI: {pair['rsi_value']})")
+                
                 return {
                     "alert_id": alert_id,
                     "alert_name": alert_name,
@@ -145,6 +201,7 @@ class RSIAlertService:
                     "triggered_at": datetime.now(timezone.utc).isoformat()
                 }
             
+            logger.info(f"ℹ️ No triggers for alert '{alert_name}'")
             return None
             
         except Exception as e:
@@ -380,14 +437,24 @@ class RSIAlertService:
         try:
             user_email = trigger_data.get("user_email")
             alert_name = trigger_data.get("alert_name")
+            alert_id = trigger_data.get("alert_id")
             triggered_pairs = trigger_data.get("triggered_pairs", [])
             alert_config = trigger_data.get("alert_config", {})
             
+            logger.info(f"📧 Preparing RSI alert email for user: {user_email}")
+            logger.info(f"   Alert: {alert_name} (ID: {alert_id})")
+            logger.info(f"   Triggered pairs: {len(triggered_pairs)}")
+            
             if not user_email:
-                logger.warning("No user email found for RSI alert notification")
+                logger.warning("⚠️ No user email found for RSI alert notification")
                 return
             
+            # Log triggered pairs details
+            for i, pair in enumerate(triggered_pairs, 1):
+                logger.info(f"   Pair {i}: {pair.get('symbol')} {pair.get('timeframe')} - {pair.get('trigger_condition')} (RSI: {pair.get('rsi_value')})")
+            
             # Send email notification
+            logger.info(f"📤 Sending RSI alert email to {user_email}...")
             success = await email_service.send_rsi_alert(
                 user_email=user_email,
                 alert_name=alert_name,
@@ -396,12 +463,17 @@ class RSIAlertService:
             )
             
             if success:
-                logger.info(f"✅ RSI alert email sent to {user_email}")
+                logger.info(f"✅ RSI alert email sent successfully to {user_email}")
+                logger.info(f"   Alert: {alert_name} (ID: {alert_id})")
+                logger.info(f"   Pairs: {len(triggered_pairs)}")
             else:
                 logger.warning(f"⚠️ Failed to send RSI alert email to {user_email}")
+                logger.warning(f"   Alert: {alert_name} (ID: {alert_id})")
             
             # Log the trigger in database
+            logger.info(f"📝 Logging RSI alert trigger to database...")
             await self._log_rsi_alert_trigger(trigger_data)
+            logger.info(f"✅ RSI alert trigger logged to database")
             
         except Exception as e:
             logger.error(f"❌ Error sending RSI alert notification: {e}")
