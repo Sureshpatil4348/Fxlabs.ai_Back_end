@@ -58,11 +58,8 @@ class RSICorrelationAlertService:
         """Check all RSI correlation alerts against current tick data"""
         
         try:
-            logger.info(f"🔍 Starting RSI Correlation alert check for {len(tick_data.get('symbols', []))} symbols")
-            
             # Get all active RSI correlation alerts from cache
             all_alerts = await alert_cache.get_all_alerts()
-            logger.info(f"📊 Retrieved {sum(len(alerts) for alerts in all_alerts.values())} total alerts from cache")
             
             triggered_alerts = []
             total_correlation_alerts = 0
@@ -76,18 +73,13 @@ class RSICorrelationAlertService:
                         user_email = alert.get("user_email", "Unknown")
                         calculation_mode = alert.get("calculation_mode", "rsi_threshold")
                         
-                        logger.info(f"🔍 Processing RSI Correlation Alert: ID={alert_id}, Name='{alert_name}', User={user_email}, Mode={calculation_mode}")
-                        
                         if not alert_id:
                             logger.warning(f"⚠️ Alert {alert_name} has no ID, skipping")
                             continue
                         
                         # Check if this alert should be triggered based on frequency
                         if not self._should_trigger_alert(alert):
-                            logger.info(f"⏰ Alert {alert_name} (ID: {alert_id}) is in cooldown period, skipping")
                             continue
-                        
-                        logger.info(f"✅ Alert {alert_name} (ID: {alert_id}) passed cooldown check, checking conditions...")
                         
                         # Check if this alert should be triggered
                         trigger_result = await self._check_single_rsi_correlation_alert(alert, tick_data)
@@ -100,7 +92,6 @@ class RSICorrelationAlertService:
                             
                             # Update last triggered time immediately after determining trigger
                             self.last_triggered_alerts[alert_id] = datetime.now(timezone.utc)
-                            logger.info(f"⏰ Updated last triggered time for alert {alert_id}")
                             
                             # Send email notification if configured
                             if "email" in alert.get("notification_methods", []):
@@ -108,10 +99,11 @@ class RSICorrelationAlertService:
                                 await self._send_rsi_correlation_alert_notification(trigger_result)
                             else:
                                 logger.info(f"📧 Email notification not configured for alert {alert_name}")
-                        else:
-                            logger.info(f"ℹ️ No conditions met for alert {alert_name} (ID: {alert_id})")
             
-            logger.info(f"📊 RSI Correlation Alert Check Complete: {total_correlation_alerts} alerts processed, {len(triggered_alerts)} triggered")
+            # Only log summary if there are alerts or triggers
+            if total_correlation_alerts > 0 or len(triggered_alerts) > 0:
+                logger.info(f"📊 RSI Correlation Alert Check Complete: {total_correlation_alerts} alerts processed, {len(triggered_alerts)} triggered")
+            
             return triggered_alerts
             
         except Exception as e:
@@ -312,7 +304,7 @@ class RSICorrelationAlertService:
                         latest_bar = ohlc_data[-1]
                         tick_data = get_current_tick(symbol)
                         
-                        logger.info(f"✅ Using real MT5 data for {symbol} {timeframe}")
+                        logger.debug(f"✅ Using real MT5 data for {symbol} {timeframe}")
                         return {
                             "symbol": symbol,
                             "timeframe": timeframe,
@@ -339,7 +331,7 @@ class RSICorrelationAlertService:
                 return tick_market_data[symbol]
             
             # Final fallback: simulate market data
-            logger.warning(f"⚠️ Using simulated data for {symbol} - no real data available")
+            logger.debug(f"⚠️ Using simulated data for {symbol} - no real data available")
             return {
                 "symbol": symbol,
                 "timeframe": timeframe,
@@ -392,7 +384,7 @@ class RSICorrelationAlertService:
                             # Calculate real RSI
                             rsi_value = self._calculate_rsi_from_closes(closes, period)
                             if rsi_value is not None:
-                                logger.info(f"✅ Calculated real RSI for {symbol}: {rsi_value:.2f}")
+                                logger.debug(f"✅ Calculated real RSI for {symbol}: {rsi_value:.2f}")
                                 return rsi_value
                 except Exception as mt5_error:
                     logger.warning(f"⚠️ MT5 RSI calculation failed: {mt5_error}")
@@ -403,7 +395,7 @@ class RSICorrelationAlertService:
             rsi_value = 50 + price_factor * 2
             rsi_value = max(0, min(100, rsi_value))
             
-            logger.warning(f"⚠️ Using simulated RSI for {market_data.get('symbol', 'unknown')}: {rsi_value:.2f}")
+            logger.debug(f"⚠️ Using simulated RSI for {market_data.get('symbol', 'unknown')}: {rsi_value:.2f}")
             return rsi_value
             
         except Exception as e:

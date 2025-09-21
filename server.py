@@ -880,25 +880,50 @@ class WSClient:
             await self.websocket.send_bytes(orjson.dumps({"type": "ticks", "data": updates}))
             
             # Check for alerts on tick updates (non-blocking background task)
-            # Provide tick_data in a dict keyed by symbol as expected by alert services
-            tick_data_map = {}
-            for td in updates:
-                sym = td.get("symbol")
-                if not sym:
-                    continue
-                tick_data_map[sym] = {
-                    "bid": td.get("bid"),
-                    "ask": td.get("ask"),
-                    "time": td.get("time"),
-                    "volume": td.get("volume"),
+            # Only check alerts if there are active alerts to avoid unnecessary processing
+            try:
+                all_alerts = await alert_cache.get_all_alerts()
+                total_alerts = sum(len(alerts) for alerts in all_alerts.values())
+                
+                if total_alerts > 0:
+                    # Provide tick_data in a dict keyed by symbol as expected by alert services
+                    tick_data_map = {}
+                    for td in updates:
+                        sym = td.get("symbol")
+                        if not sym:
+                            continue
+                        tick_data_map[sym] = {
+                            "bid": td.get("bid"),
+                            "ask": td.get("ask"),
+                            "time": td.get("time"),
+                            "volume": td.get("volume"),
+                        }
+                    tick_data = {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "symbols": list(tick_symbols),
+                        "tick_data": tick_data_map
+                    }
+                    # Create background task to check alerts without blocking the tick loop
+                    asyncio.create_task(_check_alerts_safely(tick_data))
+            except Exception as e:
+                # If alert cache check fails, still try to check alerts to be safe
+                tick_data_map = {}
+                for td in updates:
+                    sym = td.get("symbol")
+                    if not sym:
+                        continue
+                    tick_data_map[sym] = {
+                        "bid": td.get("bid"),
+                        "ask": td.get("ask"),
+                        "time": td.get("time"),
+                        "volume": td.get("volume"),
+                    }
+                tick_data = {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "symbols": list(tick_symbols),
+                    "tick_data": tick_data_map
                 }
-            tick_data = {
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "symbols": list(tick_symbols),
-                "tick_data": tick_data_map
-            }
-            # Create background task to check alerts without blocking the tick loop
-            asyncio.create_task(_check_alerts_safely(tick_data))
+                asyncio.create_task(_check_alerts_safely(tick_data))
     
     async def _send_scheduled_ohlc_updates(self):
         """Send OHLC updates when timeframe periods complete"""
