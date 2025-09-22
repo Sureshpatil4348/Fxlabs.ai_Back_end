@@ -23,6 +23,13 @@ class RSIAlertService:
         self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
         self.last_triggered_alerts: Dict[str, datetime] = {}  # Track last trigger time per alert
         self.default_cooldown_seconds = 300  # 5 minutes default cooldown
+        # Crossing/confirmation/hysteresis defaults (global rule)
+        self.only_new_bars = 3           # Consider crossings that happened within last K closed bars
+        self.confirmation_bars = 1       # Require 1 closed bar confirmation after crossing
+        self.rearm_overbought = 65       # Hysteresis re-arm for overbought (after falling below 65)
+        self.rearm_oversold = 35         # Hysteresis re-arm for oversold (after rising above 35)
+        # In-memory hysteresis state: key -> { 'armed_overbought': bool, 'armed_oversold': bool }
+        self._hysteresis_map: Dict[str, Dict[str, bool]] = {}
     
     def _should_trigger_alert(self, alert_id: str, cooldown_seconds: int = None) -> bool:
         """Check if alert should be triggered based on cooldown period"""
@@ -148,12 +155,25 @@ class RSIAlertService:
                     if rfi_score is not None:
                         logger.debug(f"📊 RFI calculated for {symbol} {timeframe}: {rfi_score:.3f}")
                     
-                    # Check alert conditions
-                    trigger_condition = self._check_rsi_conditions(
-                        rsi_value, rfi_score, alert_conditions,
-                        rsi_overbought, rsi_oversold,
-                        rfi_strong_threshold, rfi_moderate_threshold
-                    )
+                    # Check alert conditions: prefer RSI crossings with confirmation + Only NEW + hysteresis
+                    trigger_condition = None
+                    if any(cond in ("overbought", "oversold") for cond in alert_conditions):
+                        trigger_condition = await self._detect_rsi_crossing(
+                            alert_id=alert_id,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            period=rsi_period,
+                            overbought=rsi_overbought,
+                            oversold=rsi_oversold,
+                        )
+
+                    # If no RSI crossing, consider RFI-only conditions when present
+                    if not trigger_condition and ("rfi_strong" in alert_conditions or "rfi_moderate" in alert_conditions):
+                        trigger_condition = self._check_rsi_conditions(
+                            rsi_value, rfi_score, alert_conditions,
+                            rsi_overbought, rsi_oversold,
+                            rfi_strong_threshold, rfi_moderate_threshold
+                        )
                     
                     if trigger_condition:
                         
@@ -505,6 +525,132 @@ class RSIAlertService:
             
         except Exception as e:
             logger.error(f"❌ Error logging RSI alert trigger: {e}")
+    
+    async def _detect_rsi_crossing(
+        self,
+        alert_id: str,
+        symbol: str,
+        timeframe: str,
+        period: int,
+        overbought: int,
+        oversold: int,
+    ) -> Optional[str]:
+        """Detect RSI threshold crossings with 1-bar confirmation and hysteresis re-arm.
+
+        Returns one of: "overbought_cross", "oversold_cross", or None.
+        """
+        try:
+            rsis = await self._get_recent_rsi_series(symbol, timeframe, period, bars_needed=max(5, self.only_new_bars + self.confirmation_bars + 2))
+            if not rsis or len(rsis) < (self.only_new_bars + self.confirmation_bars + 1):
+                return None
+
+            # Hysteresis arm/disarm state per alert-symbol-timeframe
+            key = f"{alert_id}:{symbol}:{timeframe}"
+            st = self._hysteresis_map.setdefault(key, {"armed_overbought": True, "armed_oversold": True})
+
+            latest = rsis[-1]
+            # Rearm logic
+            if not st["armed_overbought"] and latest <= self.rearm_overbought:
+                st["armed_overbought"] = True
+            if not st["armed_oversold"] and latest >= self.rearm_oversold:
+                st["armed_oversold"] = True
+
+            # Scan last window for crossing with confirmation
+            window_start = max(1, len(rsis) - (self.only_new_bars + self.confirmation_bars))
+            best_idx = None
+            best_type = None
+            for i in range(window_start, len(rsis) - self.confirmation_bars):
+                prev_val = rsis[i - 1]
+                curr_val = rsis[i]
+
+                # Overbought crossing + confirmation
+                if st["armed_overbought"] and prev_val < overbought and curr_val >= overbought:
+                    confirm_idx = i + self.confirmation_bars
+                    if confirm_idx < len(rsis) and rsis[confirm_idx] >= overbought:
+                        best_idx, best_type = i, "overbought_cross"
+
+                # Oversold crossing + confirmation
+                if st["armed_oversold"] and prev_val > oversold and curr_val <= oversold:
+                    confirm_idx = i + self.confirmation_bars
+                    if confirm_idx < len(rsis) and rsis[confirm_idx] <= oversold:
+                        if best_idx is None or i > best_idx:
+                            best_idx, best_type = i, "oversold_cross"
+
+            if best_type:
+                if best_type == "overbought_cross":
+                    st["armed_overbought"] = False
+                else:
+                    st["armed_oversold"] = False
+                return best_type
+
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error detecting RSI crossing: {e}")
+            return None
+
+    async def _get_recent_rsi_series(self, symbol: str, timeframe: str, period: int, bars_needed: int) -> Optional[List[float]]:
+        """Compute recent RSI series using MT5 OHLC data if available."""
+        try:
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as MT5Timeframe
+
+            timeframe_map = {
+                "1M": MT5Timeframe.M1,
+                "5M": MT5Timeframe.M5,
+                "15M": MT5Timeframe.M15,
+                "30M": MT5Timeframe.M30,
+                "1H": MT5Timeframe.H1,
+                "4H": MT5Timeframe.H4,
+                "1D": MT5Timeframe.D1,
+                "1W": MT5Timeframe.W1
+            }
+
+            mt5_timeframe = timeframe_map.get(timeframe)
+            if not mt5_timeframe:
+                return None
+
+            count = max(period + bars_needed + 2, period + 5)
+            ohlc_data = get_ohlc_data(symbol, mt5_timeframe, count)
+            if not ohlc_data or len(ohlc_data) < period + 1:
+                return None
+            closes = [bar.close for bar in ohlc_data]
+            series = self._calculate_rsi_series(closes, period)
+            if not series:
+                return None
+            return series[-bars_needed:] if len(series) >= bars_needed else series
+        except Exception as e:
+            logger.debug(f"RSI series unavailable for {symbol} {timeframe}: {e}")
+            return None
+
+    def _calculate_rsi_series(self, closes: List[float], period: int) -> List[float]:
+        """Return RSI series using Wilder's smoothing for each bar after warmup."""
+        n = len(closes)
+        if n < period + 1:
+            return []
+        deltas = [closes[i] - closes[i - 1] for i in range(1, n)]
+        gains = [max(d, 0.0) for d in deltas]
+        losses = [max(-d, 0.0) for d in deltas]
+
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+
+        rsis: List[float] = []
+        if avg_loss == 0:
+            rsis.append(100.0)
+        else:
+            rs = avg_gain / avg_loss
+            rsis.append(100 - (100 / (1 + rs)))
+
+        for i in range(period, len(deltas)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+            if avg_loss == 0:
+                rsis.append(100.0)
+            else:
+                rs = avg_gain / avg_loss
+                rsis.append(100 - (100 / (1 + rs)))
+
+        return rsis
     
     async def create_rsi_alert(self, alert_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new RSI alert in Supabase"""

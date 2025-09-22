@@ -197,6 +197,14 @@ Internal alert tick_data shape:
 - If adding an alert would exceed the limit, the API returns `400` with a clear message indicating current tracked count and requested additions.
 - Tip for UIs: call `GET /api/alerts/user/{user_id}` or the specific per-type list endpoints and compute the union of symbols to show remaining slots.
 
+### RSI Alerts — Crossing + NEW + Confirmation
+
+- Trigger policy: Alerts now fire on RSI threshold crossings (Overbought ≥ OB, Oversold ≤ OS) rather than raw in‑zone checks.
+- Only‑NEW: Crossing must have occurred within the last K=3 closed bars (default).
+- 1‑bar confirmation: After crossing, require 1 additional closed bar still in the crossed zone before triggering.
+- Hysteresis re‑arm: Once an Overbought trigger fires, the alert re‑arms only after RSI falls below 65; for Oversold, re‑arm after RSI rises above 35.
+- Fallback: If historical RSI series is unavailable, the service falls back to in‑zone checks for continuity.
+
 ### 📰 News API Usage (External Source + Internal Endpoints)
 
 #### External Source: Jblanked (Forex Factory Calendar - Weekly)

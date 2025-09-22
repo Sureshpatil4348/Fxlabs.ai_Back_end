@@ -132,7 +132,7 @@
 - Global
   - Max pairs/user (3): enforced in backend at creation time (counts unique symbols across Heatmap, RSI, and both sides of Correlation pairs).
   - Delivery channels: Email implemented; Telegram missing.
-  - Trigger style: crossing/new‑only not enforced; in‑zone checks used for RSI; no 1‑bar confirmation or “Only NEW” filter; no hysteresis resets.
+  - Trigger style: crossing/new‑only for RSI is now enforced with 1‑bar confirmation and hysteresis re‑arm (70/65 and 30/35). In‑zone fallback still used only when historical RSI series is unavailable.
   - Timezone: emails use UTC; IST formatting not applied.
   - Rate limits/digest: not implemented (only test‑email rate limits exist in `server.py`).
   - Per‑pair concurrency cap: not implemented.
@@ -199,3 +199,12 @@
 - Supabase
   - No direct DB constraint can enforce “max unique symbols per user” across rows. Keep server-side enforcement (now implemented) and optionally add a periodic audit job for compliance.
   - Cache normalization: correlation alerts now expose `correlation_pairs` under the standard `pairs` key in the backend cache for consistency.
+
+**Frontend/Supabase Follow-ups — RSI Crossing/NEW/Confirmation**
+- Frontend
+  - Update copy to reflect: RSI alerts fire on threshold crossings (OB/OS) with 1‑bar confirmation; default Only‑NEW window = last 3 closed bars.
+  - Optionally add toggles for: Trigger policy (Crossing vs In‑Zone), Only‑NEW window (K), and Confirmation bars (default 1). Backend currently uses Crossing+NEW+1‑bar by default.
+  - In list/detail views, display the detected trigger type: “overbought cross” or “oversold cross”.
+- Supabase
+  - Consider extending `rsi_alerts` schema to include: `trigger_policy`, `only_new_bars`, `confirmation_bars`, `hysteresis_rearm_ob`, `hysteresis_rearm_os`.
+  - Until schema is extended, server applies defaults (Crossing, K=3, confirm=1, re‑arm 65/35).
