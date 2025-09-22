@@ -136,6 +136,15 @@ class HeatmapAlertService:
                 final_score = self._compute_final_score(tf_strengths, style_weights)
                 buy_now_percent = round((final_score + 100) / 2, 2)
 
+                # Optional minimum alignment requirement across TFs (N cells)
+                min_alignment = 0
+                try:
+                    min_alignment = int(alert.get("min_alignment") or 0)
+                    if min_alignment < 0:
+                        min_alignment = 0
+                except Exception:
+                    min_alignment = 0
+
                 signal = self._determine_style_signal(
                     buy_now_percent,
                     buy_threshold_min,
@@ -143,6 +152,15 @@ class HeatmapAlertService:
                     sell_threshold_min,
                     sell_threshold_max,
                 )
+
+                # Enforce minimum alignment if configured
+                aligned_buy = [tf for tf, val in tf_strengths.items() if val >= buy_threshold_min]
+                aligned_sell = [tf for tf, val in tf_strengths.items() if val <= sell_threshold_max]
+                if min_alignment > 0:
+                    if signal == "BUY" and len(aligned_buy) < min_alignment:
+                        signal = None
+                    if signal == "SELL" and len(aligned_sell) < min_alignment:
+                        signal = None
 
                 if signal:
                     triggered_pairs.append({
@@ -154,6 +172,9 @@ class HeatmapAlertService:
                         "strength": buy_now_percent,  # legacy field for email summaries
                         "signal": signal,
                         "style": trading_style,
+                        "aligned_buy": aligned_buy,
+                        "aligned_sell": aligned_sell,
+                        "min_alignment": min_alignment,
                         "timeframe": "style-weighted",
                         "price": None,
                         "timestamp": datetime.now(timezone.utc).isoformat(),

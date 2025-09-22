@@ -140,7 +140,7 @@
 | Global | Per‑pair concurrency cap | match | Keyed async locks prevent simultaneous evaluations for same pair×TF. |
 | Global | Warm‑up / stale‑data skip | match | Skips evaluations when bars are stale (>2× TF) and enforces indicator warm‑up (e.g., RSI lookback). |
 | Type A (Heatmap) | Final Score / Buy Now % style weighting | match | Style‑weighted TF aggregation computes Final Score and Buy Now %; thresholds drive BUY/SELL. |
-| Type A (Heatmap) | Minimum alignment (N cells) | mismatch | Can’t require N aligned TF cells; may raise false positives. |
+| Type A (Heatmap) | Minimum alignment (N cells) | match | Requires at least N TFs aligned with direction thresholds before triggering. |
 | Type A (Heatmap) | Hysteresis (70/65, 30/35) | mismatch | No re‑arm thresholds; repeated triggers possible without additional guards. |
 | Type A (Heatmap) | Cooldown policy | partial match | Frequency gating (once/hourly/daily) exists; lacks per‑pair crossing cooldown logic. |
 | Type B (Flip) | UTBOT/Ichimoku/MACD/EMA flips | mismatch | Regime‑flip logic not implemented; indicators partly simulated. |
@@ -226,3 +226,9 @@
   - Optionally allow custom TF weights per alert (advanced).
 - Supabase
   - No immediate schema changes needed (uses existing `trading_style`). Optional future fields: `style_weights_override` for per‑alert customization.
+
+**Frontend/Supabase Follow-ups — Minimum Alignment (N cells)**
+- Frontend
+  - Add a numeric control (off/0 to 5) for “Minimum aligned TF cells”. Informational helper: counts how many TFs currently align given thresholds.
+- Supabase
+  - Add `min_alignment` (integer, nullable) to `heatmap_alerts`. Backend respects it when present; default is 0 (disabled).
