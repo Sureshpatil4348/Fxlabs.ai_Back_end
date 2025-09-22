@@ -138,7 +138,7 @@
 | Global | Timezone formatting (IST) | mismatch | Emails use UTC; IST display not applied; potential confusion. |
 | Global | Rate limits + digests | mismatch | No per‑user/hour cap or digest; risk of noisy alerts; only test‑email cap exists. |
 | Global | Per‑pair concurrency cap | match | Keyed async locks prevent simultaneous evaluations for same pair×TF. |
-| Global | Warm‑up / stale‑data skip | mismatch | Possible noisy/invalid signals on insufficient lookback or stale bars. |
+| Global | Warm‑up / stale‑data skip | match | Skips evaluations when bars are stale (>2× TF) and enforces indicator warm‑up (e.g., RSI lookback). |
 | Type A (Heatmap) | Final Score / Buy Now % style weighting | mismatch | Style‑aware weighting not implemented; current strength is simplified. |
 | Type A (Heatmap) | Minimum alignment (N cells) | mismatch | Can’t require N aligned TF cells; may raise false positives. |
 | Type A (Heatmap) | Hysteresis (70/65, 30/35) | mismatch | No re‑arm thresholds; repeated triggers possible without additional guards. |
@@ -212,3 +212,9 @@
   - None required. Concurrency is enforced server-side and transparent to clients.
 - Supabase/Backend
   - No DB change needed. A shared, keyed async lock manager in the backend now caps concurrent evaluations per `symbol:timeframe` across Heatmap, RSI, and RSI Correlation services.
+
+**Frontend/Supabase Follow-ups — Warm‑up/Stale Data**
+- Frontend
+  - No changes required; behavior is server-side. Optionally surface warnings in UI when alerts are skipped due to warm‑up or stale data to improve user understanding.
+- Supabase/Backend
+  - None required. Backend skips evaluations if latest bar age exceeds 2× timeframe or if required lookback isn’t met (e.g., RSI needs recent series). Consider telemetry logging table if future reporting is desired.

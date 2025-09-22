@@ -141,6 +141,11 @@ class RSIAlertService:
                             logger.warning(f"⚠️ No market data available for {symbol} {timeframe}")
                             continue
 
+                        # Stale-bar protection
+                        if self._is_stale_market(market_data, timeframe):
+                            logger.debug(f"⏭️ Stale data skipped for {symbol} {timeframe}")
+                            continue
+
                         logger.debug(f"✅ Market data retrieved for {symbol} {timeframe}: {market_data.get('data_source', 'Unknown')}")
 
                         # Calculate RSI
@@ -151,6 +156,13 @@ class RSIAlertService:
                             continue
 
                         logger.debug(f"📊 RSI calculated for {symbol} {timeframe}: {rsi_value:.2f}")
+
+                        # Warm-up: ensure sufficient RSI lookback exists for crossings/confirmation
+                        bars_needed = max(5, self.only_new_bars + self.confirmation_bars + 2)
+                        rsis = await self._get_recent_rsi_series(symbol, timeframe, rsi_period, bars_needed)
+                        if not rsis or len(rsis) < bars_needed:
+                            logger.debug(f"⏳ Warm-up insufficient for {symbol} {timeframe} (need ≥{bars_needed} RSI points)")
+                            continue
 
                         # Calculate RFI score
                         rfi_score = await self._calculate_rfi_score(market_data, rsi_value)
@@ -219,6 +231,30 @@ class RSIAlertService:
         except Exception as e:
             logger.error(f"❌ Error checking single RSI alert: {e}")
             return None
+
+    def _tf_seconds(self, timeframe: str) -> int:
+        mapping = {
+            "1M": 60,
+            "5M": 5 * 60,
+            "15M": 15 * 60,
+            "30M": 30 * 60,
+            "1H": 60 * 60,
+            "4H": 4 * 60 * 60,
+            "1D": 24 * 60 * 60,
+            "1W": 7 * 24 * 60 * 60,
+        }
+        return mapping.get(timeframe, 60)
+
+    def _is_stale_market(self, market_data: Dict[str, Any], timeframe: str) -> bool:
+        try:
+            ts_iso = market_data.get("timestamp")
+            if not ts_iso:
+                return False
+            dt = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - dt).total_seconds()
+            return age > 2 * self._tf_seconds(timeframe)
+        except Exception:
+            return False
     
     def _get_market_data_for_symbol(self, symbol: str, timeframe: str, tick_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Get market data for a specific symbol and timeframe using real MT5 data"""

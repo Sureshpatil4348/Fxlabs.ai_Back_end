@@ -153,6 +153,17 @@ class RSICorrelationAlertService:
 
                     if not market_data1 or not market_data2:
                         continue
+
+                    # Stale-bar protection for both symbols
+                    if self._is_stale_market(market_data1, timeframe) or self._is_stale_market(market_data2, timeframe):
+                        continue
+
+                    # Warm-up: ensure sufficient bars for RSI calculations (period + 5)
+                    rsi_period = alert.get("rsi_period", 14)
+                    if not await self._has_warmup_bars(symbol1, timeframe, rsi_period + 5):
+                        continue
+                    if not await self._has_warmup_bars(symbol2, timeframe, rsi_period + 5):
+                        continue
                     
                     # Process based on calculation mode
                     if calculation_mode == "rsi_threshold":
@@ -186,6 +197,43 @@ class RSICorrelationAlertService:
         except Exception as e:
             logger.error(f"❌ Error checking single RSI correlation alert: {e}")
             return None
+
+    def _tf_seconds(self, timeframe: str) -> int:
+        mapping = {
+            "1M": 60,
+            "5M": 5 * 60,
+            "15M": 15 * 60,
+            "30M": 30 * 60,
+            "1H": 60 * 60,
+            "4H": 4 * 60 * 60,
+            "1D": 24 * 60 * 60,
+            "1W": 7 * 24 * 60 * 60,
+        }
+        return mapping.get(timeframe, 60)
+
+    def _is_stale_market(self, market_data: Dict[str, Any], timeframe: str) -> bool:
+        try:
+            ts_iso = market_data.get("timestamp")
+            if not ts_iso:
+                return False
+            dt = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - dt).total_seconds()
+            return age > 2 * self._tf_seconds(timeframe)
+        except Exception:
+            return False
+
+    async def _has_warmup_bars(self, symbol: str, timeframe: str, bars_required: int) -> bool:
+        try:
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as TF
+            tf_map = {"1M": TF.M1, "5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+            mtf = tf_map.get(timeframe)
+            if not mtf:
+                return False
+            bars = get_ohlc_data(symbol, mtf, bars_required)
+            return len(bars) >= bars_required
+        except Exception:
+            return False
     
     async def _check_rsi_threshold_mode(
         self, 

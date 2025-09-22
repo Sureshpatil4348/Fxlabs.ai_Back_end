@@ -30,6 +30,7 @@ A high-performance, real-time financial market data streaming service built with
 - **High Performance**: 99.9% bandwidth reduction through selective streaming
 - **Scalable Architecture**: Async/await design for high concurrency
 - **Per-Pair Concurrency Cap**: Keyed async locks prevent concurrent evaluations for the same pair/timeframe across alert services
+- **Warm-up & Stale-Data Protection**: Skips evaluations when latest bar is stale (>2× timeframe) and enforces indicator lookback (e.g., RSI series) before triggering
 
 ## 🚀 Quick Start
 

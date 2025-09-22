@@ -106,12 +106,24 @@ class HeatmapAlertService:
                         if not market_data:
                             continue
 
+                        # Stale-bar protection: skip if latest bar is too old for TF
+                        if self._is_stale_market(market_data, timeframe):
+                            logger.debug(f"⏭️ Stale data skipped for {pair} {timeframe}")
+                            continue
+
                         # Calculate indicators and strength
                         strength_data = await self._calculate_indicators_strength(
                             market_data, selected_indicators
                         )
                         if not strength_data:
                             continue
+
+                        # Warm-up: if RSI requested, ensure sufficient lookback bars exist
+                        if any(ind.lower() == "rsi" for ind in selected_indicators):
+                            has_warmup = await self._has_warmup_bars(pair, timeframe, 20)
+                            if not has_warmup:
+                                logger.debug(f"⏳ Warm-up insufficient for {pair} {timeframe} (need ≥20 bars)")
+                                continue
 
                         # Check if strength meets alert criteria
                         signal = self._determine_signal(
@@ -150,6 +162,43 @@ class HeatmapAlertService:
         except Exception as e:
             logger.error(f"❌ Error checking single heatmap alert {alert.get('alert_name', 'Unknown')}: {e}")
             return None
+
+    def _tf_seconds(self, timeframe: str) -> int:
+        mapping = {
+            "1M": 60,
+            "5M": 5 * 60,
+            "15M": 15 * 60,
+            "30M": 30 * 60,
+            "1H": 60 * 60,
+            "4H": 4 * 60 * 60,
+            "1D": 24 * 60 * 60,
+            "1W": 7 * 24 * 60 * 60,
+        }
+        return mapping.get(timeframe, 60)
+
+    def _is_stale_market(self, market_data: Dict[str, Any], timeframe: str) -> bool:
+        try:
+            ts_iso = market_data.get("timestamp")
+            if not ts_iso:
+                return False
+            dt = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - dt).total_seconds()
+            return age > 2 * self._tf_seconds(timeframe)
+        except Exception:
+            return False
+
+    async def _has_warmup_bars(self, symbol: str, timeframe: str, bars_required: int) -> bool:
+        try:
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as TF
+            tf_map = {"1M": TF.M1, "5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+            mtf = tf_map.get(timeframe)
+            if not mtf:
+                return False
+            bars = get_ohlc_data(symbol, mtf, bars_required)
+            return len(bars) >= bars_required
+        except Exception:
+            return False
     
     def _should_trigger_alert(self, alert_id: str, alert: Dict[str, Any]) -> bool:
         """Check if alert should be triggered based on frequency settings"""
