@@ -143,8 +143,8 @@
 | Type A (Heatmap) | Minimum alignment (N cells) | match | Requires at least N TFs aligned with direction thresholds before triggering. |
 | Type A (Heatmap) | Hysteresis (70/65, 30/35) | match | Re‑arm after leaving zone: BUY re‑arms below 65 (5 below buy_min), SELL re‑arms above 35 (5 above sell_max). |
 | Type A (Heatmap) | Cooldown policy | match | Per (alert, symbol, direction) cooldown enforced; default 30m, overridable per alert via `cooldown_minutes`. |
-| Type B (Flip) | UTBOT/Ichimoku/MACD/EMA flips | mismatch | Regime‑flip logic not implemented; indicators partly simulated. |
-| Type B (Flip) | Only‑NEW (K=3) and 1‑bar confirmation | mismatch | Not enforced; risk of repeated/noisy alerts on persistent regime. |
+| Type B (Flip) | UTBOT/Ichimoku/MACD/EMA flips | match | Flip detection added: EMA cross with slope, MACD cross with sign agreement, Ichimoku Tenkan/Kijun cross, simplified UTBOT (EMA10±0.5×ATR10) with 1‑bar confirmation and Only‑NEW window. |
+| Type B (Flip) | Only‑NEW (K=3) and 1‑bar confirmation | match | Implemented in flip detectors (K=3, confirmation=1) across supported indicators. |
 | Type B (Flip) | Gate by Buy Now % | mismatch | Not implemented; cannot restrict flips by style strength. |
 | RSI OB/OS | Crossing vs in‑zone | match | Crossing with 1‑bar confirmation and hysteresis implemented; better parity with spec. |
 | RSI OB/OS | Bar‑close vs intrabar evaluation | mismatch | Evaluation is tick‑driven; no bar‑close scheduler. |

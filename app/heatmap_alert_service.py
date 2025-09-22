@@ -30,6 +30,10 @@ class HeatmapAlertService:
         self.pair_cooldown_minutes_default = 30
         self._pair_cooldowns: Dict[str, datetime] = {}
         
+        # Flip detection defaults (Type B Indicator Flip)
+        self.flip_only_new_bars = 3      # Only NEW within last K bars
+        self.flip_confirmation_bars = 1  # 1-bar confirmation
+        
     async def check_heatmap_alerts(self, tick_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Check all heatmap alerts against current tick data"""
         
@@ -134,6 +138,19 @@ class HeatmapAlertService:
                         if not strength_data:
                             continue
                         tf_strengths[timeframe] = strength_data.get("overall_strength", 50)
+
+                        # Detect indicator flips (Type B) on this timeframe
+                        flip = await self._detect_indicator_flips(pair, timeframe, selected_indicators)
+                        if flip:
+                            triggered_pairs.append({
+                                "symbol": pair,
+                                "timeframe": timeframe,
+                                "signal": flip.get("signal"),
+                                "indicator": flip.get("indicator"),
+                                "trigger_condition": flip.get("condition"),
+                                "strength": strength_data.get("overall_strength", 50),
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            })
 
                 # Aggregate across timeframes using style weights
                 if not tf_strengths:
@@ -284,6 +301,149 @@ class HeatmapAlertService:
         # Allowed -> update last
         self._pair_cooldowns[key] = now
         return True
+
+    async def _get_ohlc_arrays(self, symbol: str, timeframe: str, count: int = 120):
+        try:
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as TF
+            tf_map = {"1M": TF.M1, "5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+            mtf = tf_map.get(timeframe)
+            if not mtf:
+                return None
+            ohlc = get_ohlc_data(symbol, mtf, count)
+            if not ohlc:
+                return None
+            closes = [bar.close for bar in ohlc]
+            highs = [bar.high for bar in ohlc]
+            lows = [bar.low for bar in ohlc]
+            return closes, highs, lows
+        except Exception:
+            return None
+
+    def _ema_series(self, values: list, period: int) -> list:
+        if not values or len(values) < period:
+            return []
+        k = 2 / (period + 1)
+        ema = [sum(values[:period]) / period]
+        for v in values[period:]:
+            ema.append(v * k + ema[-1] * (1 - k))
+        return [None] * (period - 1) + ema
+
+    def _macd_series(self, closes: list, fast: int = 12, slow: int = 26, signal: int = 9):
+        if len(closes) < slow + signal + 2:
+            return [], []
+        ema_fast = self._ema_series(closes, fast)
+        ema_slow = self._ema_series(closes, slow)
+        macd = []
+        for a, b in zip(ema_fast, ema_slow):
+            macd.append((a - b) if a is not None and b is not None else None)
+        macd_clean = [m for m in macd if m is not None]
+        if len(macd_clean) < signal + 1:
+            return [], []
+        sig_series = self._ema_series([m for m in macd if m is not None], signal)
+        pad = macd.index(macd_clean[0]) if macd_clean else 0
+        signal_aligned = [None] * pad + sig_series
+        return macd, signal_aligned
+
+    def _atr_series(self, highs: list, lows: list, closes: list, period: int = 14) -> list:
+        if len(closes) < period + 1:
+            return []
+        trs = []
+        prev_close = closes[0]
+        for i in range(1, len(closes)):
+            tr = max(highs[i] - lows[i], abs(highs[i] - prev_close), abs(lows[i] - prev_close))
+            trs.append(tr)
+            prev_close = closes[i]
+        atr = self._ema_series(trs, period)
+        return [None] + atr
+
+    async def _detect_indicator_flips(self, symbol: str, timeframe: str, selected_indicators: list) -> Optional[Dict[str, Any]]:
+        try:
+            if not selected_indicators:
+                return None
+            sel = [s.lower() for s in selected_indicators]
+            data = await self._get_ohlc_arrays(symbol, timeframe, count=120)
+            if not data:
+                return None
+            closes, highs, lows = data
+            k = self.flip_only_new_bars
+            c = self.flip_confirmation_bars
+
+            # EMA flips
+            for p, name in [(21, "ema21"), (50, "ema50"), (200, "ema200")]:
+                if name in sel:
+                    ema = self._ema_series(closes, p)
+                    for i in range(len(closes) - k - c, len(closes) - c):
+                        if i <= 0 or i + c >= len(closes) or ema[i] is None or ema[i - 1] is None or ema[i + c] is None:
+                            continue
+                        prev_above = closes[i - 1] > ema[i - 1]
+                        curr_above = closes[i] > ema[i]
+                        slope_up = ema[i] > ema[i - 1]
+                        slope_dn = ema[i] < ema[i - 1]
+                        if (not prev_above) and curr_above and slope_up and closes[i + c] > ema[i + c]:
+                            return {"indicator": name, "signal": "BUY", "condition": f"{name}_flip_buy"}
+                        if prev_above and (not curr_above) and slope_dn and closes[i + c] < ema[i + c]:
+                            return {"indicator": name, "signal": "SELL", "condition": f"{name}_flip_sell"}
+
+            # MACD flips
+            if "macd" in sel:
+                macd, sig = self._macd_series(closes)
+                if macd and sig:
+                    for i in range(len(closes) - k - c, len(closes) - c):
+                        if i <= 0 or macd[i - 1] is None or macd[i] is None or sig[i] is None or sig[i - 1] is None or macd[i + c] is None or sig[i + c] is None:
+                            continue
+                        prev = macd[i - 1] - sig[i - 1]
+                        curr = macd[i] - sig[i]
+                        if prev <= 0 and curr > 0 and macd[i] > 0 and macd[i + c] > sig[i + c] and macd[i + c] > 0:
+                            return {"indicator": "macd", "signal": "BUY", "condition": "macd_flip_buy"}
+                        if prev >= 0 and curr < 0 and macd[i] < 0 and macd[i + c] < sig[i + c] and macd[i + c] < 0:
+                            return {"indicator": "macd", "signal": "SELL", "condition": "macd_flip_sell"}
+
+            # Ichimoku Tenkan/Kijun cross
+            if "ichimokuclone" in sel:
+                def mid(highs, lows, period):
+                    res = []
+                    for i in range(len(highs)):
+                        if i + 1 < period:
+                            res.append(None)
+                        else:
+                            window_h = highs[i - period + 1:i + 1]
+                            window_l = lows[i - period + 1:i + 1]
+                            res.append((max(window_h) + min(window_l)) / 2.0)
+                    return res
+                tenkan = mid(highs, lows, 9)
+                kijun = mid(highs, lows, 26)
+                for i in range(len(closes) - k - c, len(closes) - c):
+                    if i <= 0 or tenkan[i] is None or kijun[i] is None or tenkan[i - 1] is None or kijun[i - 1] is None or tenkan[i + c] is None or kijun[i + c] is None:
+                        continue
+                    prev = tenkan[i - 1] - kijun[i - 1]
+                    curr = tenkan[i] - kijun[i]
+                    if prev <= 0 and curr > 0 and tenkan[i + c] > kijun[i + c]:
+                        return {"indicator": "ichimoku", "signal": "BUY", "condition": "ichimoku_tk_flip_buy"}
+                    if prev >= 0 and curr < 0 and tenkan[i + c] < kijun[i + c]:
+                        return {"indicator": "ichimoku", "signal": "SELL", "condition": "ichimoku_tk_flip_sell"}
+
+            # UTBOT (simplified): EMA(10) ± 0.5*ATR(10) regime flip
+            if "utbot" in sel:
+                ema10 = self._ema_series(closes, 10)
+                atr10 = self._atr_series(highs, lows, closes, 10)
+                for i in range(len(closes) - k - c, len(closes) - c):
+                    if i <= 0 or ema10[i] is None or ema10[i - 1] is None or atr10[i] is None or atr10[i + c] is None or ema10[i + c] is None:
+                        continue
+                    upper = ema10[i] + 0.5 * atr10[i]
+                    lower = ema10[i] - 0.5 * atr10[i]
+                    prev_long = closes[i - 1] > upper
+                    curr_long = closes[i] > upper
+                    prev_short = closes[i - 1] < lower
+                    curr_short = closes[i] < lower
+                    if not prev_long and curr_long and closes[i + c] > (ema10[i + c] + 0.5 * atr10[i + c]):
+                        return {"indicator": "utbot", "signal": "BUY", "condition": "utbot_flip_buy"}
+                    if not prev_short and curr_short and closes[i + c] < (ema10[i + c] - 0.5 * atr10[i + c]):
+                        return {"indicator": "utbot", "signal": "SELL", "condition": "utbot_flip_sell"}
+
+            return None
+        except Exception:
+            return None
 
     def _style_tf_weights(self, trading_style: str) -> Dict[str, float]:
         """Return default timeframe weights for a given trading style."""
