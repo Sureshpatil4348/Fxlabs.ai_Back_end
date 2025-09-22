@@ -8,6 +8,7 @@ import logging
 
 from .email_service import email_service
 from .alert_cache import alert_cache
+from .concurrency import pair_locks
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -130,69 +131,70 @@ class RSIAlertService:
                 for timeframe in timeframes:
                     total_checks += 1
                     logger.debug(f"🔍 Checking {symbol} {timeframe} (Check {total_checks})")
-                    
-                    # Get market data for this symbol/timeframe
-                    market_data = self._get_market_data_for_symbol(symbol, timeframe, tick_data)
-                    
-                    if not market_data:
-                        logger.warning(f"⚠️ No market data available for {symbol} {timeframe}")
-                        continue
-                    
-                    logger.debug(f"✅ Market data retrieved for {symbol} {timeframe}: {market_data.get('data_source', 'Unknown')}")
-                    
-                    # Calculate RSI
-                    rsi_value = await self._calculate_rsi(market_data, rsi_period)
-                    
-                    if rsi_value is None:
-                        logger.warning(f"⚠️ Could not calculate RSI for {symbol} {timeframe}")
-                        continue
-                    
-                    logger.debug(f"📊 RSI calculated for {symbol} {timeframe}: {rsi_value:.2f}")
-                    
-                    # Calculate RFI score
-                    rfi_score = await self._calculate_rfi_score(market_data, rsi_value)
-                    
-                    if rfi_score is not None:
-                        logger.debug(f"📊 RFI calculated for {symbol} {timeframe}: {rfi_score:.3f}")
-                    
-                    # Check alert conditions: prefer RSI crossings with confirmation + Only NEW + hysteresis
-                    trigger_condition = None
-                    if any(cond in ("overbought", "oversold") for cond in alert_conditions):
-                        trigger_condition = await self._detect_rsi_crossing(
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            period=rsi_period,
-                            overbought=rsi_overbought,
-                            oversold=rsi_oversold,
-                        )
 
-                    # If no RSI crossing, consider RFI-only conditions when present
-                    if not trigger_condition and ("rfi_strong" in alert_conditions or "rfi_moderate" in alert_conditions):
-                        trigger_condition = self._check_rsi_conditions(
-                            rsi_value, rfi_score, alert_conditions,
-                            rsi_overbought, rsi_oversold,
-                            rfi_strong_threshold, rfi_moderate_threshold
-                        )
-                    
-                    if trigger_condition:
-                        
-                        logger.info(f"🚨 CONDITION MATCHED: {symbol} {timeframe} - {trigger_condition}")
-                        rfi_display = f"{rfi_score:.3f}" if rfi_score is not None else "N/A"
-                        logger.info(f"   RSI: {rsi_value:.2f}, RFI: {rfi_display}")
-                        
-                        triggered_pairs.append({
-                            "symbol": symbol,
-                            "timeframe": timeframe,
-                            "rsi_value": round(rsi_value, 2),
-                            "rfi_score": round(rfi_score, 2) if rfi_score else None,
-                            "trigger_condition": trigger_condition,
-                            "current_price": market_data.get("close", 0),
-                            "price_change_percent": self._calculate_price_change_percent(market_data),
-                            "timestamp": datetime.now(timezone.utc).isoformat()
-                        })
-                    else:
-                        logger.debug(f"ℹ️ No conditions met for {symbol} {timeframe} (RSI: {rsi_value:.2f})")
+                    key = f"{symbol}:{timeframe}"
+                    async with pair_locks.acquire(key):
+                        # Get market data for this symbol/timeframe
+                        market_data = self._get_market_data_for_symbol(symbol, timeframe, tick_data)
+
+                        if not market_data:
+                            logger.warning(f"⚠️ No market data available for {symbol} {timeframe}")
+                            continue
+
+                        logger.debug(f"✅ Market data retrieved for {symbol} {timeframe}: {market_data.get('data_source', 'Unknown')}")
+
+                        # Calculate RSI
+                        rsi_value = await self._calculate_rsi(market_data, rsi_period)
+
+                        if rsi_value is None:
+                            logger.warning(f"⚠️ Could not calculate RSI for {symbol} {timeframe}")
+                            continue
+
+                        logger.debug(f"📊 RSI calculated for {symbol} {timeframe}: {rsi_value:.2f}")
+
+                        # Calculate RFI score
+                        rfi_score = await self._calculate_rfi_score(market_data, rsi_value)
+
+                        if rfi_score is not None:
+                            logger.debug(f"📊 RFI calculated for {symbol} {timeframe}: {rfi_score:.3f}")
+
+                        # Check alert conditions: prefer RSI crossings with confirmation + Only NEW + hysteresis
+                        trigger_condition = None
+                        if any(cond in ("overbought", "oversold") for cond in alert_conditions):
+                            trigger_condition = await self._detect_rsi_crossing(
+                                alert_id=alert_id,
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                period=rsi_period,
+                                overbought=rsi_overbought,
+                                oversold=rsi_oversold,
+                            )
+
+                        # If no RSI crossing, consider RFI-only conditions when present
+                        if not trigger_condition and ("rfi_strong" in alert_conditions or "rfi_moderate" in alert_conditions):
+                            trigger_condition = self._check_rsi_conditions(
+                                rsi_value, rfi_score, alert_conditions,
+                                rsi_overbought, rsi_oversold,
+                                rfi_strong_threshold, rfi_moderate_threshold
+                            )
+
+                        if trigger_condition:
+                            logger.info(f"🚨 CONDITION MATCHED: {symbol} {timeframe} - {trigger_condition}")
+                            rfi_display = f"{rfi_score:.3f}" if rfi_score is not None else "N/A"
+                            logger.info(f"   RSI: {rsi_value:.2f}, RFI: {rfi_display}")
+
+                            triggered_pairs.append({
+                                "symbol": symbol,
+                                "timeframe": timeframe,
+                                "rsi_value": round(rsi_value, 2),
+                                "rfi_score": round(rfi_score, 2) if rfi_score else None,
+                                "trigger_condition": trigger_condition,
+                                "current_price": market_data.get("close", 0),
+                                "price_change_percent": self._calculate_price_change_percent(market_data),
+                                "timestamp": datetime.now(timezone.utc).isoformat()
+                            })
+                        else:
+                            logger.debug(f"ℹ️ No conditions met for {symbol} {timeframe} (RSI: {rsi_value:.2f})")
             
             logger.debug(f"📊 Alert check complete: {total_checks} checks, {len(triggered_pairs)} triggers")
             

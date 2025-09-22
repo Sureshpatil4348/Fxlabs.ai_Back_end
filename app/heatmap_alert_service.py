@@ -8,6 +8,7 @@ import logging
 
 from .email_service import email_service
 from .alert_cache import alert_cache
+from .concurrency import pair_locks
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -98,37 +99,37 @@ class HeatmapAlertService:
             
             for pair in pairs:
                 for timeframe in timeframes:
-                    # Get current market data for the pair
-                    market_data = await self._get_market_data(pair, timeframe)
-                    
-                    if not market_data:
-                        continue
-                    
-                    # Calculate indicators and strength
-                    strength_data = await self._calculate_indicators_strength(
-                        market_data, selected_indicators
-                    )
-                    
-                    if not strength_data:
-                        continue
-                    
-                    # Check if strength meets alert criteria
-                    signal = self._determine_signal(
-                        strength_data, 
-                        buy_threshold_min, buy_threshold_max,
-                        sell_threshold_min, sell_threshold_max
-                    )
-                    
-                    if signal:
-                        triggered_pairs.append({
-                            "symbol": pair,
-                            "timeframe": timeframe,
-                            "strength": strength_data.get("overall_strength", 0),
-                            "signal": signal,
-                            "indicators": strength_data.get("indicators", {}),
-                            "price": market_data.get("close", 0),
-                            "timestamp": datetime.now(timezone.utc).isoformat()
-                        })
+                    key = f"{pair}:{timeframe}"
+                    async with pair_locks.acquire(key):
+                        # Get current market data for the pair
+                        market_data = await self._get_market_data(pair, timeframe)
+                        if not market_data:
+                            continue
+
+                        # Calculate indicators and strength
+                        strength_data = await self._calculate_indicators_strength(
+                            market_data, selected_indicators
+                        )
+                        if not strength_data:
+                            continue
+
+                        # Check if strength meets alert criteria
+                        signal = self._determine_signal(
+                            strength_data,
+                            buy_threshold_min, buy_threshold_max,
+                            sell_threshold_min, sell_threshold_max
+                        )
+
+                        if signal:
+                            triggered_pairs.append({
+                                "symbol": pair,
+                                "timeframe": timeframe,
+                                "strength": strength_data.get("overall_strength", 0),
+                                "signal": signal,
+                                "indicators": strength_data.get("indicators", {}),
+                                "price": market_data.get("close", 0),
+                                "timestamp": datetime.now(timezone.utc).isoformat()
+                            })
             
             # If we have triggered pairs, return the alert trigger
             if triggered_pairs:

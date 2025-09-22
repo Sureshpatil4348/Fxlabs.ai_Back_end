@@ -29,6 +29,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Intelligent Caching**: Memory-efficient selective data caching
 - **High Performance**: 99.9% bandwidth reduction through selective streaming
 - **Scalable Architecture**: Async/await design for high concurrency
+- **Per-Pair Concurrency Cap**: Keyed async locks prevent concurrent evaluations for the same pair/timeframe across alert services
 
 ## 🚀 Quick Start
 

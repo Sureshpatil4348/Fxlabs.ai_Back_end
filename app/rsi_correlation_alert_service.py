@@ -8,6 +8,7 @@ import logging
 
 from .email_service import email_service
 from .alert_cache import alert_cache
+from .concurrency import pair_locks
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -136,10 +137,20 @@ class RSICorrelationAlertService:
                 symbol1, symbol2 = pair[0], pair[1]
                 
                 for timeframe in timeframes:
-                    # Get market data for both symbols
-                    market_data1 = self._get_market_data_for_symbol(symbol1, timeframe, tick_data)
-                    market_data2 = self._get_market_data_for_symbol(symbol2, timeframe, tick_data)
-                    
+                    # Get market data for both symbols under per-pair locks (stable order to avoid deadlocks)
+                    k1 = f"{symbol1}:{timeframe}"
+                    k2 = f"{symbol2}:{timeframe}"
+                    if k1 == k2:
+                        async with pair_locks.acquire(k1):
+                            market_data1 = self._get_market_data_for_symbol(symbol1, timeframe, tick_data)
+                            market_data2 = self._get_market_data_for_symbol(symbol2, timeframe, tick_data)
+                    else:
+                        a, b = sorted([k1, k2])
+                        async with pair_locks.acquire(a):
+                            async with pair_locks.acquire(b):
+                                market_data1 = self._get_market_data_for_symbol(symbol1, timeframe, tick_data)
+                                market_data2 = self._get_market_data_for_symbol(symbol2, timeframe, tick_data)
+
                     if not market_data1 or not market_data2:
                         continue
                     

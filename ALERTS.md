@@ -135,8 +135,8 @@
   - Trigger style: crossing/new‑only for RSI is now enforced with 1‑bar confirmation and hysteresis re‑arm (70/65 and 30/35). In‑zone fallback still used only when historical RSI series is unavailable.
   - Timezone: emails use UTC; IST formatting not applied.
   - Rate limits/digest: not implemented (only test‑email rate limits exist in `server.py`).
-  - Per‑pair concurrency cap: not implemented.
-  - Warm‑ups/data‑gap handling: not explicitly implemented.
+  - Per‑pair concurrency cap: enforced via keyed async locks shared across services (key = `symbol:timeframe`). Prevents simultaneous evaluations for the same pair/TF.
+    - Warm‑ups/data‑gap handling: not explicitly implemented.
 - Type A — Buy Now %
   - Final Score/Buy Now % computation by style: not present (current heatmap uses indicator scores with RSI emphasis; no TF weighting by style).
   - Minimum alignment N cells: not implemented.
@@ -208,3 +208,9 @@
 - Supabase
   - Consider extending `rsi_alerts` schema to include: `trigger_policy`, `only_new_bars`, `confirmation_bars`, `hysteresis_rearm_ob`, `hysteresis_rearm_os`.
   - Until schema is extended, server applies defaults (Crossing, K=3, confirm=1, re‑arm 65/35).
+
+**Frontend/Supabase Follow-ups — Per‑Pair Concurrency Cap**
+- Frontend
+  - None required. Concurrency is enforced server-side and transparent to clients.
+- Supabase/Backend
+  - No DB change needed. A shared, keyed async lock manager in the backend now caps concurrent evaluations per `symbol:timeframe` across Heatmap, RSI, and RSI Correlation services.
