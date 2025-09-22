@@ -10,6 +10,107 @@
 - Timezone for display: Asia/Kolkata.
 - Rate limits: 5 alerts per user per hour (overflow batched to digest); per‑pair concurrency cap; warm‑up for indicators; skip stale TFs.
 
+**Frontend + Supabase: Consolidated Implementation Guide**
+- Scope: This consolidates all Frontend/Supabase follow-ups into concrete, actionable steps for UI, API payloads, and Supabase schema.
+- Philosophy: Safe defaults server-side; UI exposes controls progressively; DB constraints guard invalid inputs; no duplication across per-feature notes below.
+
+- Step 1 — Supabase migrations (apply once)
+  - Heatmap (`heatmap_alerts`):
+    ```sql
+    -- Core feature flags and thresholds
+    alter table public.heatmap_alerts
+      add column if not exists min_alignment integer default 0 check (min_alignment between 0 and 5),
+      add column if not exists cooldown_minutes integer default 30 check (cooldown_minutes between 1 and 1440),
+      add column if not exists gate_by_buy_now boolean not null default false,
+      add column if not exists gate_buy_min numeric(5,2) default 60.00,
+      add column if not exists gate_sell_max numeric(5,2) default 40.00,
+      add column if not exists trading_style text default 'day' check (trading_style in ('scalper','day','swing')),
+      add column if not exists style_weights_override jsonb;
+
+    -- Helpful indexes
+    create index if not exists idx_heatmap_alerts_user_email on public.heatmap_alerts (user_email);
+    create index if not exists idx_heatmap_alerts_active on public.heatmap_alerts ((coalesce((data->>'is_active')::boolean, true)));
+    ```
+  - RSI (`rsi_alerts`):
+    ```sql
+    alter table public.rsi_alerts
+      add column if not exists bar_policy text not null default 'close' check (bar_policy in ('close','intrabar')),
+      add column if not exists cooldown_minutes integer default 30 check (cooldown_minutes between 1 and 1440),
+      add column if not exists trigger_policy text not null default 'crossing' check (trigger_policy in ('crossing','in_zone')),
+      add column if not exists only_new_bars smallint not null default 3 check (only_new_bars between 0 and 10),
+      add column if not exists confirmation_bars smallint not null default 1 check (confirmation_bars between 0 and 5),
+      add column if not exists hysteresis_rearm_ob smallint not null default 65 check (hysteresis_rearm_ob between 0 and 100),
+      add column if not exists hysteresis_rearm_os smallint not null default 35 check (hysteresis_rearm_os between 0 and 100),
+      add column if not exists timezone text not null default 'Asia/Kolkata',
+      add column if not exists quiet_start_local text,
+      add column if not exists quiet_end_local text;
+
+    create index if not exists idx_rsi_alerts_user_email on public.rsi_alerts (user_email);
+    create index if not exists idx_rsi_alerts_bar_policy on public.rsi_alerts (bar_policy);
+    ```
+  - RSI Correlation (`rsi_correlation_alerts`): no schema change required for the consolidated features.
+
+- Step 2 — Frontend forms and payloads
+  - Heatmap alert creation payload (Type A + optional Type B gating):
+    ```json
+    {
+      "alert_name": "My Heatmap Alert",
+      "user_email": "user@example.com",
+      "pairs": ["EURUSD","GBPUSD"],
+      "timeframes": ["15M","30M","1H"],
+      "selected_indicators": ["UTBOT","EMA21","MACD"],
+      "trading_style": "day",
+      "buy_threshold_min": 70,
+      "sell_threshold_max": 30,
+      "min_alignment": 0,
+      "cooldown_minutes": 30,
+      "gate_by_buy_now": false,
+      "gate_buy_min": 60,
+      "gate_sell_max": 40,
+      "notification_methods": ["email"],
+      "alert_frequency": "once",
+      "trigger_on_crossing": true
+    }
+    ```
+    - UI: add controls for `trading_style` (scalper/day/swing), `min_alignment` (0–5), `cooldown_minutes`, and an advanced section with the gating toggle and numeric inputs.
+  - RSI alert creation payload:
+    ```json
+    {
+      "alert_name": "RSI OB/OS",
+      "user_email": "user@example.com",
+      "pairs": ["EURUSD"],
+      "timeframes": ["30M","1H"],
+      "rsi_period": 14,
+      "rsi_overbought_threshold": 70,
+      "rsi_oversold_threshold": 30,
+      "alert_conditions": ["overbought_cross","oversold_cross"],
+      "bar_policy": "close",
+      "trigger_policy": "crossing",
+      "only_new_bars": 3,
+      "confirmation_bars": 1,
+      "cooldown_minutes": 30,
+      "timezone": "Asia/Kolkata",
+      "quiet_start_local": "22:30",
+      "quiet_end_local": "06:30",
+      "notification_methods": ["email"],
+      "alert_frequency": "once"
+    }
+    ```
+    - UI: add a “Bar timing” selector (Close/Intrabar), Quiet hours (start/end, local preview), and show cooldown scope note: per (symbol, timeframe, side).
+
+- Step 3 — API and validation tips
+  - Send newly added fields as top-level keys in POST bodies; backend uses safe defaults when absent.
+  - Validate ranges client-side to mirror DB checks (e.g., `cooldown_minutes` 1–1440; `only_new_bars` 0–10; `confirmation_bars` 0–5).
+  - For Max 3 Pairs/User, pre-check UI by aggregating current unique symbols across existing alerts and correlation pairs.
+
+- Step 4 — QA checklist
+  - Heatmap: verify triggers at threshold crossings, hysteresis re‑arm (70/65, 30/35), alignment=N behavior, and gating by Buy Now % when toggled.
+  - RSI: verify crossing policy w/ 1‑bar confirmation, quiet hours suppression, intrabar mode debounce (if enabled), and per‑side cooldown.
+  - Global: confirm per‑pair concurrency (server-side), stale/warm‑up skips, rate limit cap (5/hour) and digest behavior, IST timestamp formatting in emails.
+
+Notes
+- No DB change is needed for concurrency, warm‑up/stale‑data handling, global rate limits/digest, or IST formatting — all handled server-side.
+
 **Type A — Buy Now % Threshold (multi‑pair)**
 - Intent: Alert when any chosen pair becomes strong enough to act.
 - Inputs
