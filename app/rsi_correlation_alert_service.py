@@ -24,6 +24,10 @@ class RSICorrelationAlertService:
         self.supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
         self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
         self.last_triggered_alerts: Dict[str, datetime] = {}  # Track last trigger time per alert
+        # Track last evaluated closed bar per (alert, pair, timeframe)
+        self._last_closed_bar_ts: Dict[str, int] = {}
+        # Mismatch re-arm state per (alert, ordered pair, timeframe)
+        self._mismatch_state: Dict[str, Dict[str, bool]] = {}
     
     def _should_trigger_alert(self, alert: Dict[str, Any]) -> bool:
         """Check if alert should be triggered based on alert_frequency setting"""
@@ -137,6 +141,17 @@ class RSICorrelationAlertService:
                 symbol1, symbol2 = pair[0], pair[1]
                 
                 for timeframe in timeframes:
+                    # Respect bar timing policy (default close)
+                    bar_policy = (alert.get("bar_policy") or "close").lower()
+                    if bar_policy != "intrabar":
+                        last_ts = await self._get_last_closed_bar_ts(symbol1, timeframe)
+                        if last_ts is None:
+                            continue
+                        pair_key = self._pair_key(alert_id, symbol1, symbol2, timeframe)
+                        prev_ts = self._last_closed_bar_ts.get(pair_key)
+                        if prev_ts is not None and prev_ts == last_ts:
+                            continue
+                        self._last_closed_bar_ts[pair_key] = last_ts
                     # Get market data for both symbols under per-pair locks (stable order to avoid deadlocks)
                     k1 = f"{symbol1}:{timeframe}"
                     k2 = f"{symbol2}:{timeframe}"
@@ -170,6 +185,13 @@ class RSICorrelationAlertService:
                         trigger_result = await self._check_rsi_threshold_mode(
                             alert, symbol1, symbol2, timeframe, market_data1, market_data2, alert_conditions
                         )
+                        if trigger_result:
+                            cond = trigger_result.get("trigger_condition")
+                            if cond in ("positive_mismatch", "negative_mismatch"):
+                                if not self._allow_mismatch_and_update(alert_id, symbol1, symbol2, timeframe, cond):
+                                    trigger_result = None
+                            elif cond == "neutral_break":
+                                self._rearm_mismatch(alert_id, symbol1, symbol2, timeframe)
                     elif calculation_mode == "real_correlation":
                         trigger_result = await self._check_real_correlation_mode(
                             alert, symbol1, symbol2, timeframe, market_data1, market_data2, alert_conditions
@@ -196,6 +218,25 @@ class RSICorrelationAlertService:
             
         except Exception as e:
             logger.error(f"❌ Error checking single RSI correlation alert: {e}")
+            return None
+
+    def _pair_key(self, alert_id: str, s1: str, s2: str, timeframe: str) -> str:
+        a, b = sorted([s1, s2])
+        return f"{alert_id}:{a}:{b}:{timeframe}"
+
+    async def _get_last_closed_bar_ts(self, symbol: str, timeframe: str) -> Optional[int]:
+        try:
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as TF
+            tf_map = {"1M": TF.M1, "5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+            mtf = tf_map.get(timeframe)
+            if not mtf:
+                return None
+            bars = get_ohlc_data(symbol, mtf, 2)
+            if not bars:
+                return None
+            return int(bars[-1].time)
+        except Exception:
             return None
 
     def _tf_seconds(self, timeframe: str) -> int:

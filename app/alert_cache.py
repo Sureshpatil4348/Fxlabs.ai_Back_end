@@ -174,6 +174,8 @@ class AlertCache:
                         "timeframes": alert.get("timeframes", []),
                         "rsi_period": alert.get("rsi_period", 14),
                         "correlation_threshold": alert.get("correlation_threshold", 0.7),
+                        # Bar timing policy: "close" (default) or "intrabar"
+                        "bar_policy": alert.get("bar_policy", "close"),
                         "notification_methods": alert.get("notification_methods", ["browser"]),
                         "alert_frequency": alert.get("alert_frequency", "once"),
                         "trigger_on_crossing": alert.get("trigger_on_crossing", True),
