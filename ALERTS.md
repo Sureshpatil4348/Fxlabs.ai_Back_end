@@ -149,7 +149,7 @@
 | RSI OB/OS | Crossing vs in‑zone | match | Crossing with 1‑bar confirmation and hysteresis implemented; better parity with spec. |
 | RSI OB/OS | Bar‑close vs intrabar evaluation | match | Supports bar policy: default bar‑close (evaluates once per closed bar) or intrabar (on ticks) with debounce. |
 | RSI OB/OS | Cooldown model | match | Per (alert, symbol, timeframe, side) cooldown enforced; default 30m, overridable via `cooldown_minutes`. |
-| RSI OB/OS | Quiet hours / timezone | mismatch | No quiet‑hours or local timezone delivery window. |
+| RSI OB/OS | Quiet hours / timezone | match | Suppresses alerts within configured local quiet hours using alert timezone (default Asia/Kolkata). |
 | Correlation | RSI threshold + real correlation modes | partial match | Both modes exist; still tick‑driven and frequency‑gated. |
 | Correlation | TF boundary evaluation + mismatch retriggers | mismatch | No bar‑aligned checks or explicit retrigger rules on mismatches. |
 
@@ -257,6 +257,12 @@
   - Add `cooldown_minutes` (default 30) to RSI alert form. Clarify that it applies per symbol and timeframe, separately for overbought vs oversold.
 - Supabase
   - Add `cooldown_minutes` (integer, nullable) to `rsi_alerts`. Backend reads it; otherwise uses 30 minutes.
+
+**Frontend/Supabase Follow-ups — RSI Quiet Hours/Timezone**
+- Frontend
+  - Add fields to RSI alert form: `timezone` (IANA name, default Asia/Kolkata), `quiet_start_local` and `quiet_end_local` (HH:MM). Show a preview of the quiet window in local time.
+- Supabase
+  - Add `timezone` (text), `quiet_start_local` (text HH:MM), `quiet_end_local` (text HH:MM) to `rsi_alerts`. Backend now reads these fields and suppresses alerts during the configured window.
 
 **Frontend/Supabase Follow-ups — Cooldown Policy**
 - Frontend
