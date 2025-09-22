@@ -141,6 +141,8 @@ class AlertCache:
                         "alert_conditions": alert.get("alert_conditions", []),
                         "rfi_strong_threshold": alert.get("rfi_strong_threshold", 0.80),
                         "rfi_moderate_threshold": alert.get("rfi_moderate_threshold", 0.60),
+                        # Bar timing policy: "close" (default) or "intrabar"
+                        "bar_policy": alert.get("bar_policy", "close"),
                         "notification_methods": alert.get("notification_methods", ["browser"]),
                         "alert_frequency": alert.get("alert_frequency", "once"),
                         "trigger_on_crossing": alert.get("trigger_on_crossing", True),

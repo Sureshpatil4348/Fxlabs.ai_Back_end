@@ -31,6 +31,8 @@ class RSIAlertService:
         self.rearm_oversold = 35         # Hysteresis re-arm for oversold (after rising above 35)
         # In-memory hysteresis state: key -> { 'armed_overbought': bool, 'armed_oversold': bool }
         self._hysteresis_map: Dict[str, Dict[str, bool]] = {}
+        # Track last evaluated closed bar per (symbol, timeframe) for bar-close policy
+        self._last_closed_bar_ts: Dict[str, int] = {}
     
     def _should_trigger_alert(self, alert_id: str, cooldown_seconds: int = None) -> bool:
         """Check if alert should be triggered based on cooldown period"""
@@ -145,6 +147,20 @@ class RSIAlertService:
                         if self._is_stale_market(market_data, timeframe):
                             logger.debug(f"⏭️ Stale data skipped for {symbol} {timeframe}")
                             continue
+
+                        # Respect bar timing policy: default 'close', optional 'intrabar'
+                        bar_policy = (alert.get("bar_policy") or "close").lower()
+                        if bar_policy != "intrabar":
+                            last_ts = await self._get_last_closed_bar_ts(symbol, timeframe)
+                            if last_ts is None:
+                                logger.debug(f"⏭️ Skipping {symbol} {timeframe}: unknown last closed bar (bar_policy=close)")
+                                continue
+                            last_key = f"{symbol}:{timeframe}"
+                            prev_ts = self._last_closed_bar_ts.get(last_key)
+                            if prev_ts is not None and prev_ts == last_ts:
+                                # Already evaluated for current closed bar
+                                continue
+                            self._last_closed_bar_ts[last_key] = last_ts
 
                         logger.debug(f"✅ Market data retrieved for {symbol} {timeframe}: {market_data.get('data_source', 'Unknown')}")
 
@@ -563,6 +579,32 @@ class RSIAlertService:
             
         except Exception as e:
             logger.error(f"❌ Error logging RSI alert trigger: {e}")
+
+    async def _get_last_closed_bar_ts(self, symbol: str, timeframe: str) -> Optional[int]:
+        """Return timestamp (ms) of the last closed bar using MT5 OHLC data; None if unavailable."""
+        try:
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as MT5Timeframe
+            tf_map = {
+                "1M": MT5Timeframe.M1,
+                "5M": MT5Timeframe.M5,
+                "15M": MT5Timeframe.M15,
+                "30M": MT5Timeframe.M30,
+                "1H": MT5Timeframe.H1,
+                "4H": MT5Timeframe.H4,
+                "1D": MT5Timeframe.D1,
+                "1W": MT5Timeframe.W1,
+            }
+            mt5_tf = tf_map.get(timeframe)
+            if not mt5_tf:
+                return None
+            bars = get_ohlc_data(symbol, mt5_tf, 2)
+            if not bars:
+                return None
+            return int(bars[-1].time)
+        except Exception as e:
+            logger.debug(f"Bar-close ts unavailable for {symbol} {timeframe}: {e}")
+            return None
     
     async def _detect_rsi_crossing(
         self,

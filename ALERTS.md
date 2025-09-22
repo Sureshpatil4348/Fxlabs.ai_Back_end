@@ -147,7 +147,7 @@
 | Type B (Flip) | Only‑NEW (K=3) and 1‑bar confirmation | match | Implemented in flip detectors (K=3, confirmation=1) across supported indicators. |
 | Type B (Flip) | Gate by Buy Now % | match | Optional gate enabled: flips require Buy Now % ≥ buy_min (BUY) or ≤ sell_max (SELL); defaults 60/40. |
 | RSI OB/OS | Crossing vs in‑zone | match | Crossing with 1‑bar confirmation and hysteresis implemented; better parity with spec. |
-| RSI OB/OS | Bar‑close vs intrabar evaluation | mismatch | Evaluation is tick‑driven; no bar‑close scheduler. |
+| RSI OB/OS | Bar‑close vs intrabar evaluation | match | Supports bar policy: default bar‑close (evaluates once per closed bar) or intrabar (on ticks) with debounce. |
 | RSI OB/OS | Cooldown model | partial match | 5‑minute per‑alert cooldown present; lacks per (pair, TF) stateful re‑arm beyond hysteresis. |
 | RSI OB/OS | Quiet hours / timezone | mismatch | No quiet‑hours or local timezone delivery window. |
 | Correlation | RSI threshold + real correlation modes | partial match | Both modes exist; still tick‑driven and frequency‑gated. |
@@ -245,6 +245,12 @@
   - Add a toggle “Gate by Buy Now %” and two numeric inputs: `buy_min` (default 60) and `sell_max` (default 40). Explain that flips are only sent if the style‑weighted Buy Now % passes these gates.
 - Supabase
   - Add fields to `heatmap_alerts`: `gate_by_buy_now` (boolean), `gate_buy_min` (numeric), `gate_sell_max` (numeric). Backend reads and applies them when present.
+
+**Frontend/Supabase Follow-ups — RSI Bar Policy**
+- Frontend
+  - Add a selector for `bar_policy`: Close (default) or Intrabar to the RSI alert form. Tooltip: Close evaluates once per closed bar; Intrabar evaluates on ticks.
+- Supabase
+  - Add `bar_policy` (text: 'close'|'intrabar') to `rsi_alerts`. Backend defaults to 'close' when absent.
 
 **Frontend/Supabase Follow-ups — Cooldown Policy**
 - Frontend
