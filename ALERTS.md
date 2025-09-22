@@ -129,31 +129,29 @@
   - HTML email bodies for Heatmap, RSI, and RSI Correlation are implemented with branding; titles and content are descriptive but not in the compact “Title/Body/Footer” text form.
 
 **Parity Summary (Spec vs Current Code)**
-- Global
-  - Max pairs/user (3): enforced in backend at creation time (counts unique symbols across Heatmap, RSI, and both sides of Correlation pairs).
-  - Delivery channels: Email implemented; Telegram missing.
-  - Trigger style: crossing/new‑only for RSI is now enforced with 1‑bar confirmation and hysteresis re‑arm (70/65 and 30/35). In‑zone fallback still used only when historical RSI series is unavailable.
-  - Timezone: emails use UTC; IST formatting not applied.
-  - Rate limits/digest: not implemented (only test‑email rate limits exist in `server.py`).
-  - Per‑pair concurrency cap: enforced via keyed async locks shared across services (key = `symbol:timeframe`). Prevents simultaneous evaluations for the same pair/TF.
-    - Warm‑ups/data‑gap handling: not explicitly implemented.
-- Type A — Buy Now %
-  - Final Score/Buy Now % computation by style: not present (current heatmap uses indicator scores with RSI emphasis; no TF weighting by style).
-  - Minimum alignment N cells: not implemented.
-  - Hysteresis 70/65 and 30/35: not implemented.
-  - Cooldown: frequency‑based (once/hourly/daily) rather than per‑pair crossing logic.
-- Type B — Indicator Flip
-  - UTBOT/Ichimoku/MACD/EMA flip logic: not implemented; indicator values are simulated for heatmap strength, not regime flips.
-  - “Only NEW” (K=3 bars) and 1‑bar confirmation: not implemented.
-  - Optional gate by Buy Now %: not implemented.
-- RSI OB/OS
-  - Crossing vs in‑zone policies: only in‑zone implemented; no prev‑bar cross detection.
-  - Bar close vs intrabar: alerts are tick‑driven; no bar policy.
-  - Cooldown: implemented per alert (5 minutes default), but not per (pair, timeframe) and not tied to re‑cross hysteresis.
-  - Quiet hours/timezone: not implemented.
-- Correlation Alerts
-  - RSI threshold and real correlation modes: present; evaluation is tick‑driven and gated by alert_frequency.
-  - Timeframe boundary evaluation and mismatch retrigger rules: not implemented.
+
+| Area | Item | Parity | Impact |
+|------|------|--------|--------|
+| Global | Max pairs/user (3) | match | Prevents over‑subscription; enforced at creation across Heatmap/RSI/Correlation (counts unique symbols). |
+| Global | Delivery channels (Telegram) | mismatch | Email only; Telegram missing reduces delivery options. |
+| Global | Trigger style (RSI crossing + NEW + 1‑bar + hysteresis) | match | Higher signal quality; fallback to in‑zone only when RSI series unavailable. |
+| Global | Timezone formatting (IST) | mismatch | Emails use UTC; IST display not applied; potential confusion. |
+| Global | Rate limits + digests | mismatch | No per‑user/hour cap or digest; risk of noisy alerts; only test‑email cap exists. |
+| Global | Per‑pair concurrency cap | match | Keyed async locks prevent simultaneous evaluations for same pair×TF. |
+| Global | Warm‑up / stale‑data skip | mismatch | Possible noisy/invalid signals on insufficient lookback or stale bars. |
+| Type A (Heatmap) | Final Score / Buy Now % style weighting | mismatch | Style‑aware weighting not implemented; current strength is simplified. |
+| Type A (Heatmap) | Minimum alignment (N cells) | mismatch | Can’t require N aligned TF cells; may raise false positives. |
+| Type A (Heatmap) | Hysteresis (70/65, 30/35) | mismatch | No re‑arm thresholds; repeated triggers possible without additional guards. |
+| Type A (Heatmap) | Cooldown policy | partial match | Frequency gating (once/hourly/daily) exists; lacks per‑pair crossing cooldown logic. |
+| Type B (Flip) | UTBOT/Ichimoku/MACD/EMA flips | mismatch | Regime‑flip logic not implemented; indicators partly simulated. |
+| Type B (Flip) | Only‑NEW (K=3) and 1‑bar confirmation | mismatch | Not enforced; risk of repeated/noisy alerts on persistent regime. |
+| Type B (Flip) | Gate by Buy Now % | mismatch | Not implemented; cannot restrict flips by style strength. |
+| RSI OB/OS | Crossing vs in‑zone | match | Crossing with 1‑bar confirmation and hysteresis implemented; better parity with spec. |
+| RSI OB/OS | Bar‑close vs intrabar evaluation | mismatch | Evaluation is tick‑driven; no bar‑close scheduler. |
+| RSI OB/OS | Cooldown model | partial match | 5‑minute per‑alert cooldown present; lacks per (pair, TF) stateful re‑arm beyond hysteresis. |
+| RSI OB/OS | Quiet hours / timezone | mismatch | No quiet‑hours or local timezone delivery window. |
+| Correlation | RSI threshold + real correlation modes | partial match | Both modes exist; still tick‑driven and frequency‑gated. |
+| Correlation | TF boundary evaluation + mismatch retriggers | mismatch | No bar‑aligned checks or explicit retrigger rules on mismatches. |
 
 **Implementation Plan to Reach Parity**
 - Scheduling and state
