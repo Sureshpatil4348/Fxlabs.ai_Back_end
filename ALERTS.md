@@ -145,7 +145,7 @@
 | Type A (Heatmap) | Cooldown policy | match | Per (alert, symbol, direction) cooldown enforced; default 30m, overridable per alert via `cooldown_minutes`. |
 | Type B (Flip) | UTBOT/Ichimoku/MACD/EMA flips | match | Flip detection added: EMA cross with slope, MACD cross with sign agreement, Ichimoku Tenkan/Kijun cross, simplified UTBOT (EMA10±0.5×ATR10) with 1‑bar confirmation and Only‑NEW window. |
 | Type B (Flip) | Only‑NEW (K=3) and 1‑bar confirmation | match | Implemented in flip detectors (K=3, confirmation=1) across supported indicators. |
-| Type B (Flip) | Gate by Buy Now % | mismatch | Not implemented; cannot restrict flips by style strength. |
+| Type B (Flip) | Gate by Buy Now % | match | Optional gate enabled: flips require Buy Now % ≥ buy_min (BUY) or ≤ sell_max (SELL); defaults 60/40. |
 | RSI OB/OS | Crossing vs in‑zone | match | Crossing with 1‑bar confirmation and hysteresis implemented; better parity with spec. |
 | RSI OB/OS | Bar‑close vs intrabar evaluation | mismatch | Evaluation is tick‑driven; no bar‑close scheduler. |
 | RSI OB/OS | Cooldown model | partial match | 5‑minute per‑alert cooldown present; lacks per (pair, TF) stateful re‑arm beyond hysteresis. |
@@ -239,6 +239,12 @@
   - Optionally surface re‑arm thresholds in the alert detail.
 - Supabase
   - No schema change required. Hysteresis is managed server‑side in memory per (alert, symbol). Optional: persist state later if durability is needed.
+
+**Frontend/Supabase Follow-ups — Gate by Buy Now % (Type B)**
+- Frontend
+  - Add a toggle “Gate by Buy Now %” and two numeric inputs: `buy_min` (default 60) and `sell_max` (default 40). Explain that flips are only sent if the style‑weighted Buy Now % passes these gates.
+- Supabase
+  - Add fields to `heatmap_alerts`: `gate_by_buy_now` (boolean), `gate_buy_min` (numeric), `gate_sell_max` (numeric). Backend reads and applies them when present.
 
 **Frontend/Supabase Follow-ups — Cooldown Policy**
 - Frontend

@@ -105,6 +105,10 @@ class AlertCache:
                         "trading_style": alert.get("trading_style", "dayTrader"),
                         "min_alignment": alert.get("min_alignment"),
                         "cooldown_minutes": alert.get("cooldown_minutes"),
+                        # Optional gating for Type B (indicator flips) by style-weighted Buy Now %
+                        "gate_by_buy_now": alert.get("gate_by_buy_now"),
+                        "gate_buy_min": alert.get("gate_buy_min"),
+                        "gate_sell_max": alert.get("gate_sell_max"),
                         "buy_threshold_min": alert.get("buy_threshold_min", 70),
                         "buy_threshold_max": alert.get("buy_threshold_max", 100),
                         "sell_threshold_min": alert.get("sell_threshold_min", 0),

@@ -111,6 +111,7 @@ class HeatmapAlertService:
             
             for pair in pairs:
                 tf_strengths = {}
+                flip_candidates: List[Dict[str, Any]] = []
                 for timeframe in timeframes:
                     key = f"{pair}:{timeframe}"
                     async with pair_locks.acquire(key):
@@ -142,14 +143,13 @@ class HeatmapAlertService:
                         # Detect indicator flips (Type B) on this timeframe
                         flip = await self._detect_indicator_flips(pair, timeframe, selected_indicators)
                         if flip:
-                            triggered_pairs.append({
+                            flip_candidates.append({
                                 "symbol": pair,
                                 "timeframe": timeframe,
                                 "signal": flip.get("signal"),
                                 "indicator": flip.get("indicator"),
                                 "trigger_condition": flip.get("condition"),
                                 "strength": strength_data.get("overall_strength", 50),
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
                             })
 
                 # Aggregate across timeframes using style weights
@@ -221,6 +221,35 @@ class HeatmapAlertService:
                         "hysteresis_sell_rearm": min(100, sell_threshold_max + self.hysteresis_sell_margin),
                         "timeframe": "style-weighted",
                         "price": None,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+
+                # Optional gate for Type B flips by style-weighted Buy Now %
+                try:
+                    gate_enabled = bool(alert.get("gate_by_buy_now"))
+                except Exception:
+                    gate_enabled = False
+                try:
+                    gate_buy_min = float(alert.get("gate_buy_min")) if alert.get("gate_buy_min") is not None else 60.0
+                except Exception:
+                    gate_buy_min = 60.0
+                try:
+                    gate_sell_max = float(alert.get("gate_sell_max")) if alert.get("gate_sell_max") is not None else 40.0
+                except Exception:
+                    gate_sell_max = 40.0
+
+                for fc in flip_candidates:
+                    sig = fc.get("signal")
+                    if gate_enabled:
+                        if sig == "BUY" and not (buy_now_percent >= gate_buy_min):
+                            continue
+                        if sig == "SELL" and not (buy_now_percent <= gate_sell_max):
+                            continue
+                    triggered_pairs.append({
+                        **fc,
+                        "buy_now_percent": buy_now_percent,
+                        "gated_by_buy_now": gate_enabled,
+                        "style": trading_style,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                     })
             
