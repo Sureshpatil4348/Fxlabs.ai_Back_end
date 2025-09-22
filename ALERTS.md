@@ -1,7 +1,7 @@
 **Overview**
-- Unified alerts specification for Heat Map Threshold (Type A), Indicator Flip (Type B), RSI OB/OS, and RSI Correlation.
-- Delivery channels target Email and Telegram; timestamps use Asia/Kolkata (IST).
-- Trigger philosophy: fire on crossings or regime flips, not on every bar while the condition remains true; add cooldowns and hysteresis to reduce noise.
+- Unified alerts spec for Heat Map Threshold (Type A), Indicator Flip (Type B), RSI OB/OS, and RSI Correlation.
+- Delivery channels: Email (implemented) and Telegram (planned). Timestamps display in Asia/Kolkata (IST).
+- Trigger philosophy: evaluate on timeframe closes; fire on crossings or regime flips (not every bar while condition remains true); apply cooldowns, hysteresis, Only‑NEW and confirmation to reduce noise.
 
 **Global Rules**
 - Max tracked pairs per user: up to 3.
@@ -61,7 +61,7 @@
   - Alert State: id, alert_id, symbol, timeframe, last_alert_ts (UTC), last_status (neutral|overbought|oversold), last_rsi_value.
   - User Channels: user_id, email, telegram_chat_id (verified), telegram_bot_token (server‑side vault).
 - Evaluation Cadence
-  - Scheduler aligned with TF closes: 1m every minute; 5m each 5‑minute boundary; 1h at HH:00; 1d at local midnight or broker close.
+  - Scheduler aligned with TF closes (bar‑close default): 1m every minute; 5m each 5‑minute boundary; 1h at HH:00; 1d at local midnight or broker close.
   - Intrabar: optional N‑checks debouncing (e.g., 2 checks, 30–60s apart).
 - Trigger Logic (per symbol × timeframe)
   - Crossing policy: Overbought CROSS‑IN prev<OB and r≥OB; Oversold CROSS‑IN prev>OS and r≤OS.
@@ -102,31 +102,38 @@
 - Type B: UTBOT default, TFs 15m & 30m, Only NEW ON, cooldown 30m.
 
 **Updates (Scheduling and Retriggering)**
-- End‑of‑TF evaluation only: if alert is configured for 5m, evaluate and fire only at 5‑minute boundaries; likewise for 30m/1h.
-- Retrigger only on re‑cross: once fired at a threshold, do not re‑fire while condition remains beyond threshold; re‑fire only after exiting and re‑crossing the threshold (or if the user changes the threshold).
+- End‑of‑timeframe evaluation only: if an alert is configured for 5m, evaluate and (if needed) fire at 5‑minute boundaries only; likewise for 15m/30m/1h, etc.
+- Retrigger policy: after a fire, do not re‑fire while the metric remains beyond the threshold. Re‑arm only after leaving the zone and then re‑crossing the threshold in the chosen direction. Changing the user’s threshold re‑arms immediately.
 - Example: USD/CAD · 30m · crossing ≥80%
-  - System checks at 10:00, 10:30, 11:00…
-  - If Buy Now % crosses 80% and becomes 81% at a bar close → send alert.
-  - Continues checking each 30m; if stays >80% → no alert.
-  - If dips back below 80% and later re‑crosses ≥80% → send alert.
+  - Checks at 10:00, 10:30, 11:00 …
+  - 10:30 close: Buy Now % crosses from 78% → 81% → send alert.
+  - Stays >80% at 11:00 → no alert.
+  - Falls to 76% at 11:30, then 82% at 12:00 → send alert (re‑cross after re‑arm).
 
 **Current Implementation Snapshot (Backend Repo)**
 - Storage and cache
-  - Supabase tables: heatmap_alerts, rsi_alerts, rsi_correlation_alerts (loaded into an in‑memory cache every 5 minutes); see `app/alert_cache.py:1`.
+  - Supabase tables: heatmap_alerts, rsi_alerts, rsi_correlation_alerts. An in‑memory cache refreshes periodically; see `app/alert_cache.py`.
 - Execution model
-  - Alerts evaluated on ticks in background, not aligned to bar closes; see `server.py:781` invoking all checkers each tick batch.
+  - Alert checkers are launched from the tick loop (see `server.py:876`, `server.py:913`, `server.py:1000+`). Internally:
+    - RSI and RSI Correlation enforce bar‑close evaluation using last‑closed‑bar timestamps (default `bar_policy='close'`).
+    - Heat Map checks run on tick invocation; indicator flips use recent bars with confirmation. A dedicated TF scheduler for all alert types is planned.
 - Channels
-  - Email via SendGrid implemented; Telegram not implemented. Value‑based cooldown in email sender: 10 minutes by default and RSI delta threshold of 5.0; see `app/email_service.py:24` and `app/email_service.py:31`.
-- Heat Map alerts
-  - Service computes a simple indicator mix with RSI and simulated others; triggers when RSI value falls in configured buy/sell ranges; frequency gating by “once/hourly/daily”; see `app/heatmap_alert_service.py:24` and `_should_trigger_alert` at `app/heatmap_alert_service.py:153`.
+  - Email via SendGrid implemented. Value‑based cooldown: 10 minutes + RSI delta threshold of 5.0; per‑user cap 5/hour with digest.
+  - Telegram delivery not yet implemented.
+  - See `app/email_service.py:31` and surrounding lines for cooldown/rate limit/digest.
+- Heat Map alerts (Type A + Type B flips)
+  - Style‑weighted TF aggregation → Final Score → Buy Now %; optional Minimum Alignment (N TFs). Hysteresis re‑arm (buy_min−5 / sell_max+5). Per (alert, symbol, direction) cooldown (default 30m). Optional gate for Type B flips by Buy Now %.
+  - Flips: EMA21/50/200 cross + slope, MACD cross with sign, Ichimoku Tenkan/Kijun cross, simplified UTBOT; Only‑NEW (K=3) and 1‑bar confirmation; see `_detect_indicator_flips` in `app/heatmap_alert_service.py`.
 - RSI alerts
-  - Triggers when RSI is in‑zone for configured conditions (overbought/oversold), plus optional simulated RFI checks; 5‑minute per‑alert cooldown; see `app/rsi_alert_service.py:25` and `_check_rsi_conditions` at `app/rsi_alert_service.py:377`.
+  - Crossing policy + 1‑bar confirmation + hysteresis (65/35). Only‑NEW window K=3. Per (alert, symbol, timeframe, side) cooldown (default 30m). Quiet hours with IANA timezone (default Asia/Kolkata). Bar‑close gating via last‑closed‑bar tracking.
+  - See `app/rsi_alert_service.py` (e.g., `_get_last_closed_bar_ts`, `_detect_rsi_crossings_with_confirmation`).
 - RSI correlation alerts
-  - Supports both RSI threshold mode and real correlation mode; gating by alert_frequency (once/hourly/daily/weekly); see `_should_trigger_alert` at `app/rsi_correlation_alert_service.py:27`.
-- WebSocket scheduling
-  - OHLC broadcasts are aligned to TF boundaries, but alert evaluation is currently tick‑driven (not bar‑close); see `server.py:940` onward for OHLC scheduling.
+  - Modes: RSI threshold and Real correlation (Pearson of returns, configurable window). Bar‑close gating per timeframe, warm‑up and stale‑bar checks, per‑pair concurrency locks.
+  - See `app/rsi_correlation_alert_service.py` (`_check_rsi_threshold_mode`, `_check_real_correlation_mode`, `_calculate_correlation`).
+- WebSocket + OHLC
+  - OHLC updates are aligned to TF boundaries. A future enhancement will move alert evaluation to these boundaries for full TF parity.
 - Templates
-  - HTML email bodies for Heatmap, RSI, and RSI Correlation are implemented with branding; titles and content are descriptive but not in the compact “Title/Body/Footer” text form.
+  - Rich HTML email templates across alert types; Title/Body/Footer structure documented here.
 
 **Parity Summary (Spec vs Current Code)**
 
@@ -155,24 +162,19 @@
 
 **Implementation Plan to Reach Parity**
 - Scheduling and state
-  - Add a bar‑aligned scheduler per TF. At each TF close, enqueue evaluations for all active alerts covering that TF. Derive next bars using existing OHLC scheduling logic in `server.py`.
-  - Introduce per‑(alert, symbol, timeframe, indicator) state in DB: last_status, last_value, last_alert_ts; use it for crossing and NEW detection.
-  - Enforce per‑pair concurrency via a keyed async lock.
+  - Add a bar‑aligned scheduler per TF. At each TF close, enqueue evaluations for all active alerts covering that TF (Type A/B/RSI/Correlation). Wire it into existing OHLC boundary logic in `server.py`.
+  - Persist per‑(alert, symbol, timeframe, indicator) evaluation state in DB: last_status, last_value, last_alert_ts (used today in memory), to improve durability across restarts.
 - Trigger logic
-  - Implement crossing detection using last closed bar values. For RSI, store prev_r and r; for EMA/RSI/50‑line, detect cross‑ins; for UTBOT/Ichimoku/MACD, implement regime flips with 1‑bar confirmation.
-  - Add hysteresis thresholds (e.g., 70/65, 30/35) and “Only NEW” window K=3.
-  - Implement Buy Now % pipeline: compute Final Score with style‑weighted TFs and optional minimum alignment N.
+  - Already implemented for RSI and flips. For Heatmap Type A, continue to refine Buy Now % inputs and style TF weights; keep “Only‑NEW (K=3)” and “1‑bar confirmation” consistent where applicable.
 - Cooldowns and rate limits
-  - Replace time‑only cooldowns with per‑(pair, TF, indicator) re‑arm based on exit and re‑cross; keep a short safety cooldown.
-  - Add per‑user hourly cap (5) and digest for overflow.
+  - Keep per‑(alert, symbol[, timeframe], direction/indicator) cooldowns; maintain user‑level hourly cap (5) and digest.
 - Delivery and content
-  - Add Telegram bot integration and per‑user verification flow; batch API calls with backoff.
-  - Switch message formatting to consistent Title/Body/Footer with IST timestamps; add deep‑link CTA.
+  - Implement Telegram bot integration and per‑user verification flow; batch API calls with backoff.
+  - Ensure consistent Title/Body/Footer across Email and Telegram; include IST time and “Open chart” deep‑link.
 - Safeguards
-  - Warm‑up: ensure lookbacks are satisfied per indicator/TF; skip if stale bar age > 2× TF.
-  - Quiet hours: suppress within configured local window using IANA timezone.
+  - Maintain warm‑up and stale‑bar protections; log skips for observability.
 - Data model
-  - Extend Supabase schemas to include: bar_policy, trigger_policy, only_new, min_alignment, style, cooldown_minutes, deliver_telegram, timezone, quiet hours; add alert_state tables for RSI/TypeB and TypeA.
+  - Extend Supabase schemas to include: bar_policy, trigger_policy, only_new, min_alignment, style, cooldown_minutes, deliver_telegram, timezone, quiet hours; and alert_state tables for RSI/TypeB and TypeA.
 
 **Open Questions**
 - Minimum viable set of indicators for Type B in v1 (UTBOT+RSI+EMA?)
@@ -180,14 +182,15 @@
 - Do we gate Type B by Buy Now % by default, and at what levels?
 
 **What Is Implemented Today (Quick References)**
-- Email cooldown and value similarity: `app/email_service.py:31` (10m) and RSI delta 5.0 at `app/email_service.py:32`.
-- Tick‑driven alert checks: `server.py:781`.
-- Heatmap alerts service and frequency gating: `app/heatmap_alert_service.py:24`, `_should_trigger_alert` `app/heatmap_alert_service.py:153`.
-- RSI alerts with in‑zone checks and 5‑minute cooldown: `app/rsi_alert_service.py:25`, `_check_rsi_conditions` `app/rsi_alert_service.py:377`.
-- RSI correlation alerts (threshold + real correlation): `_should_trigger_alert` `app/rsi_correlation_alert_service.py:27`.
+- Email cooldown and value similarity: `app/email_service.py:31` (10m base) and RSI delta threshold 5.0; per‑user cap 5/hour with digest.
+- Alert invocation from tick loop: `_check_alerts_safely` `server.py:876`, tick loop `server.py:913`, background tasks `server.py:1000+`.
+- Heatmap alerts: style‑weighted Final Score → Buy Now %, hysteresis, min‑alignment, per‑pair cooldowns; Type B flips with Only‑NEW K=3 and 1‑bar confirmation; see `app/heatmap_alert_service.py` (e.g., `_detect_indicator_flips`).
+- RSI alerts: bar‑close gating + crossings with confirmation and hysteresis; Only‑NEW K=3; per (alert, symbol, timeframe, side) cooldown; quiet hours; see `app/rsi_alert_service.py` (e.g., `_get_last_closed_bar_ts`, `_detect_rsi_crossings_with_confirmation`).
+- RSI correlation alerts: threshold + real correlation modes; bar‑close gating, warm‑up/stale checks; see `app/rsi_correlation_alert_service.py`.
 
 **Parity Statement**
-- Core coverage exists for Email delivery, basic Heatmap alerts, RSI alerts, and RSI Correlation alerts, but the current system is tick‑driven with in‑zone triggers and time/value cooldowns. The product spec requires bar‑close scheduling, crossing/flip detection with hysteresis, NEW‑only and confirmation logic, Buy Now % with style weights and minimum alignment, and Telegram delivery. These items are not yet implemented and represent the primary parity gaps.
+- The majority of the spec is implemented: Email delivery with cooldown/rate‑limit/digest, style‑weighted Heatmap Type A with hysteresis/min‑alignment/cooldowns, Type B flips with Only‑NEW and confirmation, RSI crossings with 1‑bar confirmation + hysteresis + quiet hours, and RSI Correlation (threshold + real correlation) with bar‑close gating and concurrency.
+- Remaining gaps: a dedicated bar‑close scheduler that drives all alert evaluations (Heatmap still invoked from the tick loop), Telegram delivery channel, and persistence of alert evaluation state in DB for durability. These are tracked in the Implementation Plan above.
 
 **Frontend/Supabase Follow-ups — Max Pairs/User (3)**
 - Frontend

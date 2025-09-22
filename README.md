@@ -235,6 +235,15 @@ Internal alert tick_data shape:
  - Cooldown: Per (alert, symbol, direction) cooldown window (default 30 minutes). You can override via `cooldown_minutes` on the alert.
  - Indicator Flips (Type B): UTBOT, Ichimoku (Tenkan/Kijun), MACD, and EMA(21/50/200) flips supported with Only‑NEW K=3 and 1‑bar confirmation. Optional gate: require style‑weighted Buy Now % ≥ buy_min (BUY) or ≤ sell_max (SELL); defaults 60/40.
 
+### Alert Scheduling & Re‑triggering (Global)
+
+- End‑of‑timeframe evaluation only: if an alert targets 5m, it evaluates and fires at 5‑minute boundaries; similarly for 15m/30m/1h.
+- Crossing/Flip triggers: fire when the metric crosses into the condition from the opposite side (or a regime flip occurs), not on every bar while in‑zone.
+- Re‑arm on exit then re‑cross: once fired, do not re‑fire while the condition persists; re‑arm after leaving the zone and fire again only on a new cross‑in. Changing the configured threshold re‑arms immediately.
+- Rate limits, cooldowns, concurrency, and quiet‑hours apply consistently across alert types.
+
+See `ALERTS.md` for the full product/tech spec and parity details.
+
 ### 📰 News API Usage (External Source + Internal Endpoints)
 
 #### External Source: Jblanked (Forex Factory Calendar - Weekly)
