@@ -130,7 +130,7 @@
 
 **Parity Summary (Spec vs Current Code)**
 - Global
-  - Max pairs/user (3): not enforced in backend.
+  - Max pairs/user (3): enforced in backend at creation time (counts unique symbols across Heatmap, RSI, and both sides of Correlation pairs).
   - Delivery channels: Email implemented; Telegram missing.
   - Trigger style: crossing/new‑only not enforced; in‑zone checks used for RSI; no 1‑bar confirmation or “Only NEW” filter; no hysteresis resets.
   - Timezone: emails use UTC; IST formatting not applied.
@@ -191,3 +191,11 @@
 **Parity Statement**
 - Core coverage exists for Email delivery, basic Heatmap alerts, RSI alerts, and RSI Correlation alerts, but the current system is tick‑driven with in‑zone triggers and time/value cooldowns. The product spec requires bar‑close scheduling, crossing/flip detection with hysteresis, NEW‑only and confirmation logic, Buy Now % with style weights and minimum alignment, and Telegram delivery. These items are not yet implemented and represent the primary parity gaps.
 
+**Frontend/Supabase Follow-ups — Max Pairs/User (3)**
+- Frontend
+  - Block creation UI when adding new symbols would exceed 3 total unique tracked symbols for the user.
+  - Surface backend 400 errors from create endpoints with a friendly message and show remaining slots.
+  - Optionally compute available slots by fetching existing alerts and taking the union of symbols; for Correlation alerts, count both symbols in each pair.
+- Supabase
+  - No direct DB constraint can enforce “max unique symbols per user” across rows. Keep server-side enforcement (now implemented) and optionally add a periodic audit job for compliance.
+  - Cache normalization: correlation alerts now expose `correlation_pairs` under the standard `pairs` key in the backend cache for consistency.

@@ -318,6 +318,48 @@ def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 100) -> List
     return cached_data
 
 
+async def _get_user_tracked_symbols(user_email: str) -> Set[str]:
+    """Return the set of unique symbols tracked by a user across all active alerts.
+
+    This inspects the in-memory alert_cache and supports both simple pair lists
+    (e.g., ["EURUSD", "GBPUSD"]) and correlation-style lists of lists
+    (e.g., [["EURUSD", "GBPUSD"], ["USDJPY", "GBPUSD"]]). It also tolerates
+    legacy cache objects where correlation pairs might be stored under
+    "correlation_pairs".
+    """
+    symbols: Set[str] = set()
+    try:
+        all_alerts = await alert_cache.get_all_alerts()
+    except Exception:
+        all_alerts = {}
+
+    for _uid, alerts in all_alerts.items():
+        for alert in alerts:
+            if alert.get("user_email") != user_email:
+                continue
+            if not alert.get("is_active", True):
+                continue
+
+            pairs = alert.get("pairs", [])
+            if isinstance(pairs, list):
+                if all(isinstance(p, str) for p in pairs):
+                    symbols.update(pairs)
+                elif all(isinstance(p, list) for p in pairs):
+                    for combo in pairs:
+                        for sym in combo:
+                            if isinstance(sym, str):
+                                symbols.add(sym)
+
+            corr_pairs = alert.get("correlation_pairs")
+            if isinstance(corr_pairs, list) and all(isinstance(cp, list) for cp in corr_pairs):
+                for combo in corr_pairs:
+                    for sym in combo:
+                        if isinstance(sym, str):
+                            symbols.add(sym)
+
+    return symbols
+
+
 @app.get("/health")
 def health():
     v = mt5.version()
@@ -429,6 +471,22 @@ async def create_heatmap_alert(
     """Create a new heatmap alert"""
     try:
         alert_data = alert_request.model_dump()
+        # Enforce global max unique pairs per user (3)
+        try:
+            await alert_cache._refresh_cache()
+        except Exception:
+            pass
+        existing = await _get_user_tracked_symbols(alert_request.user_email)
+        requested = set(alert_request.pairs or [])
+        total_after = len(existing.union(requested))
+        if total_after > 3:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Max tracked pairs per user is 3. Currently tracking {len(existing)}; "
+                    f"requested adds {len(requested - existing)} new. Remove some or reuse existing symbols."
+                )
+            )
         result = await heatmap_alert_service.create_heatmap_alert(alert_data)
         
         if result:
@@ -550,6 +608,22 @@ async def create_rsi_alert(
     try:
         # Convert request to dict
         alert_data = alert_request.dict()
+        # Enforce global max unique pairs per user (3)
+        try:
+            await alert_cache._refresh_cache()
+        except Exception:
+            pass
+        existing = await _get_user_tracked_symbols(alert_request.user_email)
+        requested = set(alert_request.pairs or [])
+        total_after = len(existing.union(requested))
+        if total_after > 3:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Max tracked pairs per user is 3. Currently tracking {len(existing)}; "
+                    f"requested adds {len(requested - existing)} new. Remove some or reuse existing symbols."
+                )
+            )
         
         # Create alert in Supabase
         result = await rsi_alert_service.create_rsi_alert(alert_data)
@@ -669,6 +743,27 @@ async def create_rsi_correlation_alert(
     try:
         # Convert request to dict
         alert_data = alert_request.dict()
+        # Enforce global max unique pairs per user (3)
+        try:
+            await alert_cache._refresh_cache()
+        except Exception:
+            pass
+        requested_syms = set()
+        for combo in (alert_request.pairs or []):
+            if isinstance(combo, list):
+                for sym in combo:
+                    if isinstance(sym, str):
+                        requested_syms.add(sym)
+        existing = await _get_user_tracked_symbols(alert_request.user_email)
+        total_after = len(existing.union(requested_syms))
+        if total_after > 3:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Max tracked pairs per user is 3. Currently tracking {len(existing)}; "
+                    f"requested adds {len(requested_syms - existing)} new. Remove some or reuse existing symbols."
+                )
+            )
         
         # Create alert in Supabase
         result = await rsi_correlation_alert_service.create_rsi_correlation_alert(alert_data)

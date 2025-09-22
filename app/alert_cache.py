@@ -155,7 +155,8 @@ class AlertCache:
                         "user_id": alert.get("user_id"),
                         "user_email": alert.get("user_email"),  # Add user_email for email notifications
                         "is_active": alert.get("is_active", True),
-                        "pairs": alert.get("pairs", []),
+                        # Normalize correlation pairs under the common "pairs" key for consistency
+                        "pairs": alert.get("correlation_pairs", alert.get("pairs", [])),
                         "timeframes": alert.get("timeframes", []),
                         "rsi_period": alert.get("rsi_period", 14),
                         "correlation_threshold": alert.get("correlation_threshold", 0.7),

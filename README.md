@@ -187,6 +187,16 @@ Internal alert tick_data shape:
 | `/api/rsi-correlation-alerts` | POST | Create RSI correlation alert | Yes |
 | `/api/rsi-correlation-alerts/user/{email}` | GET | Get user RSI correlation alerts | Yes |
 
+### Global Limit: Max 3 Pairs/User
+
+- The backend now enforces a global cap of 3 unique symbols per user across all active alerts (Heatmap, RSI, and RSI Correlation).
+- Enforcement occurs on alert creation endpoints:
+  - `POST /api/heatmap-alerts`
+  - `POST /api/rsi-alerts`
+  - `POST /api/rsi-correlation-alerts` (both symbols in each correlation pair are counted)
+- If adding an alert would exceed the limit, the API returns `400` with a clear message indicating current tracked count and requested additions.
+- Tip for UIs: call `GET /api/alerts/user/{user_id}` or the specific per-type list endpoints and compute the union of symbols to show remaining slots.
+
 ### 📰 News API Usage (External Source + Internal Endpoints)
 
 #### External Source: Jblanked (Forex Factory Calendar - Weekly)
