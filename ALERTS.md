@@ -178,7 +178,7 @@
 
 **Open Questions**
 - Minimum viable set of indicators for Type B in v1 (UTBOT+RSI+EMA?)
-- Specific TF weighting for styles (Scalper/Day/Swing) and source of Final Score.
+- RESOLVED — Specific TF weighting for styles (Scalper/Day/Swing) and source of Final Score. Implemented in `app/heatmap_alert_service.py` via `_style_tf_weights` and `_compute_final_score`; Buy Now % is `(Final Score + 100)/2`. See also README “Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)”.
 - Do we gate Type B by Buy Now % by default, and at what levels?
 
 **What Is Implemented Today (Quick References)**
