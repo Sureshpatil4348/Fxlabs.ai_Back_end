@@ -261,29 +261,6 @@ Notes
 | Correlation | RSI threshold + real correlation modes | match | Both modes implemented: RSI thresholds and real correlation computed from historical returns over a configurable window. |
 | Correlation | TF boundary evaluation + mismatch retriggers | match | Bar‑close evaluation supported; positive/negative mismatch triggers fire only on NEW mismatches and re‑arm after neutral break. |
 
-**Implementation Plan to Reach Parity**
-- Scheduling and state
-  - Add a bar‑aligned scheduler per TF. At each TF close, enqueue evaluations for all active alerts covering that TF (Type A/B/RSI/Correlation). Wire it into existing OHLC boundary logic in `server.py`.
-  - Persist per‑(alert, symbol, timeframe, indicator) evaluation state in DB: last_status, last_value, last_alert_ts (used today in memory), to improve durability across restarts.
-- Trigger logic
-  - Already implemented for RSI and flips. For Heatmap Type A, continue to refine Buy Now % inputs and style TF weights; keep “Only‑NEW (K=3)” and “1‑bar confirmation” consistent where applicable.
-- Cooldowns and rate limits
-  - Keep per‑(alert, symbol[, timeframe], direction/indicator) cooldowns; maintain user‑level hourly cap (5) and digest.
-- Delivery and content
-  - Implement Telegram bot integration and per‑user verification flow; batch API calls with backoff.
-  - Ensure consistent Title/Body/Footer across Email and Telegram; include IST time and “Open chart” deep‑link.
-- Safeguards
-  - Maintain warm‑up and stale‑bar protections; log skips for observability.
-- Data model
-  - Extend Supabase schemas to include: bar_policy, trigger_policy, only_new, min_alignment, style, cooldown_minutes, deliver_telegram, timezone, quiet hours; and alert_state tables for RSI/TypeB and TypeA.
-
-**Open Questions**
-- RESOLVED — Minimum viable set of indicators for Type B in v1. Implemented flip detectors: EMA(21/50/200), MACD, Ichimoku (Tenkan/Kijun), UTBOT with Only‑NEW K=3 and 1‑bar confirmation. See `app/heatmap_alert_service.py:389` (`_detect_indicator_flips`) and detection blocks around `app/heatmap_alert_service.py:401` (EMA), `app/heatmap_alert_service.py:417` (MACD), `app/heatmap_alert_service.py:451` (Ichimoku), `app/heatmap_alert_service.py:455` (UTBOT). RSI flips are not part of Type B; RSI crossings are handled by dedicated RSI alerts (`app/rsi_alert_service.py`).
-- RESOLVED — Specific TF weighting for styles (Scalper/Day/Swing) and source of Final Score. Implemented in `app/heatmap_alert_service.py` via `_style_tf_weights` and `_compute_final_score`; Buy Now % is `(Final Score + 100)/2`. See also README “Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)”.
-- RESOLVED — Gate Type B by Buy Now % is optional (off by default). When enabled, defaults are Buy ≥ 60 and Sell ≤ 40. See gating in `app/heatmap_alert_service.py:227` (toggle + defaults) and application in `app/heatmap_alert_service.py:241`.
-
-
-
 **Frontend/Supabase Follow-ups — Max Pairs/User (3)**
 - Frontend
   - Block creation UI when adding new symbols would exceed 3 total unique tracked symbols for the user.
