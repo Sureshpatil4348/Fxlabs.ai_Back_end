@@ -492,28 +492,63 @@ class RSICorrelationAlertService:
         return rsi
     
     async def _calculate_correlation(self, market_data1: Dict[str, Any], market_data2: Dict[str, Any], window: int = 50) -> Optional[float]:
-        """Calculate correlation between two symbols"""
-        
+        """Calculate Pearson correlation of returns over the last `window` bars using MT5 OHLC data.
+
+        Falls back to None if insufficient data is available.
+        """
         try:
-            # This is a simplified correlation calculation
-            # In a real system, you'd calculate actual correlation using historical data
-            
-            price1 = market_data1.get("close", 1.1000)
-            price2 = market_data2.get("close", 1.1000)
-            volume1 = market_data1.get("volume", 1000)
-            volume2 = market_data2.get("volume", 1000)
-            
-            # Simulate correlation calculation
-            # This is just for demonstration - real correlation needs historical price data
-            price_diff = abs(price1 - price2)
-            volume_ratio = min(volume1 / volume2, volume2 / volume1) if volume2 > 0 else 1
-            
-            # Simulate correlation based on price and volume similarity
-            correlation = 1.0 - (price_diff * 100) - (1 - volume_ratio) * 0.5
-            correlation = max(-1, min(1, correlation))  # Ensure -1 to 1 range
-            
-            return correlation
-            
+            symbol1 = market_data1.get("symbol")
+            symbol2 = market_data2.get("symbol")
+            timeframe = market_data1.get("timeframe")
+            if not symbol1 or not symbol2 or not timeframe:
+                return None
+
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as TF
+            tf_map = {"1M": TF.M1, "5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+            mtf = tf_map.get(timeframe)
+            if not mtf:
+                return None
+
+            # Need window+1 closes to compute window returns
+            count = max(window + 5, window + 1)
+            ohlc1 = get_ohlc_data(symbol1, mtf, count)
+            ohlc2 = get_ohlc_data(symbol2, mtf, count)
+            if not ohlc1 or not ohlc2:
+                return None
+
+            closes1 = [bar.close for bar in ohlc1][- (window + 1):]
+            closes2 = [bar.close for bar in ohlc2][- (window + 1):]
+            n = min(len(closes1), len(closes2))
+            if n < window + 1:
+                return None
+            closes1 = closes1[-n:]
+            closes2 = closes2[-n:]
+
+            # Compute simple returns
+            r1 = [(closes1[i] / closes1[i - 1] - 1.0) for i in range(1, len(closes1))]
+            r2 = [(closes2[i] / closes2[i - 1] - 1.0) for i in range(1, len(closes2))]
+            m = min(len(r1), len(r2), window)
+            if m < 2:
+                return None
+            r1 = r1[-m:]
+            r2 = r2[-m:]
+
+            # Pearson correlation
+            mean1 = sum(r1) / m
+            mean2 = sum(r2) / m
+            num = sum((a - mean1) * (b - mean2) for a, b in zip(r1, r2))
+            den1 = (sum((a - mean1) ** 2 for a in r1)) ** 0.5
+            den2 = (sum((b - mean2) ** 2 for b in r2)) ** 0.5
+            if den1 == 0 or den2 == 0:
+                return 0.0
+            corr = num / (den1 * den2)
+            # Clamp to [-1, 1]
+            if corr > 1:
+                corr = 1.0
+            if corr < -1:
+                corr = -1.0
+            return float(round(corr, 6))
         except Exception as e:
             logger.error(f"❌ Error calculating correlation: {e}")
             return None

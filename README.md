@@ -209,7 +209,14 @@ Internal alert tick_data shape:
 - Fallback: If historical RSI series is unavailable, the service falls back to in‑zone checks for continuity.
 - Bar policy: Default is bar‑close evaluation (checks once per closed bar). You can set `bar_policy` to `intrabar` to evaluate on ticks instead.
 - Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes). Override with `cooldown_minutes` on the alert.
- - Quiet hours + timezone: Suppresses alerts during the configured local quiet window using the alert's `timezone` (IANA name, default Asia/Kolkata) and `quiet_start_local`/`quiet_end_local` (HH:MM).
+- Quiet hours + timezone: Suppresses alerts during the configured local quiet window using the alert's `timezone` (IANA name, default Asia/Kolkata) and `quiet_start_local`/`quiet_end_local` (HH:MM).
+
+### RSI Correlation Alerts — Threshold and Real Correlation
+
+- Modes:
+  - RSI Threshold: evaluate pairwise RSI combinations (e.g., positive/negative mismatches, neutral break) using per‑pair RSI settings.
+  - Real Correlation: compute Pearson correlation of returns over a configurable `correlation_window` (default 50) using historical OHLC closes for both symbols.
+- Outputs include RSI values (threshold mode) or `correlation_value` (real correlation mode), with per‑pair details in emails.
 
 ### Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)
 
