@@ -181,16 +181,7 @@
 - RESOLVED — Specific TF weighting for styles (Scalper/Day/Swing) and source of Final Score. Implemented in `app/heatmap_alert_service.py` via `_style_tf_weights` and `_compute_final_score`; Buy Now % is `(Final Score + 100)/2`. See also README “Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)”.
 - RESOLVED — Gate Type B by Buy Now % is optional (off by default). When enabled, defaults are Buy ≥ 60 and Sell ≤ 40. See gating in `app/heatmap_alert_service.py:227` (toggle + defaults) and application in `app/heatmap_alert_service.py:241`.
 
-**What Is Implemented Today (Quick References)**
-- Email cooldown and value similarity: `app/email_service.py:31` (10m base) and RSI delta threshold 5.0; per‑user cap 5/hour with digest.
-- Alert invocation from tick loop: `_check_alerts_safely` `server.py:876`, tick loop `server.py:913`, background tasks `server.py:1000+`.
-- Heatmap alerts: style‑weighted Final Score → Buy Now %, hysteresis, min‑alignment, per‑pair cooldowns; Type B flips with Only‑NEW K=3 and 1‑bar confirmation; see `app/heatmap_alert_service.py` (e.g., `_detect_indicator_flips`).
-- RSI alerts: bar‑close gating + crossings with confirmation and hysteresis; Only‑NEW K=3; per (alert, symbol, timeframe, side) cooldown; quiet hours; see `app/rsi_alert_service.py` (e.g., `_get_last_closed_bar_ts`, `_detect_rsi_crossings_with_confirmation`).
-- RSI correlation alerts: threshold + real correlation modes; bar‑close gating, warm‑up/stale checks; see `app/rsi_correlation_alert_service.py`.
 
-**Parity Statement**
-- The majority of the spec is implemented: Email delivery with cooldown/rate‑limit/digest, style‑weighted Heatmap Type A with hysteresis/min‑alignment/cooldowns, Type B flips with Only‑NEW and confirmation, RSI crossings with 1‑bar confirmation + hysteresis + quiet hours, and RSI Correlation (threshold + real correlation) with bar‑close gating and concurrency.
-- Remaining gaps: a dedicated bar‑close scheduler that drives all alert evaluations (Heatmap still invoked from the tick loop), Telegram delivery channel, and persistence of alert evaluation state in DB for durability. These are tracked in the Implementation Plan above.
 
 **Frontend/Supabase Follow-ups — Max Pairs/User (3)**
 - Frontend
