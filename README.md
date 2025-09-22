@@ -32,6 +32,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Per-Pair Concurrency Cap**: Keyed async locks prevent concurrent evaluations for the same pair/timeframe across alert services
 - **Warm-up & Stale-Data Protection**: Skips evaluations when latest bar is stale (>2× timeframe) and enforces indicator lookback (e.g., RSI series) before triggering
 - **Rate Limits + Digest**: Caps alert emails to 5/hour per user; overflows are batched into a single digest email
+- **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers
 
 ## 🚀 Quick Start

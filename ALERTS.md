@@ -135,7 +135,7 @@
 | Global | Max pairs/user (3) | match | Prevents over‑subscription; enforced at creation across Heatmap/RSI/Correlation (counts unique symbols). |
 | Global | Delivery channels (Telegram) | mismatch | Email only; Telegram missing reduces delivery options. |
 | Global | Trigger style (RSI crossing + NEW + 1‑bar + hysteresis) | match | Higher signal quality; fallback to in‑zone only when RSI series unavailable. |
-| Global | Timezone formatting (IST) | mismatch | Emails use UTC; IST display not applied; potential confusion. |
+| Global | Timezone formatting (IST) | match | Emails display timestamps in Asia/Kolkata (IST) for clarity. |
 | Global | Rate limits + digests | match | Per‑user cap: 5 alert emails/hour; overflow is consolidated into a single digest email per hour. |
 | Global | Per‑pair concurrency cap | match | Keyed async locks prevent simultaneous evaluations for same pair×TF. |
 | Global | Warm‑up / stale‑data skip | match | Skips evaluations when bars are stale (>2× TF) and enforces indicator warm‑up (e.g., RSI lookback). |
@@ -269,6 +269,12 @@
   - Inform users that alert emails are capped at 5/hour per user; overflow is batched into a digest. Consider a UI badge indicating when a digest was sent.
 - Supabase/Backend
   - No DB changes needed. Server manages per-user rate limits and digest queues in memory.
+
+**Frontend/Supabase Follow-ups — Timezone (IST) Formatting**
+- Frontend
+  - None required. Emails display IST automatically. Optionally surface “All times in IST” in UI/notifications for consistency.
+- Supabase
+  - None.
 
 **Frontend/Supabase Follow-ups — Cooldown Policy**
 - Frontend
