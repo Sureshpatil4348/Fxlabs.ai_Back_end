@@ -21,6 +21,11 @@ class HeatmapAlertService:
         self.supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
         self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5YWp3aHRrd2xkcm1saGZpdXdnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjI5NjUzNCwiZXhwIjoyMDcxODcyNTM0fQ.UDqYHY5Io0o-fQTswCYQmMdC6UCPQI2gf3aTb9o09SE")
         self.last_triggered_alerts: Dict[str, datetime] = {}  # Track last trigger time per alert
+        # Hysteresis controls for Buy Now % (defaults mirror spec: 70/65, 30/35)
+        self.hysteresis_buy_margin = 5    # re‑arm BUY after dropping below (buy_min - margin)
+        self.hysteresis_sell_margin = 5   # re‑arm SELL after rising above (sell_max + margin)
+        # In‑memory per (alert_id, symbol) arming state
+        self._hysteresis_map: Dict[str, Dict[str, bool]] = {}
         
     async def check_heatmap_alerts(self, tick_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Check all heatmap alerts against current tick data"""
@@ -162,6 +167,18 @@ class HeatmapAlertService:
                     if signal == "SELL" and len(aligned_sell) < min_alignment:
                         signal = None
 
+                # Apply hysteresis gating (disable repeated triggers while in zone)
+                if signal:
+                    key = f"{alert_id}:{pair}"
+                    if not self._hysteresis_allow_and_update(
+                        key,
+                        current=buy_now_percent,
+                        buy_min=buy_threshold_min,
+                        sell_max=sell_threshold_max,
+                        direction=signal,
+                    ):
+                        signal = None
+
                 if signal:
                     triggered_pairs.append({
                         "symbol": pair,
@@ -175,6 +192,8 @@ class HeatmapAlertService:
                         "aligned_buy": aligned_buy,
                         "aligned_sell": aligned_sell,
                         "min_alignment": min_alignment,
+                        "hysteresis_buy_rearm": max(0, buy_threshold_min - self.hysteresis_buy_margin),
+                        "hysteresis_sell_rearm": min(100, sell_threshold_max + self.hysteresis_sell_margin),
                         "timeframe": "style-weighted",
                         "price": None,
                         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -199,6 +218,42 @@ class HeatmapAlertService:
         except Exception as e:
             logger.error(f"❌ Error checking single heatmap alert {alert.get('alert_name', 'Unknown')}: {e}")
             return None
+
+    def _hysteresis_allow_and_update(
+        self,
+        key: str,
+        current: float,
+        buy_min: int,
+        sell_max: int,
+        direction: str,
+    ) -> bool:
+        """Return True if trigger for direction is allowed by hysteresis; update state accordingly.
+
+        - After BUY trigger, disarm BUY; re‑arm when current <= (buy_min - margin).
+        - After SELL trigger, disarm SELL; re‑arm when current >= (sell_max + margin).
+        """
+        state = self._hysteresis_map.setdefault(key, {"armed_buy": True, "armed_sell": True})
+
+        # Re‑arm checks regardless of direction
+        buy_rearm = max(0, buy_min - self.hysteresis_buy_margin)
+        sell_rearm = min(100, sell_max + self.hysteresis_sell_margin)
+        if not state["armed_buy"] and current <= buy_rearm:
+            state["armed_buy"] = True
+        if not state["armed_sell"] and current >= sell_rearm:
+            state["armed_sell"] = True
+
+        if direction == "BUY":
+            if not state["armed_buy"]:
+                return False
+            # Disarm BUY on trigger
+            state["armed_buy"] = False
+            return True
+        else:  # SELL
+            if not state["armed_sell"]:
+                return False
+            # Disarm SELL on trigger
+            state["armed_sell"] = False
+            return True
 
     def _style_tf_weights(self, trading_style: str) -> Dict[str, float]:
         """Return default timeframe weights for a given trading style."""

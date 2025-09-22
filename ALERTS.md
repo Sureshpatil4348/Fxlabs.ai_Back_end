@@ -141,7 +141,7 @@
 | Global | Warm‑up / stale‑data skip | match | Skips evaluations when bars are stale (>2× TF) and enforces indicator warm‑up (e.g., RSI lookback). |
 | Type A (Heatmap) | Final Score / Buy Now % style weighting | match | Style‑weighted TF aggregation computes Final Score and Buy Now %; thresholds drive BUY/SELL. |
 | Type A (Heatmap) | Minimum alignment (N cells) | match | Requires at least N TFs aligned with direction thresholds before triggering. |
-| Type A (Heatmap) | Hysteresis (70/65, 30/35) | mismatch | No re‑arm thresholds; repeated triggers possible without additional guards. |
+| Type A (Heatmap) | Hysteresis (70/65, 30/35) | match | Re‑arm after leaving zone: BUY re‑arms below 65 (5 below buy_min), SELL re‑arms above 35 (5 above sell_max). |
 | Type A (Heatmap) | Cooldown policy | partial match | Frequency gating (once/hourly/daily) exists; lacks per‑pair crossing cooldown logic. |
 | Type B (Flip) | UTBOT/Ichimoku/MACD/EMA flips | mismatch | Regime‑flip logic not implemented; indicators partly simulated. |
 | Type B (Flip) | Only‑NEW (K=3) and 1‑bar confirmation | mismatch | Not enforced; risk of repeated/noisy alerts on persistent regime. |
@@ -232,3 +232,10 @@
   - Add a numeric control (off/0 to 5) for “Minimum aligned TF cells”. Informational helper: counts how many TFs currently align given thresholds.
 - Supabase
   - Add `min_alignment` (integer, nullable) to `heatmap_alerts`. Backend respects it when present; default is 0 (disabled).
+
+**Frontend/Supabase Follow-ups — Hysteresis (70/65, 30/35)**
+- Frontend
+  - Document that after a BUY trigger, another BUY will not fire until Buy Now % drops at least 5 points below buy_min (e.g., 70 → 65) and then crosses again; analogous for SELL (30 → 35).
+  - Optionally surface re‑arm thresholds in the alert detail.
+- Supabase
+  - No schema change required. Hysteresis is managed server‑side in memory per (alert, symbol). Optional: persist state later if durability is needed.
