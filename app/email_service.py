@@ -47,6 +47,13 @@ class EmailService:
                 logger.warning("⚠️ SendGrid library not installed. Email sending is disabled.")
             elif not self.sendgrid_api_key:
                 logger.warning("⚠️ SENDGRID_API_KEY not configured. Email sending is disabled.")
+
+        # Per-user rate limits + digest
+        self.user_rate_window_minutes = 60
+        self.user_rate_limit = 5
+        self.user_sends: Dict[str, List[datetime]] = {}
+        self.digest_buffers: Dict[str, List[Dict[str, Any]]] = {}
+        self.digest_last_sent: Dict[str, datetime] = {}
     
     def _generate_alert_hash(self, user_email: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], calculation_mode: str = None) -> str:
         """Generate a unique hash for similar alerts to implement value-based cooldown (supports all alert types)"""
@@ -243,6 +250,86 @@ class EmailService:
             for alert_hash, values in self.alert_values.items()
             if alert_hash in self.alert_cooldowns
         }
+
+    # ------------------ Rate limit + digest helpers ------------------
+    def _allow_user_send(self, user_email: str) -> bool:
+        now = datetime.now(timezone.utc)
+        window = timedelta(minutes=self.user_rate_window_minutes)
+        sends = [t for t in self.user_sends.get(user_email, []) if now - t < window]
+        if len(sends) >= self.user_rate_limit:
+            self.user_sends[user_email] = sends
+            return False
+        sends.append(now)
+        self.user_sends[user_email] = sends
+        return True
+
+    def _enqueue_digest(self, user_email: str, alert_type: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], alert_config: Dict[str, Any]) -> None:
+        buf = self.digest_buffers.setdefault(user_email, [])
+        buf.append({
+            "type": alert_type,
+            "alert": alert_name,
+            "pairs": triggered_pairs,
+            "config": alert_config,
+            "time": datetime.now(timezone.utc).isoformat(),
+        })
+
+    async def _maybe_send_digest(self, user_email: str) -> None:
+        now = datetime.now(timezone.utc)
+        last = self.digest_last_sent.get(user_email)
+        if last and (now - last) < timedelta(minutes=self.user_rate_window_minutes):
+            return
+        entries = self.digest_buffers.get(user_email, [])
+        if not entries:
+            return
+        subject = f"Alert Digest ({len(entries)} items)"
+        body = self._build_digest_body(entries)
+        from_email = Email(self.from_email, self.from_name)
+        to_email = To(user_email)
+        content = Content("text/html", body)
+        mail = Mail(from_email, to_email, subject, content)
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"📬 Sent digest email to {user_email} with {len(entries)} items")
+                self.digest_last_sent[user_email] = now
+                self.digest_buffers[user_email] = []
+        except Exception as e:
+            logger.error(f"❌ Failed to send digest email: {e}")
+
+    def _build_digest_body(self, entries: List[Dict[str, Any]]) -> str:
+        rows = ""
+        for e in entries:
+            etype = e.get("type", "Alert")
+            aname = e.get("alert", "Unnamed")
+            pairs = e.get("pairs", [])
+            rows += f"""
+            <tr style='border-bottom:1px solid #eee;'>
+                <td style='padding:8px 6px;'>{etype}</td>
+                <td style='padding:8px 6px;'>{aname}</td>
+                <td style='padding:8px 6px;'>{len(pairs)}</td>
+            </tr>
+            """
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        return f"""
+        <html><body style='font-family:Arial, sans-serif;'>
+        <h2 style='margin:0 0 10px 0;'>📬 Alert Digest</h2>
+        <p style='color:#555; margin:0 0 10px 0;'>Consolidated alerts due to rate limiting — {ts}</p>
+        <table style='width:100%; border-collapse:collapse;'>
+            <thead>
+                <tr style='background:#f0f2f5;'>
+                    <th style='text-align:left; padding:8px 6px;'>Type</th>
+                    <th style='text-align:left; padding:8px 6px;'>Alert</th>
+                    <th style='text-align:left; padding:8px 6px;'>Items</th>
+                </tr>
+            </thead>
+            <tbody>
+                {rows}
+            </tbody>
+        </table>
+        <p style='color:#999; font-size:12px; margin-top:10px;'>You are receiving a digest because the per-hour alert limit was exceeded.</p>
+        </body></html>
+        """
     
     async def send_heatmap_alert(
         self, 
@@ -255,6 +342,12 @@ class EmailService:
         
         if not self.sg:
             logger.warning("SendGrid not configured, skipping email")
+            return False
+        # Per-user rate limiting with overflow digest
+        if not self._allow_user_send(user_email):
+            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing to digest.")
+            self._enqueue_digest(user_email, "Heatmap", alert_name, triggered_pairs, alert_config)
+            await self._maybe_send_digest(user_email)
             return False
         
         # Check smart cooldown before sending
@@ -491,6 +584,12 @@ class EmailService:
         if not self.sg:
             logger.warning("⚠️ SendGrid not configured, skipping RSI alert email")
             return False
+        # Per-user rate limiting with overflow digest
+        if not self._allow_user_send(user_email):
+            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing RSI to digest.")
+            self._enqueue_digest(user_email, "RSI", alert_name, triggered_pairs, alert_config)
+            await self._maybe_send_digest(user_email)
+            return False
         
         # Check smart cooldown before sending
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
@@ -712,6 +811,12 @@ class EmailService:
         
         if not self.sg:
             logger.warning("SendGrid not configured, skipping RSI correlation alert email")
+            return False
+        # Per-user rate limiting with overflow digest
+        if not self._allow_user_send(user_email):
+            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing Correlation to digest.")
+            self._enqueue_digest(user_email, "Correlation", alert_name, triggered_pairs, alert_config)
+            await self._maybe_send_digest(user_email)
             return False
         
         # Check smart cooldown before sending

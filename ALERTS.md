@@ -136,7 +136,7 @@
 | Global | Delivery channels (Telegram) | mismatch | Email only; Telegram missing reduces delivery options. |
 | Global | Trigger style (RSI crossing + NEW + 1‑bar + hysteresis) | match | Higher signal quality; fallback to in‑zone only when RSI series unavailable. |
 | Global | Timezone formatting (IST) | mismatch | Emails use UTC; IST display not applied; potential confusion. |
-| Global | Rate limits + digests | mismatch | No per‑user/hour cap or digest; risk of noisy alerts; only test‑email cap exists. |
+| Global | Rate limits + digests | match | Per‑user cap: 5 alert emails/hour; overflow is consolidated into a single digest email per hour. |
 | Global | Per‑pair concurrency cap | match | Keyed async locks prevent simultaneous evaluations for same pair×TF. |
 | Global | Warm‑up / stale‑data skip | match | Skips evaluations when bars are stale (>2× TF) and enforces indicator warm‑up (e.g., RSI lookback). |
 | Type A (Heatmap) | Final Score / Buy Now % style weighting | match | Style‑weighted TF aggregation computes Final Score and Buy Now %; thresholds drive BUY/SELL. |
@@ -263,6 +263,12 @@
   - Add fields to RSI alert form: `timezone` (IANA name, default Asia/Kolkata), `quiet_start_local` and `quiet_end_local` (HH:MM). Show a preview of the quiet window in local time.
 - Supabase
   - Add `timezone` (text), `quiet_start_local` (text HH:MM), `quiet_end_local` (text HH:MM) to `rsi_alerts`. Backend now reads these fields and suppresses alerts during the configured window.
+
+**Frontend/Supabase Follow-ups — Rate Limits + Digest**
+- Frontend
+  - Inform users that alert emails are capped at 5/hour per user; overflow is batched into a digest. Consider a UI badge indicating when a digest was sent.
+- Supabase/Backend
+  - No DB changes needed. Server manages per-user rate limits and digest queues in memory.
 
 **Frontend/Supabase Follow-ups — Cooldown Policy**
 - Frontend
