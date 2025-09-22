@@ -31,6 +31,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Scalable Architecture**: Async/await design for high concurrency
 - **Per-Pair Concurrency Cap**: Keyed async locks prevent concurrent evaluations for the same pair/timeframe across alert services
 - **Warm-up & Stale-Data Protection**: Skips evaluations when latest bar is stale (>2× timeframe) and enforces indicator lookback (e.g., RSI series) before triggering
+- **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers
 
 ## 🚀 Quick Start
 
@@ -206,6 +207,18 @@ Internal alert tick_data shape:
 - 1‑bar confirmation: After crossing, require 1 additional closed bar still in the crossed zone before triggering.
 - Hysteresis re‑arm: Once an Overbought trigger fires, the alert re‑arms only after RSI falls below 65; for Oversold, re‑arm after RSI rises above 35.
 - Fallback: If historical RSI series is unavailable, the service falls back to in‑zone checks for continuity.
+
+### Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)
+
+- Per‑timeframe indicator strength is normalized to a score in [−100..+100].
+- Style weighting aggregates across the alert’s selected timeframes:
+  - Scalper: 1M(0.2), 5M(0.4), 15M(0.3), 30M(0.1)
+  - Day: 15M(0.2), 30M(0.35), 1H(0.35), 4H(0.1)
+  - Swing: 1H(0.25), 4H(0.45), 1D(0.3)
+- Final Score = weighted average of per‑TF scores; Buy Now % = (Final Score + 100)/2.
+- Triggers:
+  - BUY if Buy Now % ≥ `buy_threshold_min` (and ≤ `buy_threshold_max` when provided)
+  - SELL if Buy Now % ≤ `sell_threshold_max` (and ≥ `sell_threshold_min`)
 
 ### 📰 News API Usage (External Source + Internal Endpoints)
 

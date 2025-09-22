@@ -98,6 +98,7 @@ class HeatmapAlertService:
             triggered_pairs = []
             
             for pair in pairs:
+                tf_strengths = {}
                 for timeframe in timeframes:
                     key = f"{pair}:{timeframe}"
                     async with pair_locks.acquire(key):
@@ -111,13 +112,6 @@ class HeatmapAlertService:
                             logger.debug(f"⏭️ Stale data skipped for {pair} {timeframe}")
                             continue
 
-                        # Calculate indicators and strength
-                        strength_data = await self._calculate_indicators_strength(
-                            market_data, selected_indicators
-                        )
-                        if not strength_data:
-                            continue
-
                         # Warm-up: if RSI requested, ensure sufficient lookback bars exist
                         if any(ind.lower() == "rsi" for ind in selected_indicators):
                             has_warmup = await self._has_warmup_bars(pair, timeframe, 20)
@@ -125,23 +119,45 @@ class HeatmapAlertService:
                                 logger.debug(f"⏳ Warm-up insufficient for {pair} {timeframe} (need ≥20 bars)")
                                 continue
 
-                        # Check if strength meets alert criteria
-                        signal = self._determine_signal(
-                            strength_data,
-                            buy_threshold_min, buy_threshold_max,
-                            sell_threshold_min, sell_threshold_max
+                        # Calculate indicators and strength
+                        strength_data = await self._calculate_indicators_strength(
+                            market_data, selected_indicators
                         )
+                        if not strength_data:
+                            continue
+                        tf_strengths[timeframe] = strength_data.get("overall_strength", 50)
 
-                        if signal:
-                            triggered_pairs.append({
-                                "symbol": pair,
-                                "timeframe": timeframe,
-                                "strength": strength_data.get("overall_strength", 0),
-                                "signal": signal,
-                                "indicators": strength_data.get("indicators", {}),
-                                "price": market_data.get("close", 0),
-                                "timestamp": datetime.now(timezone.utc).isoformat()
-                            })
+                # Aggregate across timeframes using style weights
+                if not tf_strengths:
+                    continue
+
+                trading_style = (alert.get("trading_style") or alert.get("style") or "dayTrader").lower()
+                style_weights = self._style_tf_weights(trading_style)
+                final_score = self._compute_final_score(tf_strengths, style_weights)
+                buy_now_percent = round((final_score + 100) / 2, 2)
+
+                signal = self._determine_style_signal(
+                    buy_now_percent,
+                    buy_threshold_min,
+                    buy_threshold_max,
+                    sell_threshold_min,
+                    sell_threshold_max,
+                )
+
+                if signal:
+                    triggered_pairs.append({
+                        "symbol": pair,
+                        "timeframes": list(tf_strengths.keys()),
+                        "final_score": round(final_score, 2),
+                        "buy_now_percent": buy_now_percent,
+                        "trigger_score": buy_now_percent,
+                        "strength": buy_now_percent,  # legacy field for email summaries
+                        "signal": signal,
+                        "style": trading_style,
+                        "timeframe": "style-weighted",
+                        "price": None,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
             
             # If we have triggered pairs, return the alert trigger
             if triggered_pairs:
@@ -162,6 +178,48 @@ class HeatmapAlertService:
         except Exception as e:
             logger.error(f"❌ Error checking single heatmap alert {alert.get('alert_name', 'Unknown')}: {e}")
             return None
+
+    def _style_tf_weights(self, trading_style: str) -> Dict[str, float]:
+        """Return default timeframe weights for a given trading style."""
+        s = trading_style.lower()
+        if s in ("scalper", "scalp", "scalping"):
+            return {"1M": 0.2, "5M": 0.4, "15M": 0.3, "30M": 0.1}
+        if s in ("swing", "swingtrader", "swing_trader"):
+            return {"1H": 0.25, "4H": 0.45, "1D": 0.30}
+        # default: day trader
+        return {"15M": 0.2, "30M": 0.35, "1H": 0.35, "4H": 0.10}
+
+    def _compute_final_score(self, tf_strengths: Dict[str, float], weights: Dict[str, float]) -> float:
+        """Compute style-weighted Final Score in [-100, 100] from per‑TF strengths [0..100]."""
+        # Convert strengths (0..100) -> scores (-100..100)
+        scored = {tf: (val - 50.0) * 2.0 for tf, val in tf_strengths.items()}
+        # Use weights for provided TFs; fallback to uniform over provided TFs if no overlap
+        active = {tf: w for tf, w in weights.items() if tf in scored}
+        if not active:
+            w = 1.0 / max(len(scored), 1)
+            return sum(score * w for score in scored.values())
+        total_w = sum(active.values()) or 1.0
+        return sum(scored[tf] * (w / total_w) for tf, w in active.items())
+
+    def _determine_style_signal(
+        self,
+        buy_now_percent: float,
+        buy_min: int,
+        buy_max: int,
+        sell_min: int,
+        sell_max: int,
+    ) -> Optional[str]:
+        """Decide BUY/SELL from Buy Now % thresholds.
+
+        BUY if ≥ buy_min (and ≤ buy_max when provided), SELL if ≤ sell_max (and ≥ sell_min).
+        """
+        # BUY path
+        if buy_now_percent >= buy_min and (buy_max is None or buy_now_percent <= buy_max):
+            return "BUY"
+        # SELL path
+        if buy_now_percent <= sell_max and buy_now_percent >= sell_min:
+            return "SELL"
+        return None
 
     def _tf_seconds(self, timeframe: str) -> int:
         mapping = {

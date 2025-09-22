@@ -139,7 +139,7 @@
 | Global | Rate limits + digests | mismatch | No per‑user/hour cap or digest; risk of noisy alerts; only test‑email cap exists. |
 | Global | Per‑pair concurrency cap | match | Keyed async locks prevent simultaneous evaluations for same pair×TF. |
 | Global | Warm‑up / stale‑data skip | match | Skips evaluations when bars are stale (>2× TF) and enforces indicator warm‑up (e.g., RSI lookback). |
-| Type A (Heatmap) | Final Score / Buy Now % style weighting | mismatch | Style‑aware weighting not implemented; current strength is simplified. |
+| Type A (Heatmap) | Final Score / Buy Now % style weighting | match | Style‑weighted TF aggregation computes Final Score and Buy Now %; thresholds drive BUY/SELL. |
 | Type A (Heatmap) | Minimum alignment (N cells) | mismatch | Can’t require N aligned TF cells; may raise false positives. |
 | Type A (Heatmap) | Hysteresis (70/65, 30/35) | mismatch | No re‑arm thresholds; repeated triggers possible without additional guards. |
 | Type A (Heatmap) | Cooldown policy | partial match | Frequency gating (once/hourly/daily) exists; lacks per‑pair crossing cooldown logic. |
@@ -218,3 +218,11 @@
   - No changes required; behavior is server-side. Optionally surface warnings in UI when alerts are skipped due to warm‑up or stale data to improve user understanding.
 - Supabase/Backend
   - None required. Backend skips evaluations if latest bar age exceeds 2× timeframe or if required lookback isn’t met (e.g., RSI needs recent series). Consider telemetry logging table if future reporting is desired.
+
+**Frontend/Supabase Follow-ups — Style‑Weighted Buy Now %**
+- Frontend
+  - Expose trading style (Scalper/Day/Swing) selection and explain TF emphasis.
+  - Display Buy Now % and Final Score in alert lists and emails; show which TFs contributed.
+  - Optionally allow custom TF weights per alert (advanced).
+- Supabase
+  - No immediate schema changes needed (uses existing `trading_style`). Optional future fields: `style_weights_override` for per‑alert customization.
