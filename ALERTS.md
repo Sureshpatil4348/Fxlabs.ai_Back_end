@@ -25,11 +25,13 @@
       add column if not exists gate_buy_min numeric(5,2) default 60.00,
       add column if not exists gate_sell_max numeric(5,2) default 40.00,
       add column if not exists trading_style text default 'day' check (trading_style in ('scalper','day','swing')),
+      add column if not exists is_active boolean not null default true,
       add column if not exists style_weights_override jsonb;
 
     -- Helpful indexes
     create index if not exists idx_heatmap_alerts_user_email on public.heatmap_alerts (user_email);
-    create index if not exists idx_heatmap_alerts_active on public.heatmap_alerts ((coalesce((data->>'is_active')::boolean, true)));
+    -- Recommended: index the top-level boolean column (no JSON expression)
+    create index concurrently if not exists idx_heatmap_alerts_is_active on public.heatmap_alerts (is_active);
     ```
   - RSI (`rsi_alerts`):
     ```sql
