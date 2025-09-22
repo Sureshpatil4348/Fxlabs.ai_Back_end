@@ -148,7 +148,7 @@
 | Type B (Flip) | Gate by Buy Now % | match | Optional gate enabled: flips require Buy Now % ≥ buy_min (BUY) or ≤ sell_max (SELL); defaults 60/40. |
 | RSI OB/OS | Crossing vs in‑zone | match | Crossing with 1‑bar confirmation and hysteresis implemented; better parity with spec. |
 | RSI OB/OS | Bar‑close vs intrabar evaluation | match | Supports bar policy: default bar‑close (evaluates once per closed bar) or intrabar (on ticks) with debounce. |
-| RSI OB/OS | Cooldown model | partial match | 5‑minute per‑alert cooldown present; lacks per (pair, TF) stateful re‑arm beyond hysteresis. |
+| RSI OB/OS | Cooldown model | match | Per (alert, symbol, timeframe, side) cooldown enforced; default 30m, overridable via `cooldown_minutes`. |
 | RSI OB/OS | Quiet hours / timezone | mismatch | No quiet‑hours or local timezone delivery window. |
 | Correlation | RSI threshold + real correlation modes | partial match | Both modes exist; still tick‑driven and frequency‑gated. |
 | Correlation | TF boundary evaluation + mismatch retriggers | mismatch | No bar‑aligned checks or explicit retrigger rules on mismatches. |
@@ -251,6 +251,12 @@
   - Add a selector for `bar_policy`: Close (default) or Intrabar to the RSI alert form. Tooltip: Close evaluates once per closed bar; Intrabar evaluates on ticks.
 - Supabase
   - Add `bar_policy` (text: 'close'|'intrabar') to `rsi_alerts`. Backend defaults to 'close' when absent.
+
+**Frontend/Supabase Follow-ups — RSI Cooldown Model**
+- Frontend
+  - Add `cooldown_minutes` (default 30) to RSI alert form. Clarify that it applies per symbol and timeframe, separately for overbought vs oversold.
+- Supabase
+  - Add `cooldown_minutes` (integer, nullable) to `rsi_alerts`. Backend reads it; otherwise uses 30 minutes.
 
 **Frontend/Supabase Follow-ups — Cooldown Policy**
 - Frontend

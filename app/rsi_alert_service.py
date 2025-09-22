@@ -33,6 +33,9 @@ class RSIAlertService:
         self._hysteresis_map: Dict[str, Dict[str, bool]] = {}
         # Track last evaluated closed bar per (symbol, timeframe) for bar-close policy
         self._last_closed_bar_ts: Dict[str, int] = {}
+        # Per (alert, symbol, timeframe, side) cooldown (minutes)
+        self.pair_cooldown_minutes_default = 30
+        self._pair_cooldowns: Dict[str, datetime] = {}
     
     def _should_trigger_alert(self, alert_id: str, cooldown_seconds: int = None) -> bool:
         """Check if alert should be triggered based on cooldown period"""
@@ -69,10 +72,6 @@ class RSIAlertService:
                             logger.warning(f"⚠️ Alert {alert_name} has no ID, skipping")
                             continue
                         
-                        # Check if this alert should be triggered based on cooldown
-                        if not self._should_trigger_alert(alert_id):
-                            continue
-                        
                         # Check if this alert should be triggered
                         trigger_result = await self._check_single_rsi_alert(alert, tick_data)
                         
@@ -81,9 +80,6 @@ class RSIAlertService:
                             logger.info(f"   Triggered pairs: {len(trigger_result.get('triggered_pairs', []))}")
                             
                             triggered_alerts.append(trigger_result)
-                            
-                            # Update last triggered time
-                            self.last_triggered_alerts[alert_id] = datetime.now(timezone.utc)
                             
                             # Send email notification if configured
                             if "email" in alert.get("notification_methods", []):
@@ -210,6 +206,14 @@ class RSIAlertService:
                             logger.info(f"🚨 CONDITION MATCHED: {symbol} {timeframe} - {trigger_condition}")
                             rfi_display = f"{rfi_score:.3f}" if rfi_score is not None else "N/A"
                             logger.info(f"   RSI: {rsi_value:.2f}, RFI: {rfi_display}")
+
+                            # Enforce per (alert, symbol, timeframe, side) cooldown
+                            side = "overbought" if "overbought" in trigger_condition else (
+                                "oversold" if "oversold" in trigger_condition else "neutral"
+                            )
+                            if side != "neutral" and not self._allow_by_pair_cooldown(alert, alert_id, symbol, timeframe, side):
+                                logger.debug(f"⏳ Cooldown active for {symbol} {timeframe} {side}, skipping")
+                                continue
 
                             triggered_pairs.append({
                                 "symbol": symbol,

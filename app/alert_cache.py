@@ -143,6 +143,8 @@ class AlertCache:
                         "rfi_moderate_threshold": alert.get("rfi_moderate_threshold", 0.60),
                         # Bar timing policy: "close" (default) or "intrabar"
                         "bar_policy": alert.get("bar_policy", "close"),
+                        # Per (pair, timeframe, side) cooldown minutes (default 30)
+                        "cooldown_minutes": alert.get("cooldown_minutes"),
                         "notification_methods": alert.get("notification_methods", ["browser"]),
                         "alert_frequency": alert.get("alert_frequency", "once"),
                         "trigger_on_crossing": alert.get("trigger_on_crossing", True),

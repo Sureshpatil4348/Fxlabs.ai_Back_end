@@ -208,6 +208,7 @@ Internal alert tick_data shape:
 - Hysteresis re‑arm: Once an Overbought trigger fires, the alert re‑arms only after RSI falls below 65; for Oversold, re‑arm after RSI rises above 35.
 - Fallback: If historical RSI series is unavailable, the service falls back to in‑zone checks for continuity.
 - Bar policy: Default is bar‑close evaluation (checks once per closed bar). You can set `bar_policy` to `intrabar` to evaluate on ticks instead.
+ - Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes). Override with `cooldown_minutes` on the alert.
 
 ### Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)
 
