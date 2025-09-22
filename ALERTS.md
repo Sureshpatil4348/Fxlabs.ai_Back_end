@@ -142,7 +142,7 @@
 | Type A (Heatmap) | Final Score / Buy Now % style weighting | match | Style‑weighted TF aggregation computes Final Score and Buy Now %; thresholds drive BUY/SELL. |
 | Type A (Heatmap) | Minimum alignment (N cells) | match | Requires at least N TFs aligned with direction thresholds before triggering. |
 | Type A (Heatmap) | Hysteresis (70/65, 30/35) | match | Re‑arm after leaving zone: BUY re‑arms below 65 (5 below buy_min), SELL re‑arms above 35 (5 above sell_max). |
-| Type A (Heatmap) | Cooldown policy | partial match | Frequency gating (once/hourly/daily) exists; lacks per‑pair crossing cooldown logic. |
+| Type A (Heatmap) | Cooldown policy | match | Per (alert, symbol, direction) cooldown enforced; default 30m, overridable per alert via `cooldown_minutes`. |
 | Type B (Flip) | UTBOT/Ichimoku/MACD/EMA flips | mismatch | Regime‑flip logic not implemented; indicators partly simulated. |
 | Type B (Flip) | Only‑NEW (K=3) and 1‑bar confirmation | mismatch | Not enforced; risk of repeated/noisy alerts on persistent regime. |
 | Type B (Flip) | Gate by Buy Now % | mismatch | Not implemented; cannot restrict flips by style strength. |
@@ -239,3 +239,9 @@
   - Optionally surface re‑arm thresholds in the alert detail.
 - Supabase
   - No schema change required. Hysteresis is managed server‑side in memory per (alert, symbol). Optional: persist state later if durability is needed.
+
+**Frontend/Supabase Follow-ups — Cooldown Policy**
+- Frontend
+  - Provide a numeric input for `cooldown_minutes` (default 30) in Heatmap alert form; clarify that it applies per symbol and direction.
+- Supabase
+  - Add `cooldown_minutes` (integer, nullable) to `heatmap_alerts`. Backend reads and applies if present; otherwise defaults to 30 minutes.

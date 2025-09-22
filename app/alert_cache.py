@@ -104,6 +104,7 @@ class AlertCache:
                         "selected_indicators": alert.get("selected_indicators", []),
                         "trading_style": alert.get("trading_style", "dayTrader"),
                         "min_alignment": alert.get("min_alignment"),
+                        "cooldown_minutes": alert.get("cooldown_minutes"),
                         "buy_threshold_min": alert.get("buy_threshold_min", 70),
                         "buy_threshold_max": alert.get("buy_threshold_max", 100),
                         "sell_threshold_min": alert.get("sell_threshold_min", 0),

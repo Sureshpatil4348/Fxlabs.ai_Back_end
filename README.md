@@ -220,6 +220,7 @@ Internal alert tick_data shape:
   - BUY if Buy Now % ≥ `buy_threshold_min` (and ≤ `buy_threshold_max` when provided)
   - SELL if Buy Now % ≤ `sell_threshold_max` (and ≥ `sell_threshold_min`)
  - Optional Minimum Alignment (N cells): require at least N timeframes to align with the chosen direction (TF strength ≥ buy_min for BUY, ≤ sell_max for SELL).
+ - Cooldown: Per (alert, symbol, direction) cooldown window (default 30 minutes). You can override via `cooldown_minutes` on the alert.
 
 ### 📰 News API Usage (External Source + Internal Endpoints)
 

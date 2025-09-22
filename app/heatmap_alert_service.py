@@ -26,6 +26,9 @@ class HeatmapAlertService:
         self.hysteresis_sell_margin = 5   # re‑arm SELL after rising above (sell_max + margin)
         # In‑memory per (alert_id, symbol) arming state
         self._hysteresis_map: Dict[str, Dict[str, bool]] = {}
+        # Per (alert, symbol, direction) cooldown map
+        self.pair_cooldown_minutes_default = 30
+        self._pair_cooldowns: Dict[str, datetime] = {}
         
     async def check_heatmap_alerts(self, tick_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Check all heatmap alerts against current tick data"""
@@ -179,6 +182,11 @@ class HeatmapAlertService:
                     ):
                         signal = None
 
+                # Per-pair cooldown (per direction)
+                if signal:
+                    if not self._allow_by_pair_cooldown(alert, alert_id, pair, signal):
+                        signal = None
+
                 if signal:
                     triggered_pairs.append({
                         "symbol": pair,
@@ -254,6 +262,28 @@ class HeatmapAlertService:
             # Disarm SELL on trigger
             state["armed_sell"] = False
             return True
+
+    def _allow_by_pair_cooldown(self, alert: Dict[str, Any], alert_id: str, symbol: str, direction: str) -> bool:
+        """Check/update per (alert, symbol, direction) cooldown window.
+
+        Returns True if allowed to trigger now; updates last time on allow.
+        """
+        try:
+            cd_min = alert.get("cooldown_minutes")
+            cooldown_minutes = int(cd_min) if cd_min is not None else self.pair_cooldown_minutes_default
+        except Exception:
+            cooldown_minutes = self.pair_cooldown_minutes_default
+
+        key = f"{alert_id}:{symbol}:{direction}"
+        now = datetime.now(timezone.utc)
+        last = self._pair_cooldowns.get(key)
+        if last is not None:
+            delta = (now - last).total_seconds() / 60.0
+            if delta < cooldown_minutes:
+                return False
+        # Allowed -> update last
+        self._pair_cooldowns[key] = now
+        return True
 
     def _style_tf_weights(self, trading_style: str) -> Dict[str, float]:
         """Return default timeframe weights for a given trading style."""
