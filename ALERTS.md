@@ -177,9 +177,9 @@
   - Extend Supabase schemas to include: bar_policy, trigger_policy, only_new, min_alignment, style, cooldown_minutes, deliver_telegram, timezone, quiet hours; and alert_state tables for RSI/TypeB and TypeA.
 
 **Open Questions**
-- Minimum viable set of indicators for Type B in v1 (UTBOT+RSI+EMA?)
+- RESOLVED — Minimum viable set of indicators for Type B in v1. Implemented flip detectors: EMA(21/50/200), MACD, Ichimoku (Tenkan/Kijun), UTBOT with Only‑NEW K=3 and 1‑bar confirmation. See `app/heatmap_alert_service.py:389` (`_detect_indicator_flips`) and detection blocks around `app/heatmap_alert_service.py:401` (EMA), `app/heatmap_alert_service.py:417` (MACD), `app/heatmap_alert_service.py:451` (Ichimoku), `app/heatmap_alert_service.py:455` (UTBOT). RSI flips are not part of Type B; RSI crossings are handled by dedicated RSI alerts (`app/rsi_alert_service.py`).
 - RESOLVED — Specific TF weighting for styles (Scalper/Day/Swing) and source of Final Score. Implemented in `app/heatmap_alert_service.py` via `_style_tf_weights` and `_compute_final_score`; Buy Now % is `(Final Score + 100)/2`. See also README “Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)”.
-- Do we gate Type B by Buy Now % by default, and at what levels?
+- RESOLVED — Gate Type B by Buy Now % is optional (off by default). When enabled, defaults are Buy ≥ 60 and Sell ≤ 40. See gating in `app/heatmap_alert_service.py:227` (toggle + defaults) and application in `app/heatmap_alert_service.py:241`.
 
 **What Is Implemented Today (Quick References)**
 - Email cooldown and value similarity: `app/email_service.py:31` (10m base) and RSI delta threshold 5.0; per‑user cap 5/hour with digest.
