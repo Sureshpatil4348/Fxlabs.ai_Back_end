@@ -681,7 +681,7 @@ For support and questions:
 ---
 
 **Version**: 2.0.0  
-**Last Updated**: December 2024  
+**Last Updated**: September 2025  
 **Compatibility**: Python 3.8+, MT5 Python API, FastAPI 0.100+
 
 ## 🛠️ Troubleshooting
@@ -751,3 +751,32 @@ $env:VIRTUAL_ENV
 python -c "import sys; print(sys.executable)"
 ```
 It should point to your project's `.venv` path. If not, re-run activation and reinstall requirements.
+
+### "Delivered in SendGrid, but no email in inbox"
+- Check Spam/Junk, Promotions/Updates/All Mail, and any mailbox filters that might skip the inbox or auto-archive.
+- Verify SendGrid Email Activity: ensure there is a "delivered" event (250 OK). Open the event to view the SMTP response and message identifiers.
+- Confirm the recipient mailbox actually exists: send a plain-text test from another account to the same address (e.g., `test@asoasis.tech`) and see if it bounces.
+- If using Google Workspace: in Admin Console, use Email Log Search for the recipient/time or Message-ID to see if it was quarantined, routed, or marked spam; release if needed.
+- If using Cloudflare Email Routing or any forwarder: verify the route exists, forwarding target is valid, and check routing logs for acceptance/drops.
+- Authenticate your From domain in SendGrid:
+  - Complete Domain Authentication (CNAMEs) and send from an aligned subdomain (e.g., `alerts@alerts.fxlabs.ai`).
+  - Ensure SPF includes `include:sendgrid.net`, DKIM passes, and set DMARC to `p=none` during testing; move to `quarantine`/`reject` after validation.
+- Reduce spam likelihood: include both `text/plain` and `text/html` parts, avoid URL shorteners, keep images minimal, and use a consistent `FROM_EMAIL` that matches your authenticated domain.
+- Check suppression lists anyway: make sure the recipient isn’t present under Bounces/Blocks/Spam Reports; remove if found, then resend.
+- Confirm SendGrid Sandbox Mode is OFF under Mail Settings. Sandbox disables actual delivery even if the API returns 2xx.
+- A/B test: send the same message to a known Gmail/Outlook inbox to isolate whether the issue is at the sender or recipient domain.
+- Optional (code): call `_add_transactional_headers(mail)` before sending to add transactional headers like `List-Unsubscribe` and a category, which can improve inboxing.
+
+What to collect for escalation: UTC timestamp, recipient, subject, SendGrid Message ID/X-Message-Id, SMTP 250 response line, and the receiving MTA hostname (e.g., `gmail-smtp-in.l.google.com`).
+
+### Code-Side Deliverability Hardening
+- Dual-part emails: The backend now sends both `text/plain` and `text/html` bodies for all alert emails. Many receivers score plain-text positively.
+- Transactional headers: Adds `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, a consistent `X-Mailer`, and a category header to help mailbox classification.
+- Disable tracking: Click- and open-tracking are disabled on alert emails to avoid link rewriting and tracking pixels that can push messages to Promotions/Spam.
+- Stable reference ID: Adds an `X-Entity-Ref-ID` derived from the alert to aid thread detection and support.
+- Consistent Reply-To: Sets `Reply-To` to the sender for consistent header presence.
+
+Operational notes:
+- Keep `FROM_EMAIL` on your authenticated domain/subdomain (e.g., alerts@alerts.fxlabs.ai).
+- Avoid URL shorteners and excessive links in alert content.
+- DMARC alignment: after verifying inboxing, move DMARC policy from `p=none` to `quarantine`/`reject` gradually.

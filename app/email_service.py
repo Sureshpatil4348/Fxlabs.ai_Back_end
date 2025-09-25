@@ -6,10 +6,19 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 try:
     from sendgrid import SendGridAPIClient
-    from sendgrid.helpers.mail import Mail, Email, To, Content
+    from sendgrid.helpers.mail import (
+        Mail,
+        Email,
+        To,
+        Content,
+        TrackingSettings,
+        ClickTracking,
+        OpenTracking,
+    )
 except Exception:  # Module may be missing in some environments
     SendGridAPIClient = None
     Mail = Email = To = Content = None
+    TrackingSettings = ClickTracking = OpenTracking = None
 import logging
 
 # Configure logging
@@ -171,12 +180,128 @@ class EmailService:
     
     def _add_transactional_headers(self, mail: Mail, category: str = "fx-labs-alerts"):
         """Add transactional email headers to avoid spam filters"""
-        # Use SendGrid's proper way to mark as transactional
-        mail.add_header("X-SMTPAPI", f'{{"category": ["{category}"]}}')
-        mail.add_header("X-Mailer", "FX Labs Alert System")
-        # Add unsubscribe header for transactional emails
-        mail.add_header("List-Unsubscribe", "<mailto:unsubscribe@fxlabs.ai>")
+        # Category header (older X-SMTPAPI style is acceptable and harmless when ignored)
+        try:
+            mail.add_header("X-SMTPAPI", f'{{"category": ["{category}"]}}')
+        except Exception:
+            pass
+        # Friendly mailer id
+        try:
+            mail.add_header("X-Mailer", "FX Labs Alert System")
+        except Exception:
+            pass
+        # List-Unsubscribe for better inboxing and one-click UX
+        try:
+            mail.add_header("List-Unsubscribe", "<mailto:unsubscribe@fxlabs.ai>")
+            mail.add_header("List-Unsubscribe-Post", "List-Unsubscribe=One-Click")
+        except Exception:
+            pass
         return mail
+
+    def _disable_tracking(self, mail: Mail) -> None:
+        """Disable click/open tracking to avoid link rewriting and tracking pixel (can hurt inboxing)."""
+        try:
+            if TrackingSettings and ClickTracking and OpenTracking:
+                ts = TrackingSettings()
+                ts.click_tracking = ClickTracking(False, False)
+                ts.open_tracking = OpenTracking(False)
+                mail.tracking_settings = ts
+        except Exception:
+            # Best-effort only
+            pass
+
+    def _build_mail(
+        self,
+        subject: str,
+        to_email_addr: str,
+        html_body: str,
+        text_body: str,
+        category: str,
+        ref_id: Optional[str] = None,
+    ) -> Mail:
+        """Create a Mail with text+html, transactional headers, and tracking disabled."""
+        from_email = Email(self.from_email, self.from_name)
+        to_email = To(to_email_addr)
+        mail = Mail(from_email, to_email, subject)
+        # Add text first, then HTML per MIME best practices
+        try:
+            mail.add_content(Content("text/plain", text_body or ""))
+        except Exception:
+            pass
+        try:
+            mail.add_content(Content("text/html", html_body or ""))
+        except Exception:
+            pass
+        # Optional reply-to mirrors from address
+        try:
+            mail.reply_to = Email(self.from_email, self.from_name)
+        except Exception:
+            pass
+        # Add headers and tracking settings
+        self._add_transactional_headers(mail, category=category)
+        self._disable_tracking(mail)
+        # Add a stable reference id for threading/diagnostics
+        if ref_id:
+            try:
+                mail.add_header("X-Entity-Ref-ID", ref_id)
+            except Exception:
+                pass
+        return mail
+
+    def _build_plain_text_rsi(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
+        lines = [
+            f"RSI Alert - {alert_name}",
+            f"Pairs: {len(pairs)}",
+        ]
+        ob = cfg.get("rsi_overbought_threshold", 70)
+        os_ = cfg.get("rsi_oversold_threshold", 30)
+        lines.append(f"OB>={ob} OS<={os_}")
+        for p in pairs:
+            sym = p.get("symbol", "?")
+            rsi = p.get("rsi", p.get("rsi_value", "?"))
+            price = p.get("current_price", "?")
+            chg = p.get("price_change_percent", "?")
+            lines.append(f"- {sym}: RSI {rsi}, Px {price}, Chg {chg}%")
+        return "\n".join(lines)
+
+    def _build_plain_text_heatmap(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
+        lines = [
+            f"Heatmap Alert - {alert_name}",
+            f"Pairs: {len(pairs)}",
+        ]
+        for p in pairs:
+            sym = p.get("symbol", "?")
+            strength = p.get("strength", "?")
+            signal = p.get("signal", "?")
+            tf = p.get("timeframe", "?")
+            lines.append(f"- {sym} [{tf}]: {signal} {strength}%")
+        return "\n".join(lines)
+
+    def _build_plain_text_corr(
+        self,
+        alert_name: str,
+        mode: str,
+        pairs: List[Dict[str, Any]],
+        cfg: Dict[str, Any],
+    ) -> str:
+        lines = [
+            f"Correlation Alert - {alert_name}",
+            f"Mode: {mode}",
+            f"Pairs: {len(pairs)}",
+        ]
+        for p in pairs:
+            s1 = p.get("symbol1", "?")
+            s2 = p.get("symbol2", "?")
+            tf = p.get("timeframe", "?")
+            cond = p.get("trigger_condition", "?")
+            if mode == "rsi_threshold":
+                r1 = p.get("rsi1", p.get("rsi1_value", "?"))
+                r2 = p.get("rsi2", p.get("rsi2_value", "?"))
+                lines.append(f"- {s1}/{s2} [{tf}]: {cond} RSI1 {r1} RSI2 {r2}")
+            else:
+                corr = p.get("correlation_value", "?")
+                lines.append(f"- {s1}/{s2} [{tf}]: {cond} Corr {corr}")
+        return "\n".join(lines)
 
     def _safe_float_conversion(self, value: Any) -> Optional[float]:
         """Safely convert value to float with fallback for unparsable values"""
@@ -398,10 +523,22 @@ class EmailService:
             return
         subject = f"Alert Digest ({len(entries)} items)"
         body = self._build_digest_body(entries)
-        from_email = Email(self.from_email, self.from_name)
-        to_email = To(user_email)
-        content = Content("text/html", body)
-        mail = Mail(from_email, to_email, subject, content)
+        # Build a simple text digest
+        lines = [subject]
+        for e in entries:
+            etype = e.get("type", "Alert")
+            aname = e.get("alert", "Unnamed")
+            pairs = e.get("pairs", [])
+            lines.append(f"- {etype}: {aname} ({len(pairs)} items)")
+        text = "\n".join(lines)
+        mail = self._build_mail(
+            subject=subject,
+            to_email_addr=user_email,
+            html_body=body,
+            text_body=text,
+            category="digest",
+            ref_id=hashlib.sha1((user_email + subject).encode()).hexdigest()[:24]
+        )
         try:
             loop = asyncio.get_event_loop()
             response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
@@ -484,19 +621,20 @@ class EmailService:
                 alert_name, triggered_pairs, alert_config
             )
             
-            # Create email
-            from_email = Email(self.from_email, self.from_name)
-            to_email = To(user_email)
-            content = Content("text/html", body)
-            
-            mail = Mail(from_email, to_email, subject, content)
+            # Create email with text alternative and transactional headers
+            text_body = self._build_plain_text_heatmap(alert_name, triggered_pairs, alert_config)
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text_body,
+                category="heatmap",
+                ref_id=alert_hash[:24]
+            )
             
             # Send email asynchronously
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: self.sg.send(mail)
-            )
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ Heatmap alert email sent to {user_email}")
@@ -659,17 +797,17 @@ class EmailService:
             </html>
             """
             
-            from_email = Email(self.from_email, self.from_name)
-            to_email = To(user_email)
-            content = Content("text/html", body)
-            
-            mail = Mail(from_email, to_email, subject, content)
+            text = "FX Labs System Test\nEmail delivery system operational."
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text,
+                category="test"
+            )
             
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: self.sg.send(mail)
-            )
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ Test email sent to {user_email}")
@@ -731,21 +869,22 @@ class EmailService:
             )
             logger.info(f"✅ Email body built successfully ({len(body)} characters)")
             
-            # Create email
-            from_email = Email(self.from_email, self.from_name)
-            to_email = To(user_email)
-            content = Content("text/html", body)
-            
-            mail = Mail(from_email, to_email, subject, content)
+            # Create email with text alternative and transactional headers
+            text_body = self._build_plain_text_rsi(alert_name, triggered_pairs, alert_config)
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text_body,
+                category="rsi",
+                ref_id=alert_hash[:24]
+            )
             logger.info(f"📧 Email object created successfully")
             
             # Send email asynchronously
             logger.info(f"📤 Sending RSI alert email via SendGrid...")
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: self.sg.send(mail)
-            )
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
             
             logger.info(f"📊 SendGrid response: Status {response.status_code}")
             
@@ -951,19 +1090,20 @@ class EmailService:
                 alert_name, calculation_mode, triggered_pairs, alert_config
             )
             
-            # Create email
-            from_email = Email(self.from_email, self.from_name)
-            to_email = To(user_email)
-            content = Content("text/html", body)
-            
-            mail = Mail(from_email, to_email, subject, content)
+            # Create email with text alternative and transactional headers
+            text_body = self._build_plain_text_corr(alert_name, calculation_mode, triggered_pairs, alert_config)
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text_body,
+                category="correlation",
+                ref_id=alert_hash[:24]
+            )
             
             # Send email asynchronously
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: self.sg.send(mail)
-            )
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ RSI correlation alert email sent to {user_email}")
