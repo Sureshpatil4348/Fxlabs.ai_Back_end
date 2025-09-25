@@ -320,7 +320,7 @@ class RSIAlertService:
             return age > 2 * self._tf_seconds(timeframe)
         except Exception:
             return False
-    
+
     def _get_market_data_for_symbol(self, symbol: str, timeframe: str, tick_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Get market data for a specific symbol and timeframe using real MT5 data"""
         
@@ -447,6 +447,28 @@ class RSIAlertService:
         except Exception as e:
             logger.error(f"❌ Error calculating RSI: {e}")
             return None
+
+    def _allow_by_pair_cooldown(self, alert: Dict[str, Any], alert_id: str, symbol: str, timeframe: str, side: str) -> bool:
+        """Check/update per (alert, symbol, timeframe, side) cooldown window.
+
+        Returns True if allowed to trigger now; updates last time on allow.
+        """
+        try:
+            cd_min = alert.get("cooldown_minutes")
+            cooldown_minutes = int(cd_min) if cd_min is not None else self.pair_cooldown_minutes_default
+        except Exception:
+            cooldown_minutes = self.pair_cooldown_minutes_default
+
+        key = f"{alert_id}:{symbol}:{timeframe}:{side}"
+        now = datetime.now(timezone.utc)
+        last = self._pair_cooldowns.get(key)
+        if last is not None:
+            delta = (now - last).total_seconds() / 60.0
+            if delta < cooldown_minutes:
+                return False
+        # Allowed -> update last
+        self._pair_cooldowns[key] = now
+        return True
     
     def _calculate_rsi_from_closes(self, closes: List[float], period: int = 14) -> Optional[float]:
         """Calculate RSI from a list of close prices"""

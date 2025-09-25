@@ -669,6 +669,11 @@ For support and questions:
 
 ## 🛠️ Troubleshooting
 
+### "AttributeError: 'RSIAlertService' object has no attribute '_allow_by_pair_cooldown'"
+- Cause: Older builds missed the per (alert, symbol, timeframe, side) cooldown helper in `app/rsi_alert_service.py` while it was referenced during RSI checks.
+- Status: Fixed by adding `_allow_by_pair_cooldown(...)` and enforcing the documented RSI cooldown. Ensure your local tree includes this method.
+- What to check: Open `app/rsi_alert_service.py:1` and verify `_allow_by_pair_cooldown(self, alert, alert_id, symbol, timeframe, side)` exists and uses `cooldown_minutes` (default 30).
+
 ### "ModuleNotFoundError: No module named 'sendgrid'"
 - Ensure dependencies are installed inside your virtual environment:
 ```bash
