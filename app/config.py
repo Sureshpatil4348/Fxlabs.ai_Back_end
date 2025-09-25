@@ -10,7 +10,7 @@ PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "pplx-p7MtwWQBWl4kHORe
 JBLANKED_API_URL = os.environ.get("JBLANKED_API_URL", "https://www.jblanked.com/news/api/forex-factory/calendar/week/")
 JBLANKED_API_KEY = os.environ.get("JBLANKED_API_KEY", "OZaABMUo")
 NEWS_UPDATE_INTERVAL_HOURS = int(os.environ.get("NEWS_UPDATE_INTERVAL_HOURS", "24"))
-NEWS_CACHE_MAX_ITEMS = int(os.environ.get("NEWS_CACHE_MAX_ITEMS", "100"))
+NEWS_CACHE_MAX_ITEMS = int(os.environ.get("NEWS_CACHE_MAX_ITEMS", "500"))
 
 # Filesystem-backed news cache
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -23,5 +23,4 @@ PORT = int(os.environ.get("PORT", "8000"))
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 FROM_EMAIL = os.environ.get("FROM_EMAIL", "alerts@fxlabs.ai")
 FROM_NAME = os.environ.get("FROM_NAME", "FX Labs Alerts")
-
 
