@@ -16,6 +16,8 @@ except ImportError:
     mt5 = None
     MT5_AVAILABLE = False
 import orjson
+import logging
+from app.logging_config import configure_logging
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -41,6 +43,9 @@ from app.mt5_utils import (
     update_ohlc_cache,
     get_cached_ohlc,
 )
+
+# Ensure logging has timestamps across the app
+configure_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

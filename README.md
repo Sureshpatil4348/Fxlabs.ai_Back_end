@@ -558,6 +558,11 @@ Returns:
 ```
 
 ### Logging
+All logs now include timestamps with timezone offset using the format:
+`YYYY-MM-DD HH:MM:SS±ZZZZ | LEVEL | module | message`.
+
+You can control verbosity via `LOG_LEVEL` (default `INFO`).
+
 The system provides comprehensive logging for:
 - Connection events
 - Data processing errors
@@ -668,6 +673,20 @@ For support and questions:
 **Compatibility**: Python 3.8+, MT5 Python API, FastAPI 0.100+
 
 ## 🛠️ Troubleshooting
+
+### "SendGrid not configured, skipping RSI alert email"
+- Cause: `EmailService` didn't initialize a SendGrid client (`self.sg is None`). This happens when either the SendGrid library isn’t installed in your environment or `SENDGRID_API_KEY` isn’t present in the process environment.
+- Fix quickly:
+  - Install deps in your venv: `pip install -r requirements.txt` (includes `sendgrid`)
+  - Provide credentials via environment or `.env`:
+    - `SENDGRID_API_KEY=YOUR_REAL_SENDGRID_API_KEY`
+    - `FROM_EMAIL=verified_sender@yourdomain.com` (must be a verified single sender or a domain verified in SendGrid)
+    - `FROM_NAME=FX Labs Alerts` (optional)
+  - Ensure your process actually sees the variables:
+    - macOS/Linux (terminal): `export SENDGRID_API_KEY=...` before starting the app
+    - Windows: use `start.ps1`/`start.bat` which load `.env` automatically
+  - Verify your SendGrid sender: Single Sender verification or Domain Authentication, otherwise SendGrid returns 400/403 and emails won’t send.
+- Where to set: copy `config.env.example` to `.env` and fill values, or set env vars directly in your deployment.
 
 ### "AttributeError: 'RSIAlertService' object has no attribute '_allow_by_pair_cooldown'"
 - Cause: Older builds missed the per (alert, symbol, timeframe, side) cooldown helper in `app/rsi_alert_service.py` while it was referenced during RSI checks.

@@ -5,13 +5,14 @@ from typing import Dict, List, Optional, Any, Tuple
 import aiohttp
 import json
 import logging
+from .logging_config import configure_logging
 
 from .email_service import email_service
 from .alert_cache import alert_cache
 from .concurrency import pair_locks
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging with timestamps
+configure_logging()
 logger = logging.getLogger(__name__)
 
 class HeatmapAlertService:
