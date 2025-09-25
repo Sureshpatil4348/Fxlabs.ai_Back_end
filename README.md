@@ -780,3 +780,26 @@ Operational notes:
 - Keep `FROM_EMAIL` on your authenticated domain/subdomain (e.g., alerts@alerts.fxlabs.ai).
 - Avoid URL shorteners and excessive links in alert content.
 - DMARC alignment: after verifying inboxing, move DMARC policy from `p=none` to `quarantine`/`reject` gradually.
+
+### Outlook/Office 365: "We can’t verify this email came from the sender"
+This is a DMARC alignment/authentication issue. Fix by authenticating the domain and aligning the From address.
+
+Checklist:
+- Domain Authentication in SendGrid: Settings → Sender Authentication → Domain Authentication. Choose a dedicated subdomain (e.g., `alerts.fxlabs.ai`).
+  - Add the DKIM CNAMEs SendGrid provides (typically `s1._domainkey.alerts.fxlabs.ai` and `s2._domainkey.alerts.fxlabs.ai`).
+  - Enable "Custom Return Path" (bounce domain), e.g., `em.alerts.fxlabs.ai` CNAME to SendGrid target. This makes SPF alignment pass.
+  - If using Cloudflare DNS: set these CNAMEs to DNS only (gray cloud). Proxying breaks DKIM/SPF validation.
+- SPF for the sending domain/subdomain: publish or update SPF to include SendGrid.
+  - Example for subdomain `alerts.fxlabs.ai`: `v=spf1 include:sendgrid.net -all`
+  - If the root domain already has an SPF for other services (e.g., Microsoft 365), include both as needed: `v=spf1 include:spf.protection.outlook.com include:sendgrid.net -all`
+- DMARC for the sending domain/subdomain: start permissive, then tighten.
+  - Example: `v=DMARC1; p=none; rua=mailto:dmarc@fxlabs.ai; adkim=s; aspf=s; pct=100`
+  - After validation, move to `p=quarantine` → `p=reject` to reduce spoofing.
+- From address must match the authenticated domain: send from `alerts@alerts.fxlabs.ai` if that’s the domain you authenticated (update `FROM_EMAIL`).
+- Optional: BIMI (brand logo) can help, but only after DMARC passes with enforcement and, ideally, a VMC.
+
+Why Outlook flagged it:
+- Without DKIM/SPF alignment for the From domain, DMARC fails or is unverifiable. Outlook/O365 then shows the warning and often places the message in Junk.
+
+Code defaults updated:
+- Defaults now prefer `FROM_EMAIL=alerts@alerts.fxlabs.ai` and add dual-part emails with transactional headers. Set your actual authenticated sender in `.env`.

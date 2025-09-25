@@ -34,8 +34,9 @@ class EmailService:
     def __init__(self):
         # Load from environment-driven config
         self.sendgrid_api_key = (SENDGRID_API_KEY or os.environ.get("SENDGRID_API_KEY", "")).strip()
-        self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@fxlabs.ai")).strip()
-        self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs")).strip()
+        # Prefer authenticated subdomain sender for DMARC alignment (example: alerts@alerts.fxlabs.ai)
+        self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@alerts.fxlabs.ai")).strip()
+        self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs Alerts")).strip()
         
         # Smart cooldown mechanism - value-based cooldown for similar alerts
         self.cooldown_minutes = 10  # Reduced to 10 minutes for better responsiveness
