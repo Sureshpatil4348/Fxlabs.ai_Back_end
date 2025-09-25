@@ -453,6 +453,12 @@ Fxlabs.ai_Back_end/
 
 The modular structure isolates responsibilities while preserving all existing behavior and endpoints. Environment variable names and usage remain unchanged.
 
+### Console Logging Timestamps
+- All console prints now include an ISO‑8601 timestamp (local time with timezone), automatically applied via a top‑level `sitecustomize.py`.
+- No code changes are needed in modules: any `print(...)` will appear as `[2025-09-25T12:34:56+05:30] ...` in stdout/stderr.
+- Behavior is idempotent and safe: the patch avoids double‑wrapping `print`.
+- If you need to opt out for any reason (e.g., ad-hoc debugging), temporarily comment or remove `sitecustomize.py` from the project root in your working copy.
+
 ### Key Dependencies
 - **FastAPI**: Web framework with async support
 - **MetaTrader5**: MT5 Python API integration
