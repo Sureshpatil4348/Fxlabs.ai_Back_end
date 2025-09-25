@@ -146,6 +146,12 @@ FROM_EMAIL=your_email@domain.com
 FROM_NAME=FX Labs Alerts
 ```
 
+#### Environment Loading (.env)
+- The app now auto-loads `.env` via `python-dotenv` in `app/config.py`.
+- Place your `.env` at the project root (same folder as `server.py`).
+- Existing process environment variables are not overridden (safe-by-default).
+- This fixes cases where macOS/Linux sessions didn’t see `SENDGRID_API_KEY` unless exported manually.
+
 ## 📡 API Documentation
 
 ### WebSocket Endpoints
@@ -678,13 +684,13 @@ For support and questions:
 - Cause: `EmailService` didn't initialize a SendGrid client (`self.sg is None`). This happens when either the SendGrid library isn’t installed in your environment or `SENDGRID_API_KEY` isn’t present in the process environment.
 - Fix quickly:
   - Install deps in your venv: `pip install -r requirements.txt` (includes `sendgrid`)
-  - Provide credentials via environment or `.env`:
+  - Provide credentials via environment or `.env` (auto-loaded now):
     - `SENDGRID_API_KEY=YOUR_REAL_SENDGRID_API_KEY`
     - `FROM_EMAIL=verified_sender@yourdomain.com` (must be a verified single sender or a domain verified in SendGrid)
     - `FROM_NAME=FX Labs Alerts` (optional)
   - Ensure your process actually sees the variables:
-    - macOS/Linux (terminal): `export SENDGRID_API_KEY=...` before starting the app
-    - Windows: use `start.ps1`/`start.bat` which load `.env` automatically
+    - macOS/Linux: `.env` is auto-loaded; no manual `export` needed
+    - Windows: `start.ps1`/`start.bat` also load `.env`
   - Verify your SendGrid sender: Single Sender verification or Domain Authentication, otherwise SendGrid returns 400/403 and emails won’t send.
 - Where to set: copy `config.env.example` to `.env` and fill values, or set env vars directly in your deployment.
 

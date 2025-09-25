@@ -1,5 +1,14 @@
 import os
 
+# Auto-load .env if present (non-intrusive)
+try:
+    from dotenv import load_dotenv, find_dotenv
+    # Load the closest .env without overriding existing environment
+    load_dotenv(find_dotenv(), override=False)
+except Exception:
+    # If python-dotenv is unavailable, continue without failing
+    pass
+
 # Environment-driven configuration (no changes to names/semantics)
 API_TOKEN = os.environ.get("API_TOKEN", "")
 ALLOWED_ORIGINS = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
@@ -23,4 +32,3 @@ PORT = int(os.environ.get("PORT", "8000"))
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 FROM_EMAIL = os.environ.get("FROM_EMAIL", "alerts@fxlabs.ai")
 FROM_NAME = os.environ.get("FROM_NAME", "FX Labs Alerts")
-
