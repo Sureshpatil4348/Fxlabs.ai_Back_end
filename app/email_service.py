@@ -1,7 +1,11 @@
 import os
 import asyncio
 import hashlib
+import hmac
+import json
 import re
+from urllib.parse import quote as url_quote
+from threading import RLock
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 try:
@@ -25,7 +29,7 @@ import logging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME
+from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, UNSUBSCRIBE_SECRET, UNSUBSCRIBE_STORE_FILE
 
 
 class EmailService:
@@ -37,6 +41,11 @@ class EmailService:
         # Prefer authenticated subdomain sender for DMARC alignment (example: alerts@alerts.fxlabs.ai)
         self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@alerts.fxlabs.ai")).strip()
         self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs Alerts")).strip()
+        # Unsubscribe storage (in-memory set with JSON file persistence)
+        self._unsub_file = UNSUBSCRIBE_STORE_FILE
+        self._unsub_lock = RLock()
+        self.unsubscribed_emails: set[str] = set()
+        self._load_unsubscribes()
         
         # Smart cooldown mechanism - value-based cooldown for similar alerts
         self.cooldown_minutes = 10  # Reduced to 10 minutes for better responsiveness
@@ -179,7 +188,7 @@ class EmailService:
         # All values are similar, apply cooldown
         return True
     
-    def _add_transactional_headers(self, mail: Mail, category: str = "fx-labs-alerts"):
+    def _add_transactional_headers(self, mail: Mail, category: str = "fx-labs-alerts", to_email_addr: Optional[str] = None):
         """Add transactional email headers to avoid spam filters"""
         # Category header (older X-SMTPAPI style is acceptable and harmless when ignored)
         try:
@@ -193,7 +202,12 @@ class EmailService:
             pass
         # List-Unsubscribe for better inboxing and one-click UX
         try:
-            mail.add_header("List-Unsubscribe", "<mailto:unsubscribe@fxlabs.ai>")
+            values: List[str] = ["<mailto:unsubscribe@fxlabs.ai>"]
+            if PUBLIC_BASE_URL and UNSUBSCRIBE_SECRET and to_email_addr:
+                token = hmac.new(UNSUBSCRIBE_SECRET.encode("utf-8"), str(to_email_addr).encode("utf-8"), hashlib.sha256).hexdigest()
+                http_url = f"{PUBLIC_BASE_URL.rstrip('/')}/unsubscribe?email={url_quote(str(to_email_addr))}&token={token}"
+                values.append(f"<{http_url}>")
+            mail.add_header("List-Unsubscribe", ", ".join(values))
             mail.add_header("List-Unsubscribe-Post", "List-Unsubscribe=One-Click")
         except Exception:
             pass
@@ -239,7 +253,7 @@ class EmailService:
         except Exception:
             pass
         # Add headers and tracking settings
-        self._add_transactional_headers(mail, category=category)
+        self._add_transactional_headers(mail, category=category, to_email_addr=to_email_addr)
         self._disable_tracking(mail)
         # Add a stable reference id for threading/diagnostics
         if ref_id:
@@ -248,6 +262,63 @@ class EmailService:
             except Exception:
                 pass
         return mail
+
+    # ------------------ Unsubscribe management ------------------
+    def _load_unsubscribes(self) -> None:
+        try:
+            if self._unsub_file and os.path.exists(self._unsub_file):
+                with self._unsub_lock:
+                    with open(self._unsub_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            self.unsubscribed_emails = {str(e).strip().lower() for e in data if e}
+                        elif isinstance(data, dict) and isinstance(data.get("emails"), list):
+                            self.unsubscribed_emails = {str(e).strip().lower() for e in data.get("emails", []) if e}
+        except Exception:
+            # Fail open: start with empty set if file unreadable
+            self.unsubscribed_emails = set()
+
+    def _persist_unsubscribes(self) -> None:
+        try:
+            if not self._unsub_file:
+                return
+            os.makedirs(os.path.dirname(self._unsub_file), exist_ok=True)
+            with self._unsub_lock:
+                with open(self._unsub_file, "w", encoding="utf-8") as f:
+                    json.dump(sorted(self.unsubscribed_emails), f, ensure_ascii=False, indent=2)
+        except Exception:
+            # Persistence failures are non-fatal
+            pass
+
+    def unsubscribe(self, email: str) -> bool:
+        if not email:
+            return False
+        key = str(email).strip().lower()
+        if not self._looks_like_email(key):
+            return False
+        with self._unsub_lock:
+            if key in self.unsubscribed_emails:
+                return True
+            self.unsubscribed_emails.add(key)
+        self._persist_unsubscribes()
+        return True
+
+    def resubscribe(self, email: str) -> bool:
+        if not email:
+            return False
+        key = str(email).strip().lower()
+        with self._unsub_lock:
+            if key in self.unsubscribed_emails:
+                self.unsubscribed_emails.remove(key)
+                self._persist_unsubscribes()
+                return True
+        return False
+
+    def is_unsubscribed(self, email: str) -> bool:
+        try:
+            return str(email).strip().lower() in self.unsubscribed_emails
+        except Exception:
+            return False
 
     def _build_plain_text_rsi(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
         lines = [
@@ -596,6 +667,9 @@ class EmailService:
         if not self.sg:
             self._log_config_diagnostics(context="heatmap alert email")
             return False
+        if self.is_unsubscribed(user_email):
+            logger.info(f"🔕 {user_email} is unsubscribed — skipping heatmap email")
+            return False
         # Per-user rate limiting with overflow digest
         if not self._allow_user_send(user_email):
             logger.info(f"🔕 Rate limit reached for {user_email}. Queueing to digest.")
@@ -770,6 +844,9 @@ class EmailService:
         if not self.sg:
             logger.warning("SendGrid not configured, cannot send test email")
             return False
+        if self.is_unsubscribed(user_email):
+            logger.info(f"🔕 {user_email} is unsubscribed — skipping test email")
+            return False
         
         try:
             subject = "System Test - FX Labs"
@@ -837,6 +914,9 @@ class EmailService:
         
         if not self.sg:
             self._log_config_diagnostics(context="RSI alert email")
+            return False
+        if self.is_unsubscribed(user_email):
+            logger.info(f"🔕 {user_email} is unsubscribed — skipping RSI email")
             return False
         # Per-user rate limiting with overflow digest
         if not self._allow_user_send(user_email):
@@ -1064,6 +1144,9 @@ class EmailService:
         
         if not self.sg:
             self._log_config_diagnostics(context="RSI correlation alert email")
+            return False
+        if self.is_unsubscribed(user_email):
+            logger.info(f"🔕 {user_email} is unsubscribed — skipping RSI correlation email")
             return False
         # Per-user rate limiting with overflow digest
         if not self._allow_user_send(user_email):

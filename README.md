@@ -142,8 +142,11 @@ NEWS_CACHE_MAX_ITEMS=500
 
 # Alert System Configuration
 SENDGRID_API_KEY=your_sendgrid_api_key
-FROM_EMAIL=your_email@domain.com
+FROM_EMAIL=alerts@fxlabs.ai
 FROM_NAME=FX Labs Alerts
+PUBLIC_BASE_URL=https://api.fxlabs.ai
+UNSUBSCRIBE_SECRET=change_me_to_a_random_secret
+UNSUBSCRIBE_STORE_FILE=/var/fxlabs/unsubscribes.json
 ```
 
 #### Environment Loading (.env)
@@ -771,8 +774,9 @@ What to collect for escalation: UTC timestamp, recipient, subject, SendGrid Mess
 
 ### Code-Side Deliverability Hardening
 - Dual-part emails: The backend now sends both `text/plain` and `text/html` bodies for all alert emails. Many receivers score plain-text positively.
-- Transactional headers: Adds `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, a consistent `X-Mailer`, and a category header to help mailbox classification.
+- Transactional headers: Adds `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, a consistent `X-Mailer`, and a category header to help mailbox classification. When `PUBLIC_BASE_URL` and `UNSUBSCRIBE_SECRET` are set, a one-click HTTP List-Unsubscribe URL is added alongside the mailto link.
 - Disable tracking: Click- and open-tracking are disabled on alert emails to avoid link rewriting and tracking pixels that can push messages to Promotions/Spam.
+- Unsubscribe persistence: Users who click the one‑click unsubscribe are stored in `UNSUBSCRIBE_STORE_FILE`; all future sends to them are skipped.
 - Stable reference ID: Adds an `X-Entity-Ref-ID` derived from the alert to aid thread detection and support.
 - Consistent Reply-To: Sets `Reply-To` to the sender for consistent header presence.
 
@@ -802,4 +806,4 @@ Why Outlook flagged it:
 - Without DKIM/SPF alignment for the From domain, DMARC fails or is unverifiable. Outlook/O365 then shows the warning and often places the message in Junk.
 
 Code defaults updated:
-- Defaults now prefer `FROM_EMAIL=alerts@alerts.fxlabs.ai` and add dual-part emails with transactional headers. Set your actual authenticated sender in `.env`.
+- Defaults now prefer `FROM_EMAIL=alerts@alerts.fxlabs.ai` and add dual-part emails with transactional headers and one-click unsubscribe. Set your actual authenticated sender in `.env` and configure `PUBLIC_BASE_URL` and `UNSUBSCRIBE_SECRET`.

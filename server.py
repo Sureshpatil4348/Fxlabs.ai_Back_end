@@ -19,12 +19,14 @@ import orjson
 import logging
 from app.logging_config import configure_logging
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import (
     API_TOKEN,
     ALLOWED_ORIGINS,
     MT5_TERMINAL_PATH,
+    UNSUBSCRIBE_SECRET,
 )
 import app.news as news
 from app.alert_cache import alert_cache
@@ -125,6 +127,16 @@ def require_api_token_header(x_api_key: Optional[str] = None):
     # For REST: expect header "X-API-Key"
     if API_TOKEN and x_api_key != API_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+def _valid_unsub_token(email: str, token: str) -> bool:
+    try:
+        import hashlib, hmac
+        if not email or not token or not UNSUBSCRIBE_SECRET:
+            return False
+        expected = hmac.new(UNSUBSCRIBE_SECRET.encode("utf-8"), email.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expected, token)
+    except Exception:
+        return False
 
 def check_test_email_rate_limit(api_key: str) -> bool:
     """Check if API key has exceeded test email rate limit"""
@@ -369,6 +381,27 @@ async def _get_user_tracked_symbols(user_email: str) -> Set[str]:
 def health():
     v = mt5.version()
     return {"status": "ok", "mt5_version": v}
+
+# ---------------- Unsubscribe endpoints ----------------
+@app.get("/unsubscribe", response_class=HTMLResponse)
+async def unsubscribe(email: str = Query(""), token: str = Query("")):
+    if not _valid_unsub_token(email, token):
+        return HTMLResponse(
+            content="<html><body><h3>Invalid unsubscribe link</h3></body></html>",
+            status_code=400,
+        )
+    email_service.unsubscribe(email)
+    return HTMLResponse(
+        content="<html><body><h3>You have been unsubscribed from alert emails.</h3></body></html>",
+        status_code=200,
+    )
+
+@app.post("/unsubscribe", response_class=PlainTextResponse)
+async def unsubscribe_post(email: str = Query(""), token: str = Query("")):
+    if not _valid_unsub_token(email, token):
+        raise HTTPException(status_code=400, detail="invalid_token")
+    email_service.unsubscribe(email)
+    return PlainTextResponse("unsubscribed", status_code=200)
 
 @app.get("/test-ws")
 def test_websocket():

@@ -32,3 +32,12 @@ PORT = int(os.environ.get("PORT", "8000"))
 SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
 FROM_EMAIL = os.environ.get("FROM_EMAIL", "alerts@fxlabs.ai")
 FROM_NAME = os.environ.get("FROM_NAME", "FX Labs Alerts")
+
+# Public URL (for links in emails) and unsubscribe configuration
+# PUBLIC_BASE_URL should be like https://api.fxlabs.ai (no trailing slash)
+PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
+UNSUBSCRIBE_SECRET = os.environ.get("UNSUBSCRIBE_SECRET", "")
+UNSUBSCRIBE_STORE_FILE = os.environ.get(
+    "UNSUBSCRIBE_STORE_FILE",
+    os.path.join(BASE_DIR, "unsubscribes.json"),
+)
