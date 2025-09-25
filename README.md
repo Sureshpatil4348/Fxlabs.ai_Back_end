@@ -700,6 +700,22 @@ For support and questions:
   - Verify your SendGrid sender: Single Sender verification or Domain Authentication, otherwise SendGrid returns 400/403 and emails won’t send.
 - Where to set: copy `config.env.example` to `.env` and fill values, or set env vars directly in your deployment.
 
+#### Email Configuration Diagnostics (enhanced logs)
+When email sending is disabled, the service now emits structured diagnostics showing what’s missing or invalid (without leaking secrets). Example:
+
+```
+⚠️ Email service not configured — RSI alert email
+   1) sendgrid library not installed (pip install sendgrid)
+   2) SENDGRID_API_KEY missing (set in environment or .env)
+   Values (masked): SENDGRID_API_KEY=SG.************abcd, FROM_EMAIL=alerts@fxlabs.ai, FROM_NAME=FX Labs
+   Hint: copy config.env.example to .env and fill SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME; python-dotenv auto-loads .env
+```
+
+Notes:
+- API key is masked (prefix + last 4 chars) for safety.
+- If the key doesn’t start with `SG.`, a hint is logged to double‑check the value.
+- `rsi_alert_service` will also surface a one‑line summary under “Email diagnostics:” when an email send fails.
+
 ### "AttributeError: 'RSIAlertService' object has no attribute '_allow_by_pair_cooldown'"
 - Cause: Older builds missed the per (alert, symbol, timeframe, side) cooldown helper in `app/rsi_alert_service.py` while it was referenced during RSI checks.
 - Status: Fixed by adding `_allow_by_pair_cooldown(...)` and enforcing the documented RSI cooldown. Ensure your local tree includes this method.

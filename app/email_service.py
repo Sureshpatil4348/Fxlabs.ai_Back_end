@@ -1,6 +1,7 @@
 import os
 import asyncio
 import hashlib
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 try:
@@ -41,12 +42,16 @@ class EmailService:
             except Exception as e:
                 self.sg = None
                 logger.warning(f"⚠️ Could not initialize SendGrid client: {e}")
+                # Log diagnostics to explain why it's effectively not configured
+                self._log_config_diagnostics(context="initialization")
         else:
             self.sg = None
             if not SendGridAPIClient:
                 logger.warning("⚠️ SendGrid library not installed. Email sending is disabled.")
             elif not self.sendgrid_api_key:
                 logger.warning("⚠️ SENDGRID_API_KEY not configured. Email sending is disabled.")
+            # Provide comprehensive diagnostics on what's missing/misaligned
+            self._log_config_diagnostics(context="startup")
 
         # Per-user rate limits + digest
         self.user_rate_window_minutes = 60
@@ -241,6 +246,104 @@ class EmailService:
                         values[f"{symbol}_rsi"] = rsi
         
         return values
+
+    # ------------------ Configuration diagnostics ------------------
+    def _mask(self, value: Optional[str], keep_tail: int = 4) -> str:
+        if not value:
+            return "MISSING"
+        v = str(value)
+        if len(v) <= keep_tail:
+            return "*" * len(v)
+        # Preserve common SendGrid prefix for clarity (e.g., SG.)
+        prefix = "SG." if v.startswith("SG.") else v[:2]
+        tail = v[-keep_tail:]
+        return f"{prefix}{'*' * max(len(v) - len(prefix) - keep_tail, 0)}{tail}"
+
+    def _looks_like_email(self, email: str) -> bool:
+        try:
+            return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", str(email)))
+        except Exception:
+            return False
+
+    def get_config_diagnostics(self) -> Dict[str, Any]:
+        """Return a diagnostics dict describing current email configuration state.
+
+        Does not leak secrets; values are masked where appropriate.
+        """
+        issues: List[str] = []
+        sg_lib = bool(SendGridAPIClient)
+        api_key = self.sendgrid_api_key or ""
+        from_email = self.from_email or ""
+        from_name = self.from_name or ""
+
+        # Library presence
+        if not sg_lib:
+            issues.append("sendgrid library not installed (pip install sendgrid)")
+
+        # API key checks
+        if not api_key:
+            issues.append("SENDGRID_API_KEY missing (set in environment or .env)")
+        elif not api_key.startswith("SG."):
+            issues.append('SENDGRID_API_KEY does not look like a SendGrid key (expected to start with "SG.")')
+
+        # From email checks
+        if not from_email:
+            issues.append("FROM_EMAIL missing")
+        elif not self._looks_like_email(from_email):
+            issues.append("FROM_EMAIL invalid format")
+
+        # From name checks
+        if not from_name:
+            issues.append("FROM_NAME missing (optional but recommended)")
+
+        configured = self.sg is not None
+        return {
+            "configured": configured,
+            "client_initialized": configured,
+            "issues": issues,
+            "values": {
+                "SENDGRID_API_KEY": self._mask(api_key),
+                "FROM_EMAIL": from_email or "",
+                "FROM_NAME": from_name or "",
+            },
+        }
+
+    def get_config_diagnostics_text(self) -> str:
+        """Return a one-line human readable diagnostics summary for logs."""
+        diag = self.get_config_diagnostics()
+        if diag.get("configured"):
+            return ""
+        issues = diag.get("issues", [])
+        vals = diag.get("values", {})
+        key_mask = vals.get("SENDGRID_API_KEY", "")
+        from_email = vals.get("FROM_EMAIL", "")
+        from_name = vals.get("FROM_NAME", "")
+        parts = []
+        if issues:
+            parts.append("; ".join(issues))
+        parts.append(f"key={key_mask}")
+        parts.append(f"from_email={from_email or 'MISSING'}")
+        parts.append(f"from_name={from_name or 'MISSING'}")
+        return ", ".join(parts)
+
+    def _log_config_diagnostics(self, context: str) -> None:
+        """Emit structured warnings about why email sending is not configured."""
+        diag = self.get_config_diagnostics()
+        if diag.get("configured"):
+            return
+        issues = diag.get("issues", [])
+        vals = diag.get("values", {})
+        logger.warning("⚠️ Email service not configured — %s", context)
+        if issues:
+            for idx, msg in enumerate(issues, 1):
+                logger.warning("   %d) %s", idx, msg)
+        logger.warning(
+            "   Values (masked): SENDGRID_API_KEY=%s, FROM_EMAIL=%s, FROM_NAME=%s",
+            vals.get("SENDGRID_API_KEY", ""), vals.get("FROM_EMAIL", ""), vals.get("FROM_NAME", ""),
+        )
+        logger.warning(
+            "   Hint: copy config.env.example to .env and fill SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME; python-dotenv auto-loads .env"
+        )
     
     def _update_alert_cooldown(self, alert_hash: str, triggered_pairs: List[Dict[str, Any]] = None):
         """Update the last sent timestamp and values for an alert"""
@@ -353,7 +456,7 @@ class EmailService:
         """Send heatmap alert email to user with cooldown protection"""
         
         if not self.sg:
-            logger.warning("SendGrid not configured, skipping email")
+            self._log_config_diagnostics(context="heatmap alert email")
             return False
         # Per-user rate limiting with overflow digest
         if not self._allow_user_send(user_email):
@@ -594,7 +697,7 @@ class EmailService:
         logger.info(f"   Triggered pairs: {len(triggered_pairs)}")
         
         if not self.sg:
-            logger.warning("⚠️ SendGrid not configured, skipping RSI alert email")
+            self._log_config_diagnostics(context="RSI alert email")
             return False
         # Per-user rate limiting with overflow digest
         if not self._allow_user_send(user_email):
@@ -820,7 +923,7 @@ class EmailService:
         """Send RSI correlation alert email to user with cooldown protection"""
         
         if not self.sg:
-            logger.warning("SendGrid not configured, skipping RSI correlation alert email")
+            self._log_config_diagnostics(context="RSI correlation alert email")
             return False
         # Per-user rate limiting with overflow digest
         if not self._allow_user_send(user_email):
