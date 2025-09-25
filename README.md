@@ -209,9 +209,12 @@ Internal alert tick_data shape:
 - 1‑bar confirmation: After crossing, require 1 additional closed bar still in the crossed zone before triggering.
 - Hysteresis re‑arm: Once an Overbought trigger fires, the alert re‑arms only after RSI falls below 65; for Oversold, re‑arm after RSI rises above 35.
 - Fallback: If historical RSI series is unavailable, the service falls back to in‑zone checks for continuity.
-- Bar policy: Default is bar‑close evaluation (checks once per closed bar). You can set `bar_policy` to `intrabar` to evaluate on ticks instead.
+ - Evaluation timing: Closed-bar only (evaluates once per closed bar). Intrabar/live evaluation is disabled in this iteration to ensure RSI-closed compliance.
 - Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes). Override with `cooldown_minutes` on the alert.
 - Quiet hours + timezone: Suppresses alerts during the configured local quiet window using the alert's `timezone` (IANA name, default Asia/Kolkata) and `quiet_start_local`/`quiet_end_local` (HH:MM).
+Notes:
+- Use `alert_conditions` values `"overbought"`/`"oversold"` to request threshold crossing detection; confirmed triggers return `overbought_cross`/`oversold_cross` in results.
+- Current API does not expose `bar_policy` and the backend enforces closed‑bar evaluation.
 
 ### RSI Correlation Alerts — Threshold and Real Correlation
 

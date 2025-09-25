@@ -149,19 +149,17 @@ class RSIAlertService:
                             logger.debug(f"⏭️ Stale data skipped for {symbol} {timeframe}")
                             continue
 
-                        # Respect bar timing policy: default 'close', optional 'intrabar'
-                        bar_policy = (alert.get("bar_policy") or "close").lower()
-                        if bar_policy != "intrabar":
-                            last_ts = await self._get_last_closed_bar_ts(symbol, timeframe)
-                            if last_ts is None:
-                                logger.debug(f"⏭️ Skipping {symbol} {timeframe}: unknown last closed bar (bar_policy=close)")
-                                continue
-                            last_key = f"{symbol}:{timeframe}"
-                            prev_ts = self._last_closed_bar_ts.get(last_key)
-                            if prev_ts is not None and prev_ts == last_ts:
-                                # Already evaluated for current closed bar
-                                continue
-                            self._last_closed_bar_ts[last_key] = last_ts
+                        # Enforce closed-bar policy always (RSI-closed only)
+                        last_ts = await self._get_last_closed_bar_ts(symbol, timeframe)
+                        if last_ts is None:
+                            logger.debug(f"⏭️ Skipping {symbol} {timeframe}: unknown last closed bar (closed policy)")
+                            continue
+                        last_key = f"{symbol}:{timeframe}"
+                        prev_ts = self._last_closed_bar_ts.get(last_key)
+                        if prev_ts is not None and prev_ts == last_ts:
+                            # Already evaluated for current closed bar
+                            continue
+                        self._last_closed_bar_ts[last_key] = last_ts
 
                         logger.debug(f"✅ Market data retrieved for {symbol} {timeframe}: {market_data.get('data_source', 'Unknown')}")
 

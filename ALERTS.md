@@ -5,7 +5,7 @@
 
 **Global Rules**
 - Max tracked pairs per user: up to 3.
-- Delivery channels: Email and Telegram (both may be selected).
+- Delivery channels: Email (Telegram planned; currently disabled).
 - Trigger style: crossing into condition or regime flip; 1-bar confirmation on relevant TFs.
 - Timezone for display: Asia/Kolkata.
 - Rate limits: 5 alerts per user per hour (overflow batched to digest); per‑pair concurrency cap; warm‑up for indicators; skip stale TFs.
@@ -75,7 +75,7 @@
     }
     ```
     - UI: add controls for `trading_style` (scalper/day/swing), `min_alignment` (0–5), `cooldown_minutes`, and an advanced section with the gating toggle and numeric inputs.
-  - RSI alert creation payload:
+  - RSI alert creation payload (closed-bar only):
     ```json
     {
       "alert_name": "RSI OB/OS",
@@ -85,7 +85,7 @@
       "rsi_period": 14,
       "rsi_overbought_threshold": 70,
       "rsi_oversold_threshold": 30,
-      "alert_conditions": ["overbought_cross","oversold_cross"],
+      "alert_conditions": ["overbought","oversold"],
       "bar_policy": "close",
       "trigger_policy": "crossing",
       "only_new_bars": 3,
@@ -98,6 +98,10 @@
       "alert_frequency": "once"
     }
     ```
+    Notes:
+    - Use keys "overbought"/"oversold" to request threshold crossing detection. When a crossing is confirmed, the backend returns a trigger condition string of "overbought_cross" or "oversold_cross".
+    - Closed-only: Backend always evaluates on closed bars, regardless of any stored `bar_policy`. Intrabar (live) evaluation is disabled in this iteration.
+    - Current backend API models do not expose `bar_policy`, `only_new_bars`, `confirmation_bars`, or `trigger_policy`.
     - UI: add a “Bar timing” selector (Close/Intrabar), Quiet hours (start/end, local preview), and show cooldown scope note: per (symbol, timeframe, side).
 
 - Step 3 — API and validation tips
@@ -218,18 +222,18 @@ Notes
   - Supabase tables: heatmap_alerts, rsi_alerts, rsi_correlation_alerts. An in‑memory cache refreshes periodically; see `app/alert_cache.py`.
 - Execution model
   - Alert checkers are launched from the tick loop (see `server.py:876`, `server.py:913`, `server.py:1000+`). Internally:
-    - RSI and RSI Correlation enforce bar‑close evaluation using last‑closed‑bar timestamps (default `bar_policy='close'`).
+    - RSI and RSI Correlation enforce bar‑close evaluation using last‑closed‑bar timestamps (default `bar_policy='close'`). RSI values are computed from OHLC close prices.
     - Heat Map checks run on tick invocation; indicator flips use recent bars with confirmation. A dedicated TF scheduler for all alert types is planned.
 - Channels
   - Email via SendGrid implemented. Value‑based cooldown: 10 minutes + RSI delta threshold of 5.0; per‑user cap 5/hour with digest.
-  - Telegram delivery not yet implemented.
+  - Telegram delivery not implemented (disabled for now).
   - See `app/email_service.py:31` and surrounding lines for cooldown/rate limit/digest.
 - Heat Map alerts (Type A + Type B flips)
   - Style‑weighted TF aggregation → Final Score → Buy Now %; optional Minimum Alignment (N TFs). Hysteresis re‑arm (buy_min−5 / sell_max+5). Per (alert, symbol, direction) cooldown (default 30m). Optional gate for Type B flips by Buy Now %.
   - Flips: EMA21/50/200 cross + slope, MACD cross with sign, Ichimoku Tenkan/Kijun cross, simplified UTBOT; Only‑NEW (K=3) and 1‑bar confirmation; see `_detect_indicator_flips` in `app/heatmap_alert_service.py`.
 - RSI alerts
   - Crossing policy + 1‑bar confirmation + hysteresis (65/35). Only‑NEW window K=3. Per (alert, symbol, timeframe, side) cooldown (default 30m). Quiet hours with IANA timezone (default Asia/Kolkata). Bar‑close gating via last‑closed‑bar tracking.
-  - See `app/rsi_alert_service.py` (e.g., `_get_last_closed_bar_ts`, `_detect_rsi_crossings_with_confirmation`).
+  - See `app/rsi_alert_service.py` (e.g., `_get_last_closed_bar_ts`, `_detect_rsi_crossing`).
 - RSI correlation alerts
   - Modes: RSI threshold and Real correlation (Pearson of returns, configurable window). Bar‑close gating per timeframe, warm‑up and stale‑bar checks, per‑pair concurrency locks.
   - See `app/rsi_correlation_alert_service.py` (`_check_rsi_threshold_mode`, `_check_real_correlation_mode`, `_calculate_correlation`).
@@ -257,11 +261,17 @@ Notes
 | Type B (Flip) | Only‑NEW (K=3) and 1‑bar confirmation | match | Implemented in flip detectors (K=3, confirmation=1) across supported indicators. |
 | Type B (Flip) | Gate by Buy Now % | match | Optional gate enabled: flips require Buy Now % ≥ buy_min (BUY) or ≤ sell_max (SELL); defaults 60/40. |
 | RSI OB/OS | Crossing vs in‑zone | match | Crossing with 1‑bar confirmation and hysteresis implemented; better parity with spec. |
-| RSI OB/OS | Bar‑close vs intrabar evaluation | match | Supports bar policy: default bar‑close (evaluates once per closed bar) or intrabar (on ticks) with debounce. |
+| RSI OB/OS | Evaluation timing | match | Closed-bar only; intrabar (live) evaluation disabled to ensure RSI-closed compliance. |
 | RSI OB/OS | Cooldown model | match | Per (alert, symbol, timeframe, side) cooldown enforced; default 30m, overridable via `cooldown_minutes`. |
 | RSI OB/OS | Quiet hours / timezone | match | Suppresses alerts within configured local quiet hours using alert timezone (default Asia/Kolkata). |
 | Correlation | RSI threshold + real correlation modes | match | Both modes implemented: RSI thresholds and real correlation computed from historical returns over a configurable window. |
 | Correlation | TF boundary evaluation + mismatch retriggers | match | Bar‑close evaluation supported; positive/negative mismatch triggers fire only on NEW mismatches and re‑arm after neutral break. |
+
+**Known Gaps/Notes (Actionable)**
+- RSI condition keys: API payload must use `"overbought"`/`"oversold"` to enable crossing detection. The backend returns `overbought_cross`/`oversold_cross` when confirmed. The previous example with `"overbought_cross"` in the input was incorrect and is now fixed.
+- In‑zone policy: Pure in‑zone triggers for RSI (without crossing) are not currently wired through the public API path; the service primarily supports crossing with confirmation and hysteresis.
+- Evaluation timing: Intrabar (live) evaluation is disabled; backend always performs closed‑bar evaluations.
+- Notification methods: Email is the only supported delivery channel for now.
 
 **Frontend/Supabase Follow-ups — Max Pairs/User (3)**
 - Frontend

@@ -141,17 +141,15 @@ class RSICorrelationAlertService:
                 symbol1, symbol2 = pair[0], pair[1]
                 
                 for timeframe in timeframes:
-                    # Respect bar timing policy (default close)
-                    bar_policy = (alert.get("bar_policy") or "close").lower()
-                    if bar_policy != "intrabar":
-                        last_ts = await self._get_last_closed_bar_ts(symbol1, timeframe)
-                        if last_ts is None:
-                            continue
-                        pair_key = self._pair_key(alert_id, symbol1, symbol2, timeframe)
-                        prev_ts = self._last_closed_bar_ts.get(pair_key)
-                        if prev_ts is not None and prev_ts == last_ts:
-                            continue
-                        self._last_closed_bar_ts[pair_key] = last_ts
+                    # Enforce closed-bar policy always (RSI-closed only)
+                    last_ts = await self._get_last_closed_bar_ts(symbol1, timeframe)
+                    if last_ts is None:
+                        continue
+                    pair_key = self._pair_key(alert_id, symbol1, symbol2, timeframe)
+                    prev_ts = self._last_closed_bar_ts.get(pair_key)
+                    if prev_ts is not None and prev_ts == last_ts:
+                        continue
+                    self._last_closed_bar_ts[pair_key] = last_ts
                     # Get market data for both symbols under per-pair locks (stable order to avoid deadlocks)
                     k1 = f"{symbol1}:{timeframe}"
                     k2 = f"{symbol2}:{timeframe}"
