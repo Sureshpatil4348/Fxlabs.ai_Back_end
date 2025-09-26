@@ -498,6 +498,9 @@ class RSIAlertService:
             triggered_pairs = trigger_data.get("triggered_pairs", [])
             alert_config = trigger_data.get("alert_config", {})
             
+            logger.info(
+                f"📧 Scheduling RSI email -> user={user_email}, alert={alert_name}, pairs={len(triggered_pairs)}"
+            )
             logger.info(f"📧 Preparing RSI alert email for user: {user_email}")
             logger.info(f"   Alert: {alert_name} (ID: {alert_id})")
             logger.info(f"   Triggered pairs: {len(triggered_pairs)}")

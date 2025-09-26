@@ -78,6 +78,9 @@ class RSICorrelationTrackerAlertService:
                         prev = self._last_state.get(k, False)
                         self._last_state[k] = mismatch
                         if (not prev) and mismatch:
+                            logger.info(
+                                f"🚨 RSI Correlation Tracker trigger: alert_id={alert_id} pair={pair_key} tf={timeframe} mode={mode} type={trig_type}"
+                            )
                             payload = {
                                 "alert_id": alert_id,
                                 "alert_name": alert.get("alert_name", "RSI Correlation Tracker Alert"),
@@ -98,7 +101,14 @@ class RSICorrelationTrackerAlertService:
                             # Optional email reusing RSI template (single card); symbol shown as pair_key
                             methods = alert.get("notification_methods") or ["email"]
                             if "email" in methods:
+                                logger.info(
+                                    f"📤 Queueing email send for RSI Correlation Tracker alert_id={alert_id} via background task"
+                                )
                                 asyncio.create_task(self._send_email(user_email, payload))
+                            else:
+                                logger.info(
+                                    f"🔕 Email notifications disabled for correlation alert_id={alert_id}; methods={methods}"
+                                )
 
             return triggers
         except Exception as e:
@@ -247,6 +257,9 @@ class RSICorrelationTrackerAlertService:
 
     async def _send_email(self, user_email: str, payload: Dict[str, Any]) -> None:
         try:
+            logger.info(
+                f"📧 Scheduling RSI Correlation Tracker email -> user={user_email}, alert={payload.get('alert_name','RSI Correlation Tracker Alert')}, pairs={len(payload.get('triggered_pairs', []))}"
+            )
             await email_service.send_rsi_alert(
                 user_email=user_email,
                 alert_name=payload.get("alert_name", "RSI Correlation Tracker Alert"),

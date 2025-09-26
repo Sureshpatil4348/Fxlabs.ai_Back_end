@@ -777,6 +777,18 @@ Expected logs when working:
   - `📤 Queueing email send for RSI Tracker ...`
   - Email service logs like `📧 RSI Alert Email Service - Starting email process` and `📊 SendGrid response: Status 202`.
 
+### "RSI Correlation Tracker: triggers exist in DB but no emails/logs"
+- **Symptom**: Rows appear in `rsi_correlation_tracker_alert_triggers` but you don’t see emails or logs.
+- **Fix in code**: The correlation tracker now logs when a trigger occurs and when an email is queued; errors are logged during send.
+- **Checklist**:
+  - **Pairs configured**: Set `RSI_CORR_TRACKER_DEFAULT_PAIRS` (e.g., `EURUSD_GBPUSD,USDJPY_GBPUSD`).
+  - **notification_methods**: Ensure includes `"email"`.
+  - **Email service configured** and **LOG_LEVEL** set appropriately.
+  - **Mode & thresholds**: `mode` is `rsi_threshold` or `real_correlation`; for real correlation, we treat `|corr| < 0.25` as mismatch by default.
+- **Expected logs**:
+  - `🚨 RSI Correlation Tracker trigger: ...`
+  - `📤 Queueing email send for RSI Correlation Tracker ...`
+
 ### "SendGrid not configured, skipping RSI alert email"
 - Cause: `EmailService` didn't initialize a SendGrid client (`self.sg is None`). This happens when either the SendGrid library isn’t installed in your environment or `SENDGRID_API_KEY` isn’t present in the process environment.
 - Fix quickly:
