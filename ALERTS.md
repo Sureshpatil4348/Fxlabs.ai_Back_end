@@ -10,6 +10,19 @@
 - Timezone for display: Asia/Kolkata.
 - System safeguards (apply to all alerts): rate limit 5 alerts/user/hour (overflow batched to a digest), per‑pair concurrency cap, warm‑up for indicators, skip stale TFs (last candle age > 2× TF length).
 
+**Simplified Scope (Current Support)**
+- RSI OB/OS Alerts
+  - Choose 1–3 timeframes (from supported set).
+  - Conditions: Overbought ≥70, Oversold ≤30 (crossing-based triggers).
+- RSI Correlation Alerts
+  - Modes: RSI Threshold or Real Correlation.
+  - Choose 1–3 timeframes.
+- Heatmap Alerts (Threshold/Flips)
+  - Up to 3 pairs; up to 3 timeframes.
+  - Threshold triggers: Buy when Buy Now % ≥ 70 (configurable), Sell when ≤ 30 (configurable). 70–80 typical for Buy.
+  - Indicators: choose any 1–2 of the 7 supported indicators (UTBOT, MACD, EMA21/50/200, IchimokuClone, RSI).
+- Only the above alert types are in scope for this release.
+
 **Type A — Buy Now % Threshold (multi‑pair)**
 - Intent: Alert when any chosen pair becomes strong enough to act.
 - Inputs
@@ -301,3 +314,28 @@ Quiet Hours (RSI only for now)
 
 Testing Hooks
 - Manual check endpoints exist: `/api/*/check`, `/api/*/test-email` — wire QA buttons in dev mode.
+
+**Implementation Parity Notes — Code vs Spec (as of 2025‑09‑26)**
+- Global
+  - Max 3 unique pairs/user: enforced on create endpoints (Heatmap/RSI/Correlation).
+  - Rate limiting (5 alerts/user/hour) and digest batching: not implemented; only test‑email endpoints are rate‑limited.
+  - Per‑pair concurrency and stale‑bar skip: implemented across services.
+- RSI OB/OS
+  - Triggers: implemented as threshold crossings with Only‑NEW K=3 and 1‑bar confirmation, plus hysteresis re‑arm at 65/35. In‑zone policy is not supported.
+  - Evaluation: closed‑bar only; `bar_policy` not exposed via API and not persisted.
+  - Quiet hours/timezone: suppression logic exists in service, but `create` API does not persist `timezone`/`quiet_start_local`/`quiet_end_local` to Supabase.
+- RSI Correlation
+  - Modes supported: `rsi_threshold` and `real_correlation` (parity OK).
+  - Conditions:
+    - Real correlation mode uses `strong_positive`, `strong_negative`, `weak_correlation`, `correlation_break` (parity OK).
+    - RSI threshold mode uses `positive_mismatch`, `negative_mismatch`, `neutral_break` (not explicitly documented in spec; consider documenting).
+  - Frequency: service also recognizes `weekly`, while request model defaults list `once|hourly|daily` (minor mismatch).
+- Heatmap (Threshold & Indicator Flips)
+  - Thresholding/Hysteresis: implemented; crossing confirmation on “dominant TFs” is not enforced (spec mentions confirmation, code uses hysteresis gating instead).
+  - Indicators (strength calc): code additionally accepts `bollinger` and `stochastic` beyond the 7 listed; treat as extras/not in scope UI.
+  - Indicator flips implemented for EMA(21/50/200), MACD, Ichimoku (Tenkan/Kijun), UTBOT. RSI flip is not implemented (as noted in spec).
+  - Optional `style_weights_override` supported by code but not defined in schema/spec (extra capability).
+  - Backend does not enforce “1–2 indicators” nor “≤3 timeframes” — assume UI validation.
+  - `trigger_on_crossing` is persisted but not used in flip/threshold evaluation (no‑op currently).
+- Delivery
+  - Email sending implemented. Telegram capture supported at data level, but sending is not implemented.
