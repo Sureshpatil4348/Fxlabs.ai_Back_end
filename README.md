@@ -137,7 +137,9 @@ PORT=8000
 PERPLEXITY_API_KEY=your_perplexity_key
 JBLANKED_API_URL=https://www.jblanked.com/news/api/forex-factory/calendar/week/
 JBLANKED_API_KEY=your_jblanked_key
-NEWS_UPDATE_INTERVAL_HOURS=24
+NEWS_UPDATE_INTERVAL_HOURS=1
+JBLANKED_API_KEY=your_jblanked_key
+NEWS_UPDATE_INTERVAL_HOURS=1
 NEWS_CACHE_MAX_ITEMS=500
 
 # Alert System Configuration
