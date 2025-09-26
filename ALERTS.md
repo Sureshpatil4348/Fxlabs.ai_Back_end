@@ -269,7 +269,7 @@ Notes
 | Type B (Flip) | Per (pair, TF, indicator) cooldown | match | Enforced: per (pair, timeframe, indicator) cooldown; default 30m; overridable via `cooldown_minutes`. |
 | RSI OB/OS | RFI conditions (rfi_strong/rfi_moderate) | extra | Optional RFI checks supported alongside RSI; not part of core spec. |
 | Global | Alert frequency (once/hourly/daily) | match | Enforced across Heatmap, RSI, and RSI Correlation services. |
-| Global | TF‑boundary evaluation (unified scheduler) | partial | RSI/Correlation use closed‑bar gating internally; Heatmap runs on tick invocation; unified TF scheduler planned. |
+| Global | TF‑boundary evaluation (unified scheduler) | match | Unified timeframe scheduler triggers Heatmap, RSI, and RSI Correlation checks on TF closes. Tick-driven checks disabled by default. |
 | Global | Unsubscribe + email diagnostics | extra | One‑click List‑Unsubscribe, masked config diagnostics, and unsubscribe persistence implemented. |
 | Type A (Heatmap) | Style weights override | partial | Field exists in schema; backend calculation does not consume overrides yet. |
 

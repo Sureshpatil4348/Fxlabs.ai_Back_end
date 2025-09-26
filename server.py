@@ -67,12 +67,19 @@ async def lifespan(app: FastAPI):
     
     # Initialize alert cache and start scheduler
     alert_cache_task = asyncio.create_task(alert_cache.start_refresh_scheduler())
+
+    # Start unified TF-boundary scheduler (drives Heatmap/RSI/Correlation checks on TF closes)
+    global _tf_scheduler_task, _tf_scheduler_running
+    _tf_scheduler_running = True
+    _tf_scheduler_task = asyncio.create_task(_timeframe_boundary_scheduler())
     
     yield
     
     # Shutdown
     news_task.cancel()
     alert_cache_task.cancel()
+    if _tf_scheduler_task:
+        _tf_scheduler_task.cancel()
     try:
         await news_task
     except asyncio.CancelledError:
@@ -81,6 +88,11 @@ async def lifespan(app: FastAPI):
         await alert_cache_task
     except asyncio.CancelledError:
         pass
+    if _tf_scheduler_task:
+        try:
+            await _tf_scheduler_task
+        except asyncio.CancelledError:
+            pass
     mt5.shutdown()
 
 app = FastAPI(title="MT5 Market Data Stream", version="2.0.0", lifespan=lifespan)
@@ -113,6 +125,13 @@ news_cache_metadata: Dict[str, any] = {
     "next_update_time": None,
     "is_updating": False
 }
+
+# Unified TF-boundary alert scheduler toggle
+ENABLE_TICK_TRIGGERED_ALERTS = False  # Use unified timeframe scheduler instead of tick-driven checks
+
+# Scheduler state
+_tf_scheduler_task: Optional[asyncio.Task] = None
+_tf_scheduler_running: bool = False
 
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
@@ -376,6 +395,99 @@ async def _get_user_tracked_symbols(user_email: str) -> Set[str]:
 
     return symbols
 
+
+async def _timeframe_boundary_scheduler():
+    """Unified timeframe boundary scheduler.
+
+    - Determines the next boundary across standard TFs.
+    - On each boundary tick, constructs minimal tick_data and runs all alert checks.
+    - Avoids tick-driven checks when ENABLE_TICK_TRIGGERED_ALERTS is False.
+    """
+    try:
+        # Supported TF boundaries (subset sufficient to cover alert TFs)
+        tf_seconds = {
+            "1M": 60,
+            "5M": 5 * 60,
+            "15M": 15 * 60,
+            "30M": 30 * 60,
+            "1H": 60 * 60,
+            "4H": 4 * 60 * 60,
+            "1D": 24 * 60 * 60,
+        }
+        while _tf_scheduler_running:
+            now = datetime.now(timezone.utc)
+            # Compute seconds to next nearest boundary among TFs
+            seconds_to_boundaries = []
+            for secs in tf_seconds.values():
+                if secs <= 0:
+                    continue
+                epoch = int(now.timestamp())
+                rem = secs - (epoch % secs)
+                if rem == 0:
+                    rem = secs
+                seconds_to_boundaries.append(rem)
+            sleep_s = min(seconds_to_boundaries) if seconds_to_boundaries else 60
+            await asyncio.sleep(sleep_s)
+
+            # On boundary, run alert checks using minimal tick_data
+            try:
+                all_alerts = await alert_cache.get_all_alerts()
+            except Exception:
+                all_alerts = {}
+            symbols: Set[str] = set()
+            for _uid, alerts in all_alerts.items():
+                for alert in alerts:
+                    if not alert.get("is_active", True):
+                        continue
+                    pairs = alert.get("pairs") or alert.get("correlation_pairs") or []
+                    if isinstance(pairs, list):
+                        if all(isinstance(p, str) for p in pairs):
+                            symbols.update(pairs)
+                        elif all(isinstance(p, list) for p in pairs):
+                            for combo in pairs:
+                                for sym in combo:
+                                    if isinstance(sym, str):
+                                        symbols.add(sym)
+            # Build tick_data map (best-effort real ticks; fallback to empty entries)
+            tick_data_map: Dict[str, Any] = {}
+            for sym in symbols:
+                try:
+                    ensure_symbol_selected(sym)
+                    info = mt5.symbol_info_tick(sym) if MT5_AVAILABLE else None
+                    if info:
+                        tick_data_map[sym] = {
+                            "bid": getattr(info, "bid", None),
+                            "ask": getattr(info, "ask", None),
+                            "time": getattr(info, "time", None),
+                            "volume": getattr(info, "volume", None) or 1000,
+                        }
+                    else:
+                        tick_data_map[sym] = {
+                            "bid": None,
+                            "ask": None,
+                            "time": int(now.timestamp()),
+                            "volume": 1000,
+                        }
+                except Exception:
+                    tick_data_map[sym] = {
+                        "bid": None,
+                        "ask": None,
+                        "time": int(now.timestamp()),
+                        "volume": 1000,
+                    }
+
+            tick_data = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "symbols": sorted(symbols),
+                "tick_data": tick_data_map,
+            }
+
+            await _check_alerts_safely(tick_data)
+
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        print(f"❌ TF scheduler error: {e}")
 
 @app.get("/health")
 def health():
@@ -1033,7 +1145,7 @@ class WSClient:
                 all_alerts = await alert_cache.get_all_alerts()
                 total_alerts = sum(len(alerts) for alerts in all_alerts.values())
                 
-                if total_alerts > 0:
+                if ENABLE_TICK_TRIGGERED_ALERTS and total_alerts > 0:
                     # Provide tick_data in a dict keyed by symbol as expected by alert services
                     tick_data_map = {}
                     for td in updates:
@@ -1066,12 +1178,13 @@ class WSClient:
                         "time": td.get("time"),
                         "volume": td.get("volume"),
                     }
-                tick_data = {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "symbols": list(tick_symbols),
-                    "tick_data": tick_data_map
-                }
-                asyncio.create_task(_check_alerts_safely(tick_data))
+                if ENABLE_TICK_TRIGGERED_ALERTS:
+                    tick_data = {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "symbols": list(tick_symbols),
+                        "tick_data": tick_data_map
+                    }
+                    asyncio.create_task(_check_alerts_safely(tick_data))
     
     async def _send_scheduled_ohlc_updates(self):
         """Send OHLC updates when timeframe periods complete"""
