@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL
+from .alert_logging import log_debug, log_info, log_warning, log_error
 
 
 class EmailService:

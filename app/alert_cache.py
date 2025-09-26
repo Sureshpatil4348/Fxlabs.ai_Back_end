@@ -4,6 +4,10 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 import aiohttp
 import json
+import logging
+
+from .logging_config import configure_logging
+from .alert_logging import log_debug, log_info, log_warning, log_error
 
 class AlertCache:
     """Simple in-memory cache for user alert configurations"""
@@ -66,6 +70,12 @@ class AlertCache:
         try:
             self._is_refreshing = True
             print("🔄 Refreshing alert cache...")
+            configure_logging()
+            logger = logging.getLogger(__name__)
+            log_info(
+                logger,
+                "alert_cache_refresh_start",
+            )
             
             # Fetch all active alerts from Supabase
             headers = {
@@ -183,11 +193,27 @@ class AlertCache:
             
             total_alerts = sum(len(alerts) for alerts in new_cache.values())
             print(f"✅ Alert cache refreshed: {len(new_cache)} users, {total_alerts} total alerts")
+            log_info(
+                logger,
+                "alert_cache_refreshed",
+                users=len(new_cache),
+                total_alerts=total_alerts,
+            )
             
         except Exception as e:
             print(f"❌ Error refreshing alert cache: {e}")
             import traceback
             traceback.print_exc()
+            try:
+                configure_logging()
+                logger = logging.getLogger(__name__)
+                log_error(
+                    logger,
+                    "alert_cache_refresh_error",
+                    error=str(e),
+                )
+            except Exception:
+                pass
         finally:
             self._is_refreshing = False
     

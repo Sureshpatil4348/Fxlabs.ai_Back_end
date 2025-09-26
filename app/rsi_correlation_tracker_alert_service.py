@@ -10,6 +10,7 @@ from .logging_config import configure_logging
 from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
+from .alert_logging import log_debug, log_info, log_warning, log_error
 
 
 configure_logging()
@@ -57,31 +58,54 @@ class RSICorrelationTrackerAlertService:
                     pairs_env = os.environ.get("RSI_CORR_TRACKER_DEFAULT_PAIRS", "")
                     pair_keys: List[str] = [p.strip() for p in pairs_env.split(",") if p.strip()]
                     if not pair_keys:
+                        log_debug(
+                            logger,
+                            "corr_no_pairs_configured",
+                            alert_id=alert_id,
+                        )
                         continue
 
                     for pair_key in pair_keys:
                         parts = pair_key.split("_")
                         if len(parts) != 2:
+                            log_warning(
+                                logger,
+                                "corr_invalid_pair_key",
+                                alert_id=alert_id,
+                                pair_key=pair_key,
+                            )
                             continue
                         s1, s2 = parts[0], parts[1]
                         k = self._state_key(alert_id, pair_key, timeframe, mode)
 
                         async with pair_locks.acquire(f"{s1}:{timeframe}"):
                             async with pair_locks.acquire(f"{s2}:{timeframe}"):
-                        if mode == "rsi_threshold":
-                            mismatch, val, cond_label = await self._evaluate_rsi_threshold_mismatch(
-                                s1, s2, timeframe, rsi_period, rsi_ob, rsi_os
-                            )
-                        else:
-                            mismatch, val, cond_label = await self._evaluate_real_correlation_mismatch(
-                                s1, s2, timeframe, corr_window
-                            )
+                                if mode == "rsi_threshold":
+                                    mismatch, val, cond_label = await self._evaluate_rsi_threshold_mismatch(
+                                        s1, s2, timeframe, rsi_period, rsi_ob, rsi_os
+                                    )
+                                else:
+                                    mismatch, val, cond_label = await self._evaluate_real_correlation_mismatch(
+                                        s1, s2, timeframe, corr_window
+                                    )
 
                         prev = self._last_state.get(k, False)
                         self._last_state[k] = mismatch
                         if (not prev) and mismatch:
+                            # Derive a trigger label if not provided by evaluator
+                            trig_type = cond_label or ("mismatch" if mode == "rsi_threshold" else "correlation_break")
                             logger.info(
                                 f"🚨 RSI Correlation Tracker trigger: alert_id={alert_id} pair={pair_key} tf={timeframe} mode={mode} type={trig_type}"
+                            )
+                            log_info(
+                                logger,
+                                "rsi_correlation_trigger",
+                                alert_id=alert_id,
+                                pair_key=pair_key,
+                                timeframe=timeframe,
+                                mode=mode,
+                                trigger_type=trig_type,
+                                value=val if isinstance(val, (int, float)) else None,
                             )
                             if mode == "rsi_threshold":
                                 pair_entry = {
@@ -119,15 +143,32 @@ class RSICorrelationTrackerAlertService:
                                 logger.info(
                                     f"📤 Queueing email send for RSI Correlation Tracker alert_id={alert_id} via background task"
                                 )
+                                log_info(
+                                    logger,
+                                    "email_queue",
+                                    alert_type="rsi_correlation_tracker",
+                                    alert_id=alert_id,
+                                )
                                 asyncio.create_task(self._send_email(user_email, payload))
                             else:
                                 logger.info(
                                     f"🔕 Email notifications disabled for correlation alert_id={alert_id}; methods={methods}"
                                 )
+                                log_info(
+                                    logger,
+                                    "email_disabled",
+                                    alert_type="rsi_correlation_tracker",
+                                    alert_id=alert_id,
+                                    methods=methods,
+                                )
 
             return triggers
         except Exception as e:
-            logger.error(f"Error checking RSI Correlation Tracker: {e}")
+            log_error(
+                logger,
+                "rsi_correlation_check_error",
+                error=str(e),
+            )
             return []
 
     async def _evaluate_rsi_threshold_mismatch(self, s1: str, s2: str, timeframe: str, period: int, ob: int, os_: int) -> (bool, Optional[float], Optional[str]):
@@ -167,7 +208,19 @@ class RSICorrelationTrackerAlertService:
                 cond = "weak_correlation"
             else:
                 cond = "correlation_break"
-            return mismatch, float(corr), cond
+            val = float(corr)
+            log_debug(
+                logger,
+                "correlation_evaluated",
+                symbol1=s1,
+                symbol2=s2,
+                timeframe=timeframe,
+                window=window,
+                correlation=round(val, 4),
+                label=cond,
+                mismatch=bool(mismatch),
+            )
+            return mismatch, val, cond
         except Exception:
             return False, None, None
 
@@ -279,9 +332,36 @@ class RSICorrelationTrackerAlertService:
                 async with session.post(url, headers=headers, json=payload) as resp:
                     if resp.status not in (200, 201):
                         txt = await resp.text()
-                        logger.error(f"Failed to log RSI correlation trigger: {resp.status} - {txt}")
+                        log_error(
+                            logger,
+                            "db_trigger_log_failed",
+                            status=resp.status,
+                            body=txt,
+                            alert_id=alert_id,
+                            pair_key=pair_key,
+                            timeframe=timeframe,
+                            trigger_type=trigger_type,
+                        )
+                    else:
+                        log_info(
+                            logger,
+                            "db_trigger_logged",
+                            alert_id=alert_id,
+                            pair_key=pair_key,
+                            timeframe=timeframe,
+                            trigger_type=trigger_type,
+                            value=value,
+                        )
         except Exception as e:
-            logger.error(f"Error logging RSI correlation trigger: {e}")
+            log_error(
+                logger,
+                "db_trigger_log_error",
+                alert_id=alert_id,
+                pair_key=pair_key,
+                timeframe=timeframe,
+                trigger_type=trigger_type,
+                error=str(e),
+            )
 
     async def _send_email(self, user_email: str, payload: Dict[str, Any]) -> None:
         try:

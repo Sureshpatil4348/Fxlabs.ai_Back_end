@@ -6,6 +6,7 @@ import aiohttp
 import json
 import logging
 from .logging_config import configure_logging
+from .alert_logging import log_debug, log_info, log_warning, log_error
 
 from .email_service import email_service
 from .alert_cache import alert_cache
@@ -120,9 +121,21 @@ class RSIAlertService:
             if total_rsi_alerts > 0:
                 if len(triggered_alerts) > 0:
                     logger.info(f"📊 RSI Alert Check Complete: {total_rsi_alerts} alerts processed, {len(triggered_alerts)} triggered")
+                    log_info(
+                        logger,
+                        "rsi_alerts_check_summary",
+                        processed=total_rsi_alerts,
+                        triggered=len(triggered_alerts),
+                    )
                 else:
                     # Only log debug level when no triggers to reduce noise
                     logger.debug(f"📊 RSI Alert Check Complete: {total_rsi_alerts} alerts processed, 0 triggered")
+                    log_debug(
+                        logger,
+                        "rsi_alerts_check_summary",
+                        processed=total_rsi_alerts,
+                        triggered=0,
+                    )
             
             return triggered_alerts
             
@@ -158,6 +171,14 @@ class RSIAlertService:
                 for timeframe in timeframes:
                     total_checks += 1
                     logger.debug(f"🔍 Checking {symbol} {timeframe} (Check {total_checks})")
+                    log_debug(
+                        logger,
+                        "evaluation_start",
+                        alert_id=alert_id,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        check=total_checks,
+                    )
 
                     key = f"{symbol}:{timeframe}"
                     async with pair_locks.acquire(key):
@@ -166,17 +187,36 @@ class RSIAlertService:
 
                         if not market_data:
                             logger.warning(f"⚠️ No market data available for {symbol} {timeframe}")
+                            log_warning(
+                                logger,
+                                "market_data_missing",
+                                symbol=symbol,
+                                timeframe=timeframe,
+                            )
                             continue
 
                         # Stale-bar protection
                         if self._is_stale_market(market_data, timeframe):
                             logger.debug(f"⏭️ Stale data skipped for {symbol} {timeframe}")
+                            log_debug(
+                                logger,
+                                "market_data_stale",
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                ts=market_data.get("timestamp"),
+                            )
                             continue
 
                         # Enforce closed-bar policy always (RSI-closed only)
                         last_ts = await self._get_last_closed_bar_ts(symbol, timeframe)
                         if last_ts is None:
                             logger.debug(f"⏭️ Skipping {symbol} {timeframe}: unknown last closed bar (closed policy)")
+                            log_debug(
+                                logger,
+                                "closed_bar_unknown",
+                                symbol=symbol,
+                                timeframe=timeframe,
+                            )
                             continue
                         last_key = f"{symbol}:{timeframe}"
                         prev_ts = self._last_closed_bar_ts.get(last_key)
@@ -186,21 +226,48 @@ class RSIAlertService:
                         self._last_closed_bar_ts[last_key] = last_ts
 
                         logger.debug(f"✅ Market data retrieved for {symbol} {timeframe}: {market_data.get('data_source', 'Unknown')}")
+                        log_debug(
+                            logger,
+                            "market_data_loaded",
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            source=market_data.get("data_source", "Unknown"),
+                        )
 
                         # Calculate RSI
                         rsi_value = await self._calculate_rsi(market_data, rsi_period)
 
                         if rsi_value is None:
                             logger.warning(f"⚠️ Could not calculate RSI for {symbol} {timeframe}")
+                            log_warning(
+                                logger,
+                                "rsi_calculation_failed",
+                                symbol=symbol,
+                                timeframe=timeframe,
+                            )
                             continue
 
                         logger.debug(f"📊 RSI calculated for {symbol} {timeframe}: {rsi_value:.2f}")
+                        log_debug(
+                            logger,
+                            "rsi_calculated",
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            rsi=round(float(rsi_value), 2),
+                        )
 
                         # Warm-up: ensure we have prev and current closed-bar RSI
                         bars_needed = 3
                         rsis = await self._get_recent_rsi_series(symbol, timeframe, rsi_period, bars_needed)
                         if not rsis or len(rsis) < bars_needed:
                             logger.debug(f"⏳ Warm-up insufficient for {symbol} {timeframe} (need ≥{bars_needed} RSI points)")
+                            log_debug(
+                                logger,
+                                "warmup_insufficient",
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                required=bars_needed,
+                            )
                             continue
 
                         # RFI support removed to align with core spec
@@ -222,6 +289,15 @@ class RSIAlertService:
                         if trigger_condition:
                             logger.info(f"🚨 CONDITION MATCHED: {symbol} {timeframe} - {trigger_condition}")
                             logger.info(f"   RSI: {rsi_value:.2f}")
+                            log_info(
+                                logger,
+                                "rsi_cross_event",
+                                alert_id=alert_id,
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                condition=trigger_condition,
+                                rsi=round(float(rsi_value), 2),
+                            )
 
                             # Enforce per (alert, symbol, timeframe, side) cooldown
                             side = "overbought" if "overbought" in trigger_condition else (
@@ -229,6 +305,14 @@ class RSIAlertService:
                             )
                             if side != "neutral" and not self._allow_by_pair_cooldown(alert, alert_id, symbol, timeframe, side):
                                 logger.debug(f"⏳ Cooldown active for {symbol} {timeframe} {side}, skipping")
+                                log_debug(
+                                    logger,
+                                    "pair_cooldown_block",
+                                    alert_id=alert_id,
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                    side=side,
+                                )
                                 continue
 
                             triggered_pairs.append({
@@ -251,6 +335,13 @@ class RSIAlertService:
                     logger.info(f"   - {pair['symbol']} {pair['timeframe']}: {pair['trigger_condition']} (RSI: {pair['rsi_value']})")
                 # Update last triggered time for alert frequency enforcement
                 self.last_triggered_alerts[alert_id] = datetime.now(timezone.utc)
+                log_info(
+                    logger,
+                    "rsi_alert_triggers",
+                    alert_id=alert_id,
+                    alert_name=alert_name,
+                    count=len(triggered_pairs),
+                )
                 return {
                     "alert_id": alert_id,
                     "alert_name": alert_name,
@@ -265,7 +356,12 @@ class RSIAlertService:
             return None
             
         except Exception as e:
-            logger.error(f"❌ Error checking single RSI alert: {e}")
+            log_error(
+                logger,
+                "rsi_single_check_error",
+                alert_id=alert.get("id"),
+                error=str(e),
+            )
             return None
 
     # Quiet hours helpers removed per spec
@@ -324,6 +420,13 @@ class RSIAlertService:
                         tick_data = get_current_tick(symbol)
                         
                         logger.debug(f"✅ Using real MT5 data for {symbol} {timeframe}")
+                        log_debug(
+                            logger,
+                            "market_data_loaded",
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            source="MT5_REAL",
+                        )
                         return {
                             "symbol": symbol,
                             "timeframe": timeframe,
@@ -351,6 +454,13 @@ class RSIAlertService:
             
             # Final fallback: simulate market data
             logger.debug(f"⚠️ Using simulated data for {symbol} - no real data available")
+            log_debug(
+                logger,
+                "market_data_loaded",
+                symbol=symbol,
+                timeframe=timeframe,
+                source="SIMULATED",
+            )
             return {
                 "symbol": symbol,
                 "timeframe": timeframe,
@@ -418,7 +528,11 @@ class RSIAlertService:
             return rsi_value
             
         except Exception as e:
-            logger.error(f"❌ Error calculating RSI: {e}")
+            log_error(
+                logger,
+                "rsi_calculation_error",
+                error=str(e),
+            )
             return None
 
     def _allow_by_pair_cooldown(self, alert: Dict[str, Any], alert_id: str, symbol: str, timeframe: str, side: str) -> bool:
@@ -501,6 +615,14 @@ class RSIAlertService:
             logger.info(
                 f"📧 Scheduling RSI email -> user={user_email}, alert={alert_name}, pairs={len(triggered_pairs)}"
             )
+            log_info(
+                logger,
+                "email_queue",
+                alert_type="rsi",
+                alert_id=alert_id,
+                user_email=user_email,
+                pairs=len(triggered_pairs),
+            )
             logger.info(f"📧 Preparing RSI alert email for user: {user_email}")
             logger.info(f"   Alert: {alert_name} (ID: {alert_id})")
             logger.info(f"   Triggered pairs: {len(triggered_pairs)}")
@@ -524,10 +646,24 @@ class RSIAlertService:
             
             if success:
                 logger.info(f"✅ RSI alert email sent successfully to {user_email}")
+                log_info(
+                    logger,
+                    "email_send_success",
+                    alert_type="rsi",
+                    alert_id=alert_id,
+                    user_email=user_email,
+                )
                 logger.info(f"   Alert: {alert_name} (ID: {alert_id})")
                 logger.info(f"   Pairs: {len(triggered_pairs)}")
             else:
                 logger.warning(f"⚠️ Failed to send RSI alert email to {user_email}")
+                log_warning(
+                    logger,
+                    "email_send_failed",
+                    alert_type="rsi",
+                    alert_id=alert_id,
+                    user_email=user_email,
+                )
                 logger.warning(f"   Alert: {alert_name} (ID: {alert_id})")
                 # Email diagnostics removed per spec
             
@@ -535,9 +671,20 @@ class RSIAlertService:
             logger.info(f"📝 Logging RSI alert trigger to database...")
             await self._log_rsi_alert_trigger(trigger_data)
             logger.info(f"✅ RSI alert trigger logged to database")
+            log_info(
+                logger,
+                "db_trigger_logged",
+                alert_type="rsi",
+                alert_id=alert_id,
+                pairs=len(triggered_pairs),
+            )
             
         except Exception as e:
-            logger.error(f"❌ Error sending RSI alert notification: {e}")
+            log_error(
+                logger,
+                "rsi_email_queue_error",
+                error=str(e),
+            )
     
     async def _log_rsi_alert_trigger(self, trigger_data: Dict[str, Any]):
         """Log RSI alert trigger to database"""
@@ -571,10 +718,32 @@ class RSIAlertService:
                 async with aiohttp.ClientSession() as session:
                     async with session.post(url, headers=headers, json=trigger_record) as response:
                         if response.status not in [200, 201]:
-                            logger.error(f"Failed to log RSI trigger: {response.status}")
+                            log_error(
+                                logger,
+                                "db_trigger_log_failed",
+                                status=response.status,
+                                alert_type="rsi",
+                                alert_id=trigger_data.get("alert_id"),
+                                symbol=pair_data.get("symbol"),
+                                timeframe=pair_data.get("timeframe"),
+                            )
+                        else:
+                            log_info(
+                                logger,
+                                "db_trigger_logged",
+                                alert_type="rsi",
+                                alert_id=trigger_data.get("alert_id"),
+                                symbol=pair_data.get("symbol"),
+                                timeframe=pair_data.get("timeframe"),
+                            )
             
         except Exception as e:
-            logger.error(f"❌ Error logging RSI alert trigger: {e}")
+            log_error(
+                logger,
+                "db_trigger_log_error",
+                alert_type="rsi",
+                error=str(e),
+            )
 
     async def _get_last_closed_bar_ts(self, symbol: str, timeframe: str) -> Optional[int]:
         """Return timestamp (ms) of the last closed bar using MT5 OHLC data; None if unavailable."""

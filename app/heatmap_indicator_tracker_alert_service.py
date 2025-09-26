@@ -9,6 +9,7 @@ from .logging_config import configure_logging
 from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
+from .alert_logging import log_debug, log_info, log_warning, log_error
 
 
 configure_logging()
@@ -54,6 +55,16 @@ class HeatmapIndicatorTrackerAlertService:
                             k = self._key(alert_id, symbol, timeframe, indicator)
                             prev = self._last_signal.get(k, "neutral")
                             self._last_signal[k] = signal
+                            log_debug(
+                                logger,
+                                "indicator_signal",
+                                alert_id=alert_id,
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                indicator=indicator,
+                                signal=signal,
+                                previous=prev,
+                            )
                             if signal in ("buy", "sell") and signal != prev:
                                 per_alert_triggers.append({
                                     "symbol": symbol,
@@ -63,6 +74,15 @@ class HeatmapIndicatorTrackerAlertService:
                                     "current_price": None,
                                     "timestamp": ts_iso,
                                 })
+                                log_info(
+                                    logger,
+                                    "indicator_tracker_trigger",
+                                    alert_id=alert_id,
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                    indicator=indicator,
+                                    trigger=signal,
+                                )
 
                     if per_alert_triggers:
                         payload = {
@@ -76,7 +96,21 @@ class HeatmapIndicatorTrackerAlertService:
                         triggers.append(payload)
                         methods = alert.get("notification_methods") or ["email"]
                         if "email" in methods:
+                            log_info(
+                                logger,
+                                "email_queue",
+                                alert_type="indicator_tracker",
+                                alert_id=alert_id,
+                            )
                             asyncio.create_task(self._send_email(user_email, payload))
+                        else:
+                            log_info(
+                                logger,
+                                "email_disabled",
+                                alert_type="indicator_tracker",
+                                alert_id=alert_id,
+                                methods=methods,
+                            )
 
             return triggers
         except Exception as e:

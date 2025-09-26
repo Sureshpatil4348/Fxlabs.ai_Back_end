@@ -657,7 +657,7 @@ Returns:
 ```
 
 ### Logging
-All logs now include timestamps with timezone offset using the format:
+All logs include timestamps with timezone offset using the format:
 `YYYY-MM-DD HH:MM:SS±ZZZZ | LEVEL | module | message`.
 
 You can control verbosity via `LOG_LEVEL` (default `INFO`).
@@ -667,6 +667,37 @@ The system provides comprehensive logging for:
 - Data processing errors
 - API request/response cycles
 - Performance metrics
+
+#### Structured Alert Logging (v2.1.0)
+Alert evaluations and actions are now logged in a structured, JSON-style format using `app/alert_logging.py`. Key events:
+
+- `evaluation_start`: per pair/timeframe evaluation start (DEBUG)
+- `market_data_loaded`: market data source and metadata (DEBUG)
+- `market_data_stale`: stale-bar skip with age metadata (DEBUG)
+- `warmup_insufficient`: RSI series not warm yet (DEBUG)
+- `rsi_calculated`: calculated RSI value (DEBUG)
+- `rsi_cross_event` / `rsi_cross_overbought` / `rsi_cross_oversold`: detected crossings (INFO)
+- `pair_cooldown_block`: cooldown prevented re-trigger (DEBUG)
+- `rsi_tracker_triggers` / `rsi_alert_triggers` / `heatmap_tracker_trigger` / `indicator_tracker_trigger` / `rsi_correlation_trigger` (INFO)
+- `email_queue` / `email_disabled`: email scheduling state (INFO)
+- `db_trigger_logged` / `db_trigger_log_failed` / `db_trigger_log_error`: DB logging outcomes (INFO/ERROR)
+
+These appear as compact one-line JSON objects after the timestamped prefix, e.g.:
+```
+2025-09-26 10:30:12+0000 | INFO | app.rsi_tracker_alert_service | {"event":"rsi_tracker_triggers","ts":"2025-09-26T10:30:12+00:00","alert_id":"...","count":3}
+```
+
+Benefits:
+- Lower parsing overhead for log processors
+- Easier filtering and correlation across services
+- Noise control: detailed steps at DEBUG, important outcomes at INFO
+
+Modules instrumented: `rsi_alert_service`, `rsi_tracker_alert_service`, `rsi_correlation_tracker_alert_service`, `heatmap_tracker_alert_service`, `heatmap_indicator_tracker_alert_service`, `alert_cache`, and `email_service` (queue/send summaries).
+
+To enable DEBUG-level detailed evaluations, set:
+```bash
+export LOG_LEVEL=DEBUG
+```
 
 #### Logging Optimization (v2.0.1)
 **Problem Fixed**: Alert services were logging extensively on every tick, even when no alerts were triggered, causing massive log spam.

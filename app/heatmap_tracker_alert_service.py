@@ -9,6 +9,7 @@ from .logging_config import configure_logging
 from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
+from .alert_logging import log_debug, log_info, log_warning, log_error
 
 
 configure_logging()
@@ -51,6 +52,16 @@ class HeatmapTrackerAlertService:
                         async with pair_locks.acquire(self._key(alert_id, symbol)):
                             # Compute Buy%/Sell% via style weighting using real or simulated indicator strengths
                             buy_pct, sell_pct, final_score = await self._compute_buy_sell_percent(symbol, style)
+                            log_debug(
+                                logger,
+                                "heatmap_eval",
+                                alert_id=alert_id,
+                                symbol=symbol,
+                                style=style,
+                                buy_percent=round(buy_pct, 2),
+                                sell_percent=round(sell_pct, 2),
+                                final_score=round(final_score, 2),
+                            )
                             k = self._key(alert_id, symbol)
                             st = self._armed.setdefault(k, {"buy": True, "sell": True})
 
@@ -79,6 +90,14 @@ class HeatmapTrackerAlertService:
                                     "current_price": None,
                                     "timestamp": ts_iso,
                                 })
+                                log_info(
+                                    logger,
+                                    "heatmap_tracker_trigger",
+                                    alert_id=alert_id,
+                                    symbol=symbol,
+                                    style=style,
+                                    trigger=trig_type,
+                                )
 
                     if per_alert_triggers:
                         payload = {
@@ -93,7 +112,21 @@ class HeatmapTrackerAlertService:
                         # Send email if enabled
                         methods = alert.get("notification_methods") or ["email"]
                         if "email" in methods:
+                            log_info(
+                                logger,
+                                "email_queue",
+                                alert_type="heatmap_tracker",
+                                alert_id=alert_id,
+                            )
                             asyncio.create_task(self._send_email(user_email, payload))
+                        else:
+                            log_info(
+                                logger,
+                                "email_disabled",
+                                alert_type="heatmap_tracker",
+                                alert_id=alert_id,
+                                methods=methods,
+                            )
 
             return triggers
         except Exception as e:
