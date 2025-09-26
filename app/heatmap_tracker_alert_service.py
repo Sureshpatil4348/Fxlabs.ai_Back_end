@@ -45,6 +45,18 @@ class HeatmapTrackerAlertService:
                     buy_t = float(alert.get("buy_threshold", 70))
                     sell_t = float(alert.get("sell_threshold", 30))
                     pairs: List[str] = alert.get("pairs", []) or []
+                    # Start-of-alert evaluation log
+                    log_debug(
+                        logger,
+                        "alert_eval_start",
+                        alert_type="heatmap_tracker",
+                        alert_id=alert_id,
+                        user_email=user_email,
+                        style=style,
+                        buy_threshold=buy_t,
+                        sell_threshold=sell_t,
+                        pairs=len(pairs),
+                    )
 
                     ts_iso = datetime.now(timezone.utc).isoformat()
                     per_alert_triggers: List[Dict[str, Any]] = []
@@ -127,6 +139,14 @@ class HeatmapTrackerAlertService:
                                 alert_id=alert_id,
                                 methods=methods,
                             )
+                    # End-of-alert evaluation log
+                    log_debug(
+                        logger,
+                        "alert_eval_end",
+                        alert_type="heatmap_tracker",
+                        alert_id=alert_id,
+                        triggered_count=len(per_alert_triggers),
+                    )
 
             return triggers
         except Exception as e:

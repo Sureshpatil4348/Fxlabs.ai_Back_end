@@ -53,6 +53,23 @@ class RSICorrelationTrackerAlertService:
                     rsi_ob = int(alert.get("rsi_overbought", 70))
                     rsi_os = int(alert.get("rsi_oversold", 30))
                     corr_window = int(alert.get("correlation_window", 50))
+                    # Start-of-alert evaluation log
+                    pairs_env = os.environ.get("RSI_CORR_TRACKER_DEFAULT_PAIRS", "")
+                    pair_keys_snapshot: List[str] = [p.strip() for p in pairs_env.split(",") if p.strip()]
+                    log_debug(
+                        logger,
+                        "alert_eval_start",
+                        alert_type="rsi_correlation_tracker",
+                        alert_id=alert_id,
+                        user_email=user_email,
+                        timeframe=timeframe,
+                        mode=mode,
+                        rsi_period=rsi_period,
+                        rsi_overbought=rsi_ob,
+                        rsi_oversold=rsi_os,
+                        correlation_window=corr_window,
+                        pairs=len(pair_keys_snapshot),
+                    )
 
                     # Pairs for correlation come from env or alert (future). Expect comma pairs like "EURUSD_GBPUSD,USDJPY_GBPUSD"
                     pairs_env = os.environ.get("RSI_CORR_TRACKER_DEFAULT_PAIRS", "")

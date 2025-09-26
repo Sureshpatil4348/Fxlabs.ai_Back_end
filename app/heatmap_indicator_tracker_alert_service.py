@@ -44,6 +44,17 @@ class HeatmapIndicatorTrackerAlertService:
                     timeframe = alert.get("timeframe", "1H")
                     indicator = (alert.get("indicator") or "ema21").lower()
                     pairs: List[str] = alert.get("pairs", []) or []
+                    # Start-of-alert evaluation log
+                    log_debug(
+                        logger,
+                        "alert_eval_start",
+                        alert_type="indicator_tracker",
+                        alert_id=alert_id,
+                        user_email=user_email,
+                        timeframe=timeframe,
+                        indicator=indicator,
+                        pairs=len(pairs),
+                    )
 
                     ts_iso = datetime.now(timezone.utc).isoformat()
                     per_alert_triggers: List[Dict[str, Any]] = []
@@ -111,6 +122,14 @@ class HeatmapIndicatorTrackerAlertService:
                                 alert_id=alert_id,
                                 methods=methods,
                             )
+                    # End-of-alert evaluation log
+                    log_debug(
+                        logger,
+                        "alert_eval_end",
+                        alert_type="indicator_tracker",
+                        alert_id=alert_id,
+                        triggered_count=len(per_alert_triggers),
+                    )
 
             return triggers
         except Exception as e:

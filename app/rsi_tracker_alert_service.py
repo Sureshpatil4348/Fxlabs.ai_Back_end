@@ -404,6 +404,22 @@ class RSITrackerAlertService:
                     rsi_overbought = int(alert.get("rsi_overbought", alert.get("rsi_overbought_threshold", 70)))
                     rsi_oversold = int(alert.get("rsi_oversold", alert.get("rsi_oversold_threshold", 30)))
                     cooldown_minutes = alert.get("cooldown_minutes")  # optional, default inside service
+                    # Start-of-alert evaluation log
+                    pairs_cfg = alert.get("pairs", []) or []
+                    log_debug(
+                        logger,
+                        "alert_eval_start",
+                        alert_type="rsi_tracker",
+                        alert_id=alert_id,
+                        alert_name=alert_name,
+                        user_email=user_email,
+                        pairs=len(pairs_cfg),
+                        timeframe=timeframe,
+                        rsi_period=rsi_period,
+                        rsi_overbought=rsi_overbought,
+                        rsi_oversold=rsi_oversold,
+                        cooldown_minutes=cooldown_minutes,
+                    )
                     # Pairs: use record if present; else fallback to env default list
                     pairs: List[str] = alert.get("pairs", []) or []
                     if not pairs:
@@ -512,6 +528,15 @@ class RSITrackerAlertService:
                                 alert_id=alert_id,
                                 methods=methods,
                             )
+                    # End-of-alert evaluation log
+                    log_debug(
+                        logger,
+                        "alert_eval_end",
+                        alert_type="rsi_tracker",
+                        alert_id=alert_id,
+                        alert_name=alert_name,
+                        triggered_count=len(triggered_pairs),
+                    )
 
             return triggers
         except Exception as e:

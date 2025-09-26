@@ -96,6 +96,29 @@ class RSIAlertService:
                         alert_id = alert.get("id")
                         alert_name = alert.get("alert_name", "Unknown")
                         user_email = alert.get("user_email", "Unknown")
+                        # Gather config snapshot for structured start log
+                        pairs_cfg = alert.get("pairs", []) or []
+                        timeframes_cfg = alert.get("timeframes", ["1H"]) or ["1H"]
+                        rsi_period_cfg = alert.get("rsi_period", 14)
+                        rsi_ob_cfg = alert.get("rsi_overbought_threshold", 70)
+                        rsi_os_cfg = alert.get("rsi_oversold_threshold", 30)
+                        conditions_cfg = alert.get("alert_conditions", []) or []
+                        cooldown_cfg = alert.get("cooldown_minutes")
+                        log_debug(
+                            logger,
+                            "alert_eval_start",
+                            alert_type="rsi",
+                            alert_id=alert_id,
+                            alert_name=alert_name,
+                            user_email=user_email,
+                            pairs=len(pairs_cfg),
+                            timeframes=timeframes_cfg,
+                            rsi_period=int(rsi_period_cfg),
+                            rsi_overbought=int(rsi_ob_cfg),
+                            rsi_oversold=int(rsi_os_cfg),
+                            conditions=conditions_cfg,
+                            cooldown_minutes=cooldown_cfg,
+                        )
                         
                         if not alert_id:
                             logger.warning(f"⚠️ Alert {alert_name} has no ID, skipping")
@@ -116,6 +139,15 @@ class RSIAlertService:
                                 await self._send_rsi_alert_notification(trigger_result)
                             else:
                                 logger.info(f"📧 Email notification not configured for alert {alert_name}")
+                        # Structured end log (regardless of triggers)
+                        log_debug(
+                            logger,
+                            "alert_eval_end",
+                            alert_type="rsi",
+                            alert_id=alert_id,
+                            alert_name=alert_name,
+                            triggered_count=int(len(trigger_result.get("triggered_pairs", [])) if trigger_result else 0),
+                        )
             
             # Only log summary if there are alerts to process or triggers occurred
             if total_rsi_alerts > 0:

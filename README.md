@@ -681,6 +681,7 @@ Alert evaluations and actions are now logged in a structured, JSON-style format 
 - `rsi_tracker_triggers` / `rsi_alert_triggers` / `heatmap_tracker_trigger` / `indicator_tracker_trigger` / `rsi_correlation_trigger` (INFO)
 - `email_queue` / `email_disabled`: email scheduling state (INFO)
 - `db_trigger_logged` / `db_trigger_log_failed` / `db_trigger_log_error`: DB logging outcomes (INFO/ERROR)
+- `alert_eval_start` / `alert_eval_end`: per-alert start/end with configuration snapshot and trigger counts (DEBUG)
 
 These appear as compact one-line JSON objects after the timestamped prefix, e.g.:
 ```
