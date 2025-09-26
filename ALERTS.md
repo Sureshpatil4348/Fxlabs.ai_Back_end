@@ -90,6 +90,24 @@ Service: `src/services/rsiCorrelationTrackerAlertService.js`
 Supabase Schema: `supabase_rsi_correlation_tracker_alerts_schema.sql`
 - `rsi_correlation_tracker_alerts` and `rsi_correlation_tracker_alert_triggers` with owner RLS
 
+## Quantum Analysis (Heatmap) Tracker Alert (Simplified)
+
+Single per-user alert for the All-in-One/Quantum Analysis heatmap. Users select up to 3 currency pairs, a mode (trading style), and thresholds. When any selected pair’s Buy% or Sell% crosses its threshold, a trigger is recorded.
+
+- Pairs: up to 3 (e.g., `EURUSD`, `GBPUSD`)
+- Mode: `scalper`, `dayTrader`, or `swingTrader`
+- Thresholds: `buy_threshold` and `sell_threshold` (0–100)
+- Behavior: triggers on upward crossings into threshold for either Buy% or Sell%.
+
+UI: `src/components/HeatmapTrackerAlertConfig.jsx`
+
+Service: `src/services/heatmapTrackerAlertService.js`
+- Single alert per user (upsert by `user_id`)
+- Validate pairs (≤3), style, and thresholds
+- CRUD + `createTrigger({ alertId, symbol, triggerType, buyPercent, sellPercent, finalScore })`
+
+Supabase Schema: `supabase_heatmap_tracker_alerts_schema.sql`
+- `heatmap_tracker_alerts` and `heatmap_tracker_alert_triggers` with owner RLS
 
 **Frontend — Exact Implementation Requirements**
 - Component: `src/components/RSITrackerAlertConfig.jsx`
