@@ -318,7 +318,7 @@ Testing Hooks
 **Implementation Parity Notes — Code vs Spec (as of 2025‑09‑26)**
 - Global
   - Max 3 unique pairs/user: enforced on create endpoints (Heatmap/RSI/Correlation).
-  - Rate limiting (5 alerts/user/hour) and digest batching: not implemented; only test‑email endpoints are rate‑limited.
+  - Rate limiting (5 alerts/user/hour) and digest batching: implemented in `app/email_service.py` for all alert types; only successful sends count toward the cap; overflows are batched into a digest sent at most once per hour.
   - Per‑pair concurrency and stale‑bar skip: implemented across services.
 - RSI OB/OS
   - Triggers: implemented as threshold crossings with Only‑NEW K=3 and 1‑bar confirmation, plus hysteresis re‑arm at 65/35. In‑zone policy is not supported.
@@ -345,7 +345,7 @@ Testing Hooks
 | Feature | Simplified Scope | Current Implementation | Status | Extras / Pending |
 |---|---|---|---|---|
 | Max tracked pairs/user | 3 total | Enforced at create for Heatmap/RSI/Correlation | Implemented | — |
-| Rate limit + digest | 5 alerts/user/hour + digest | Not implemented for alerts (only test-email endpoints rate-limited) | Missing | Digest batching missing |
+| Rate limit + digest | 5 alerts/user/hour + digest | Implemented in email service; successful sends only; overflow batched (≤1/hour) | Implemented | — |
 | Per‑pair concurrency | Avoid races | Pair locks across services | Implemented | — |
 | Stale TF skip | Skip if last candle age > 2× TF | Implemented in all services | Implemented | — |
 | Warm‑up | Indicators require warm‑up | Implemented (e.g., RSI series lookback; Heatmap checks when RSI selected) | Implemented | — |
