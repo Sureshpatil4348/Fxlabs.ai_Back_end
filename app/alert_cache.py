@@ -80,6 +80,8 @@ class AlertCache:
             rsi_corr_tracker_alerts = await self._fetch_rsi_correlation_tracker_alerts(headers)
             # Fetch Heatmap/Quantum Tracker alerts (single-alert model)
             heatmap_tracker_alerts = await self._fetch_heatmap_tracker_alerts(headers)
+            # Fetch Heatmap Custom Indicator Tracker alerts (single-alert model)
+            heatmap_indicator_tracker_alerts = await self._fetch_heatmap_indicator_tracker_alerts(headers)
             
             # Group alerts by user_id
             new_cache = {}
@@ -149,6 +151,27 @@ class AlertCache:
                         "trading_style": alert.get("trading_style", "dayTrader"),
                         "buy_threshold": alert.get("buy_threshold", 70),
                         "sell_threshold": alert.get("sell_threshold", 30),
+                        "notification_methods": alert.get("notification_methods", ["email"]),
+                        "created_at": alert.get("created_at"),
+                        "updated_at": alert.get("updated_at"),
+                    })
+
+            # Process Heatmap Custom Indicator tracker alerts (single alert per user)
+            for alert in heatmap_indicator_tracker_alerts:
+                user_id = alert.get("user_id")
+                if user_id:
+                    if user_id not in new_cache:
+                        new_cache[user_id] = []
+                    new_cache[user_id].append({
+                        "type": "heatmap_indicator_tracker",
+                        "id": alert.get("id"),
+                        "alert_name": alert.get("alert_name", "Indicator Tracker Alert"),
+                        "user_id": alert.get("user_id"),
+                        "user_email": alert.get("user_email"),
+                        "is_active": alert.get("is_active", True),
+                        "pairs": alert.get("pairs", []),
+                        "timeframe": alert.get("timeframe", "1H"),
+                        "indicator": alert.get("indicator", "ema21"),
                         "notification_methods": alert.get("notification_methods", ["email"]),
                         "created_at": alert.get("created_at"),
                         "updated_at": alert.get("updated_at"),
@@ -223,6 +246,25 @@ class AlertCache:
                         return []
         except Exception as e:
             print(f"❌ Error fetching heatmap tracker alerts: {e}")
+            return []
+
+    async def _fetch_heatmap_indicator_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Fetch Heatmap Custom Indicator tracker alerts from Supabase"""
+        try:
+            url = f"{self.supabase_url}/rest/v1/heatmap_indicator_tracker_alerts"
+            params = {
+                "select": "*",
+                "is_active": "eq.true",
+            }
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                async with session.get(url, headers=headers, params=params) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        print(f"❌ Failed to fetch heatmap indicator tracker alerts: {response.status}")
+                        return []
+        except Exception as e:
+            print(f"❌ Error fetching heatmap indicator tracker alerts: {e}")
             return []
     
     async def start_refresh_scheduler(self):

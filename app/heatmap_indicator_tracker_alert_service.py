@@ -1,0 +1,121 @@
+import asyncio
+import os
+from datetime import datetime, timezone
+from typing import Dict, List, Optional, Any
+
+import logging
+
+from .logging_config import configure_logging
+from .alert_cache import alert_cache
+from .email_service import email_service
+from .concurrency import pair_locks
+
+
+configure_logging()
+logger = logging.getLogger(__name__)
+
+
+class HeatmapIndicatorTrackerAlertService:
+    """
+    Custom Indicator Tracker Alert service (single alert per user):
+    Emits triggers when the selected indicator flips to buy/sell on the chosen timeframe for any selected pair.
+    """
+
+    def __init__(self) -> None:
+        # Last signal per (alert, symbol, timeframe, indicator)
+        self._last_signal: Dict[str, str] = {}
+
+    def _key(self, alert_id: str, symbol: str, timeframe: str, indicator: str) -> str:
+        return f"{alert_id}:{symbol}:{timeframe}:{indicator}"
+
+    async def check_heatmap_indicator_tracker_alerts(self) -> List[Dict[str, Any]]:
+        try:
+            all_alerts = await alert_cache.get_all_alerts()
+            triggers: List[Dict[str, Any]] = []
+
+            for _uid, alerts in all_alerts.items():
+                for alert in alerts:
+                    if alert.get("type") != "heatmap_indicator_tracker" or not alert.get("is_active", True):
+                        continue
+
+                    alert_id = alert.get("id")
+                    user_email = alert.get("user_email", "")
+                    timeframe = alert.get("timeframe", "1H")
+                    indicator = (alert.get("indicator") or "ema21").lower()
+                    pairs: List[str] = alert.get("pairs", []) or []
+
+                    ts_iso = datetime.now(timezone.utc).isoformat()
+                    per_alert_triggers: List[Dict[str, Any]] = []
+                    for symbol in pairs:
+                        async with pair_locks.acquire(self._key(alert_id, symbol, timeframe, indicator)):
+                            signal = await self._compute_indicator_signal(symbol, timeframe, indicator)
+                            if signal not in ("buy", "sell", "neutral"):
+                                continue
+                            k = self._key(alert_id, symbol, timeframe, indicator)
+                            prev = self._last_signal.get(k, "neutral")
+                            self._last_signal[k] = signal
+                            if signal in ("buy", "sell") and signal != prev:
+                                per_alert_triggers.append({
+                                    "symbol": symbol,
+                                    "timeframe": timeframe,
+                                    "indicator": indicator,
+                                    "trigger_condition": signal,
+                                    "current_price": None,
+                                    "timestamp": ts_iso,
+                                })
+
+                    if per_alert_triggers:
+                        payload = {
+                            "alert_id": alert_id,
+                            "alert_name": alert.get("alert_name", "Indicator Tracker Alert"),
+                            "user_email": user_email,
+                            "triggered_pairs": per_alert_triggers,
+                            "alert_config": alert,
+                            "triggered_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        triggers.append(payload)
+                        methods = alert.get("notification_methods") or ["email"]
+                        if "email" in methods:
+                            asyncio.create_task(self._send_email(user_email, payload))
+
+            return triggers
+        except Exception as e:
+            logger.error(f"Error checking Indicator Tracker alerts: {e}")
+            return []
+
+    async def _compute_indicator_signal(self, symbol: str, timeframe: str, indicator: str) -> str:
+        try:
+            # Placeholder rules; plug in real computations as needed
+            if indicator in ("ema21", "ema50", "ema200"):
+                # Simplified: flip to buy or sell randomly per call (deterministic seed)
+                import random
+                seed = sum(ord(c) for c in (symbol + timeframe + indicator)) % 1000
+                random.seed(seed)
+                return random.choice(["neutral", "buy", "sell"])
+            if indicator == "macd":
+                return "buy"
+            if indicator == "rsi":
+                return "sell"
+            if indicator == "utbot":
+                return "neutral"
+            if indicator == "ichimokuclone":
+                return "buy"
+            return "neutral"
+        except Exception:
+            return "neutral"
+
+    async def _send_email(self, user_email: str, payload: Dict[str, Any]) -> None:
+        try:
+            await email_service.send_rsi_alert(
+                user_email=user_email,
+                alert_name=payload.get("alert_name", "Indicator Tracker Alert"),
+                triggered_pairs=payload.get("triggered_pairs", []),
+                alert_config=payload.get("alert_config", {}),
+            )
+        except Exception as e:
+            logger.error(f"Error sending Indicator Tracker email: {e}")
+
+
+heatmap_indicator_tracker_alert_service = HeatmapIndicatorTrackerAlertService()
+
+
