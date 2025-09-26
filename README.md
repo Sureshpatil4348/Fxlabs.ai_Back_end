@@ -254,7 +254,7 @@ Notes:
 - End‑of‑timeframe evaluation only: if an alert targets 5m, it evaluates and fires at 5‑minute boundaries; similarly for 15m/30m/1h.
 - Crossing/Flip triggers: fire when the metric crosses into the condition from the opposite side (or a regime flip occurs), not on every bar while in‑zone.
 - Re‑arm on exit then re‑cross: once fired, do not re‑fire while the condition persists; re‑arm after leaving the zone and fire again only on a new cross‑in. Changing the configured threshold re‑arms immediately.
-- Rate limits, cooldowns, concurrency, and quiet‑hours apply consistently across alert types.
+- Rate limits, cooldowns, concurrency, alert frequency (once/hourly/daily), and quiet‑hours apply consistently across alert types.
 
 See `ALERTS.md` for the full product/tech spec, Parity Summary, and Known Gaps. The backend currently prioritizes closed‑bar evaluation for RSI/Correlation and tick‑invoked checks for Heatmap; a unified TF‑boundary scheduler for Heatmap is planned.
 

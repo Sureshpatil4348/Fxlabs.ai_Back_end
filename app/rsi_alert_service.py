@@ -50,6 +50,32 @@ class RSIAlertService:
         cooldown_duration = timedelta(seconds=cooldown_seconds)
         
         return datetime.now(timezone.utc) - last_triggered >= cooldown_duration
+
+    def _allow_by_alert_frequency(self, alert: Dict[str, Any]) -> bool:
+        """Return True if allowed to trigger based on alert_frequency (once|hourly|daily).
+
+        Uses per-alert last_triggered timestamps.
+        """
+        try:
+            alert_id = alert.get("id")
+            if not alert_id:
+                return True
+            alert_frequency = (alert.get("alert_frequency") or "once").lower()
+            # First time: always allow
+            last_triggered = self.last_triggered_alerts.get(alert_id)
+            if last_triggered is None:
+                return True
+            now = datetime.now(timezone.utc)
+            if alert_frequency == "once":
+                return False
+            if alert_frequency == "hourly":
+                return (now - last_triggered) >= timedelta(hours=1)
+            if alert_frequency == "daily":
+                return (now - last_triggered) >= timedelta(days=1)
+            # Default safety: small window
+            return (now - last_triggered) >= timedelta(minutes=5)
+        except Exception:
+            return True
         
     async def check_rsi_alerts(self, tick_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Check all RSI alerts against current tick data"""
@@ -109,6 +135,9 @@ class RSIAlertService:
         try:
             alert_id = alert.get("id")
             alert_name = alert.get("alert_name")
+            # Global alert frequency gating (once/hourly/daily)
+            if not self._allow_by_alert_frequency(alert):
+                return None
             pairs = alert.get("pairs", [])
             timeframes = alert.get("timeframes", ["1H"])
             alert_conditions = alert.get("alert_conditions", [])
@@ -238,7 +267,8 @@ class RSIAlertService:
                 logger.info(f"🚨 ALERT TRIGGERED: {alert_name} with {len(triggered_pairs)} triggered pairs")
                 for pair in triggered_pairs:
                     logger.info(f"   - {pair['symbol']} {pair['timeframe']}: {pair['trigger_condition']} (RSI: {pair['rsi_value']})")
-                
+                # Update last triggered time for alert frequency enforcement
+                self.last_triggered_alerts[alert_id] = datetime.now(timezone.utc)
                 return {
                     "alert_id": alert_id,
                     "alert_name": alert_name,
