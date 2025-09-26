@@ -222,7 +222,7 @@ Internal alert tick_data shape:
 - Hysteresis re‑arm: Once an Overbought trigger fires, the alert re‑arms only after RSI falls below 65; for Oversold, re‑arm after RSI rises above 35.
 - Fallback: If historical RSI series is unavailable, the service falls back to in‑zone checks for continuity.
  - Evaluation timing: Closed-bar only (evaluates once per closed bar). Intrabar/live evaluation is disabled in this iteration to ensure RSI-closed compliance.
-- Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes). Override with `cooldown_minutes` on the alert.
+- Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes). Override with `cooldown_minutes` on the alert (persisted to `rsi_alerts.cooldown_minutes`).
 Notes:
 - Use `alert_conditions` values `"overbought"`/`"oversold"` to request threshold crossing detection; confirmed triggers return `overbought_cross`/`oversold_cross` in results.
 - Current API does not expose `bar_policy` and the backend enforces closed‑bar evaluation.

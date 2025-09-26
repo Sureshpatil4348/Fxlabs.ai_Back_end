@@ -351,7 +351,7 @@ Testing Hooks
 | RSI OB/OS: thresholds/policy | Crossing ≥70/≤30 | Crossing‑only with Only‑NEW K=3 + 1‑bar confirm + hysteresis 65/35 | Implemented | Extras: Only‑NEW + confirmation + hysteresis |
 | RSI OB/OS: in‑zone | Not required | Not supported | N/A | — |
 | RSI OB/OS: bar timing | Close | Closed‑bar only | Implemented | Intrabar disabled |
-| RSI OB/OS: cooldown | 30m (configurable) | Default 30m; not persisted/configurable via API | Partial | Add `cooldown_minutes` to model/persisting to complete |
+| RSI OB/OS: cooldown | 30m (configurable) | Configurable via API; persisted to `rsi_alerts.cooldown_minutes` | Implemented | — |
  
 | RSI Correlation: modes | RSI Threshold or Real | Both supported | Implemented | — |
 | RSI Correlation: conditions (real) | Strong/weak/break rules | Matches spec | Implemented | — |

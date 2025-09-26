@@ -746,6 +746,7 @@ class RSIAlertService:
                 "rsi_overbought_threshold": alert_data.get("rsi_overbought_threshold", 70),
                 "rsi_oversold_threshold": alert_data.get("rsi_oversold_threshold", 30),
                 "alert_conditions": alert_data.get("alert_conditions", []),
+                "cooldown_minutes": alert_data.get("cooldown_minutes", 30),
                 "notification_methods": alert_data.get("notification_methods", ["email"]),
                 "alert_frequency": alert_data.get("alert_frequency", "once"),
                 "is_active": True,
