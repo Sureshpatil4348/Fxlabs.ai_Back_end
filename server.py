@@ -30,6 +30,7 @@ from app.config import (
 import app.news as news
 from app.alert_cache import alert_cache
 from app.rsi_tracker_alert_service import rsi_tracker_alert_service
+from app.rsi_correlation_tracker_alert_service import rsi_correlation_tracker_alert_service
 from app.email_service import email_service
 from app.models import Timeframe, Tick, OHLC, SubscriptionInfo, NewsItem, NewsAnalysis
 from app.mt5_utils import (
@@ -395,6 +396,10 @@ async def _minute_alerts_scheduler():
                 await rsi_tracker_alert_service.check_rsi_tracker_alerts()
             except Exception as e:
                 print(f"❌ RSI Tracker evaluation error: {e}")
+            try:
+                await rsi_correlation_tracker_alert_service.check_rsi_correlation_tracker_alerts()
+            except Exception as e:
+                print(f"❌ RSI Correlation Tracker evaluation error: {e}")
             await asyncio.sleep(60)
     except asyncio.CancelledError:
         return

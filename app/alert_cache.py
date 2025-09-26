@@ -76,6 +76,8 @@ class AlertCache:
             
             # Fetch RSI Tracker alerts (single-alert model)
             rsi_tracker_alerts = await self._fetch_rsi_tracker_alerts(headers)
+            # Fetch RSI Correlation Tracker alerts (single-alert model)
+            rsi_corr_tracker_alerts = await self._fetch_rsi_correlation_tracker_alerts(headers)
             
             # Group alerts by user_id
             new_cache = {}
@@ -99,6 +101,30 @@ class AlertCache:
                         "rsi_period": alert.get("rsi_period", 14),
                         "rsi_overbought": alert.get("rsi_overbought", alert.get("rsi_overbought_threshold", 70)),
                         "rsi_oversold": alert.get("rsi_oversold", alert.get("rsi_oversold_threshold", 30)),
+                        "notification_methods": alert.get("notification_methods", ["email"]),
+                        "created_at": alert.get("created_at"),
+                        "updated_at": alert.get("updated_at"),
+                    })
+
+            # Process RSI correlation tracker alerts (single alert per user)
+            for alert in rsi_corr_tracker_alerts:
+                user_id = alert.get("user_id")
+                if user_id:
+                    if user_id not in new_cache:
+                        new_cache[user_id] = []
+                    new_cache[user_id].append({
+                        "type": "rsi_correlation_tracker",
+                        "id": alert.get("id"),
+                        "alert_name": alert.get("alert_name", "RSI Correlation Tracker Alert"),
+                        "user_id": alert.get("user_id"),
+                        "user_email": alert.get("user_email"),
+                        "is_active": alert.get("is_active", True),
+                        "timeframe": alert.get("timeframe", "1H"),
+                        "mode": alert.get("mode", "rsi_threshold"),
+                        "rsi_period": alert.get("rsi_period", 14),
+                        "rsi_overbought": alert.get("rsi_overbought", 70),
+                        "rsi_oversold": alert.get("rsi_oversold", 30),
+                        "correlation_window": alert.get("correlation_window", 50),
                         "notification_methods": alert.get("notification_methods", ["email"]),
                         "created_at": alert.get("created_at"),
                         "updated_at": alert.get("updated_at"),
@@ -135,6 +161,25 @@ class AlertCache:
                         return []
         except Exception as e:
             print(f"❌ Error fetching RSI tracker alerts: {e}")
+            return []
+
+    async def _fetch_rsi_correlation_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Fetch RSI Correlation Tracker alerts from Supabase"""
+        try:
+            url = f"{self.supabase_url}/rest/v1/rsi_correlation_tracker_alerts"
+            params = {
+                "select": "*",
+                "is_active": "eq.true",
+            }
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                async with session.get(url, headers=headers, params=params) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        print(f"❌ Failed to fetch RSI correlation tracker alerts: {response.status}")
+                        return []
+        except Exception as e:
+            print(f"❌ Error fetching RSI correlation tracker alerts: {e}")
             return []
     
     async def start_refresh_scheduler(self):

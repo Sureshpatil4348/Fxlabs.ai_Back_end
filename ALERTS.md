@@ -60,6 +60,37 @@
 **Supabase — Table Schemas (Canonical)**
 - See `supabase_rsi_tracker_alerts_schema.sql`.
 
+## RSI Correlation Tracker Alert (Simplified)
+
+Single per-user alert for the RSI Correlation dashboard. User selects `mode` and timeframe.
+
+- **Mode**: `rsi_threshold` or `real_correlation`
+- **Timeframe**: one of `1M,5M,15M,30M,1H,4H,1D,1W`
+- **RSI Threshold**: `rsi_period` (5–50), `rsi_overbought` (60–90), `rsi_oversold` (10–40)
+- **Real Correlation**: `correlation_window` (20, 50, 90, 120)
+- **Behavior**: Insert a trigger when a correlation pair transitions into a mismatch per rules below.
+
+UI: `src/components/RSICorrelationTrackerAlertConfig.jsx` (opened from `src/components/RSICorrelationDashboard.js`).
+
+Client Evaluation: `src/store/useRSICorrelationStore.js`
+- Threshold mode:
+  - Positive pairs: one ≥ OB and other ≤ OS
+  - Negative pairs: both ≥ OB or both ≤ OS
+  - Trigger on transitions into mismatch (prev != mismatch AND next == mismatch)
+- Real correlation mode:
+  - Positive pairs: correlation < +0.25 → mismatch
+  - Negative pairs: correlation > -0.15 → mismatch
+  - Trigger on transitions into mismatch
+
+Service: `src/services/rsiCorrelationTrackerAlertService.js`
+- Single alert per user (upsert by `user_id`)
+- Validate timeframe, mode, RSI bounds, correlation window
+- CRUD + `createTrigger({ alertId, pairKey, timeframe, mode, triggerType, value })`
+
+Supabase Schema: `supabase_rsi_correlation_tracker_alerts_schema.sql`
+- `rsi_correlation_tracker_alerts` and `rsi_correlation_tracker_alert_triggers` with owner RLS
+
+
 **Frontend — Exact Implementation Requirements**
 - Component: `src/components/RSITrackerAlertConfig.jsx`
 - Store: `src/store/useRSITrackerStore.js`
