@@ -147,10 +147,7 @@ class RSIAlertService:
             rsi_overbought = alert.get("rsi_overbought_threshold", 70)
             rsi_oversold = alert.get("rsi_oversold_threshold", 30)
             
-            # Quiet hours check (suppress during configured local window)
-            if self._is_within_quiet_hours(alert):
-                logger.debug(f"🔕 Quiet hours active for alert '{alert_name}', skipping evaluation")
-                return None
+            # Quiet hours suppression removed per spec
 
             triggered_pairs = []
             total_checks = 0
@@ -270,47 +267,7 @@ class RSIAlertService:
             logger.error(f"❌ Error checking single RSI alert: {e}")
             return None
 
-    def _is_within_quiet_hours(self, alert: Dict[str, Any]) -> bool:
-        """Return True if current local time is within alert's quiet hours window.
-
-        Fields: timezone (IANA, default Asia/Kolkata), quiet_start_local (HH:MM), quiet_end_local (HH:MM).
-        Supports windows crossing midnight.
-        """
-        try:
-            tz_name = alert.get("timezone") or "Asia/Kolkata"
-            qs = alert.get("quiet_start_local")
-            qe = alert.get("quiet_end_local")
-            if not qs or not qe:
-                return False
-            # Parse HH:MM
-            def _parse_hhmm(s: str):
-                parts = str(s).strip().split(":")
-                h = int(parts[0]) if parts and parts[0].isdigit() else 0
-                m = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
-                h = max(0, min(23, h)); m = max(0, min(59, m))
-                return h, m
-            h1, m1 = _parse_hhmm(qs)
-            h2, m2 = _parse_hhmm(qe)
-            # Current local time in alert's timezone
-            from datetime import datetime, timezone as _tz
-            try:
-                from zoneinfo import ZoneInfo
-                now_local = datetime.now(ZoneInfo(tz_name))
-            except Exception:
-                # Fallback: treat UTC as local if zoneinfo unavailable
-                now_local = datetime.now(_tz.utc)
-            t_now = now_local.hour * 60 + now_local.minute
-            t_start = h1 * 60 + m1
-            t_end = h2 * 60 + m2
-            if t_start == t_end:
-                # Degenerate window -> treat as disabled
-                return False
-            if t_start < t_end:
-                return t_start <= t_now < t_end
-            # Window crosses midnight
-            return not (t_end <= t_now < t_start)
-        except Exception:
-            return False
+    # Quiet hours helpers removed per spec
 
     def _tf_seconds(self, timeframe: str) -> int:
         mapping = {

@@ -143,10 +143,7 @@ class AlertCache:
                         "bar_policy": alert.get("bar_policy", "close"),
                         # Per (pair, timeframe, side) cooldown minutes (default 30)
                         "cooldown_minutes": alert.get("cooldown_minutes"),
-                        # Quiet hours and timezone handling
-                        "timezone": alert.get("timezone", "Asia/Kolkata"),
-                        "quiet_start_local": alert.get("quiet_start_local"),
-                        "quiet_end_local": alert.get("quiet_end_local"),
+                        # Quiet hours removed per spec
                         "notification_methods": alert.get("notification_methods", ["email"]),
                         "alert_frequency": alert.get("alert_frequency", "once"),
                         "trigger_on_crossing": alert.get("trigger_on_crossing", True),

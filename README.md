@@ -223,7 +223,6 @@ Internal alert tick_data shape:
 - Fallback: If historical RSI series is unavailable, the service falls back to in‑zone checks for continuity.
  - Evaluation timing: Closed-bar only (evaluates once per closed bar). Intrabar/live evaluation is disabled in this iteration to ensure RSI-closed compliance.
 - Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes). Override with `cooldown_minutes` on the alert.
-- Quiet hours + timezone: Suppresses alerts during the configured local quiet window using the alert's `timezone` (IANA name, default Asia/Kolkata) and `quiet_start_local`/`quiet_end_local` (HH:MM).
 Notes:
 - Use `alert_conditions` values `"overbought"`/`"oversold"` to request threshold crossing detection; confirmed triggers return `overbought_cross`/`oversold_cross` in results.
 - Current API does not expose `bar_policy` and the backend enforces closed‑bar evaluation.
@@ -302,7 +301,7 @@ Notes:
 
 See `ALERTS.md` for canonical Supabase table schemas and exact frontend implementation requirements (Type A/Type B/RSI/RSI‑Correlation), including field lists, endpoints, validation, and delivery channel setup.
 - Re‑arm on exit then re‑cross: once fired, do not re‑fire while the condition persists; re‑arm after leaving the zone and fire again only on a new cross‑in. Changing the configured threshold re‑arms immediately.
-- Rate limits, cooldowns, concurrency, alert frequency (once/hourly/daily), and quiet‑hours apply consistently across alert types.
+- Rate limits, cooldowns, concurrency, and alert frequency (once/hourly/daily) apply consistently across alert types.
 
 See `ALERTS.md` for the consolidated alerts product & tech spec.
 

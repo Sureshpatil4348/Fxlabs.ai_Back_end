@@ -101,11 +101,11 @@
   - Bar timing: Close (default) or Intrabar.
   - Cooldown: default 30m.
   - Delivery: Email / Telegram.
-  - Quiet hours (optional).
+  
   - Free‑text alert name.
 
 2) Data Model
-  - alerts: id, user_id, name, symbols, timeframes, rsi_length, overbought, oversold, trigger_policy, bar_policy, cooldown_minutes, channels, quiet_start_local, quiet_end_local, timezone, enabled.
+  - alerts: id, user_id, name, symbols, timeframes, rsi_length, overbought, oversold, trigger_policy, bar_policy, cooldown_minutes, channels, enabled.
   - alert_state: id, alert_id, symbol, timeframe, last_alert_ts, last_status (neutral|overbought|oversold), last_rsi_value.
   - user_channels: email, telegram_chat_id, bot_token.
 
@@ -146,9 +146,7 @@
   "trigger_policy": "crossing",
   "bar_policy": "close",
   "cooldown_minutes": 30,
-  "timezone": "Asia/Kolkata",
-  "quiet_start_local": "22:30",
-  "quiet_end_local": "06:30",
+  
   "channels": ["email", "telegram"]
 }
 ```
@@ -308,9 +306,7 @@ Delivery Channels
 - Email: default enabled.
 - Telegram: expose fields to connect chat (store `user_channels.telegram_chat_id` and `bot_token`). Backend sending for Telegram is pending; UI should capture and persist credentials now.
 
-Quiet Hours (RSI only for now)
-- Expose `timezone` (IANA), `quiet_start_local`, `quiet_end_local` for RSI alerts; show helper text.
-- Heatmap/Correlation: leave hidden/disabled until backend parity.
+ 
 
 Testing Hooks
 - Manual check endpoints exist: `/api/*/check`, `/api/*/test-email` — wire QA buttons in dev mode.
@@ -323,7 +319,7 @@ Testing Hooks
 - RSI OB/OS
   - Triggers: implemented as threshold crossings with Only‑NEW K=3 and 1‑bar confirmation, plus hysteresis re‑arm at 65/35. In‑zone policy is not supported.
   - Evaluation: closed‑bar only; `bar_policy` not exposed via API and not persisted.
-  - Quiet hours/timezone: suppression logic exists in service, but `create` API does not persist `timezone`/`quiet_start_local`/`quiet_end_local` to Supabase.
+  
 - RSI Correlation
   - Modes supported: `rsi_threshold` and `real_correlation` (parity OK).
   - Conditions:
@@ -356,7 +352,7 @@ Testing Hooks
 | RSI OB/OS: in‑zone | Not required | Not supported | N/A | — |
 | RSI OB/OS: bar timing | Close | Closed‑bar only | Implemented | Intrabar disabled |
 | RSI OB/OS: cooldown | 30m (configurable) | Default 30m; not persisted/configurable via API | Partial | Add `cooldown_minutes` to model/persisting to complete |
-| RSI OB/OS: quiet hours | Not required | Suppression logic exists; not persisted via API | Extra (partial) | Optional; wire through create if needed |
+ 
 | RSI Correlation: modes | RSI Threshold or Real | Both supported | Implemented | — |
 | RSI Correlation: conditions (real) | Strong/weak/break rules | Matches spec | Implemented | — |
 | RSI Correlation: conditions (RSI) | Threshold concept | Uses `positive_mismatch`/`negative_mismatch`/`neutral_break` | Implemented | Extra conditions vs spec; consider documenting |
