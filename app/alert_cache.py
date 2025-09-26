@@ -12,7 +12,7 @@ class AlertCache:
         # Cache storage: {user_id: [alert_configs]}
         self._cache: Dict[str, List[Dict[str, Any]]] = {}
         self._last_refresh: Optional[datetime] = None
-        self._refresh_interval = timedelta(minutes=5)  # 5 minutes
+        self._refresh_interval = timedelta(minutes=1)  # refresh frequently for minute scheduler
         self._is_refreshing = False
         
         # Supabase configuration
@@ -74,108 +74,34 @@ class AlertCache:
                 "Content-Type": "application/json"
             }
             
-            # Fetch heatmap alerts
-            heatmap_alerts = await self._fetch_heatmap_alerts(headers)
-            
-            # Fetch RSI alerts
-            rsi_alerts = await self._fetch_rsi_alerts(headers)
-            
-            # Fetch RSI correlation alerts
-            rsi_correlation_alerts = await self._fetch_rsi_correlation_alerts(headers)
+            # Fetch RSI Tracker alerts (single-alert model)
+            rsi_tracker_alerts = await self._fetch_rsi_tracker_alerts(headers)
             
             # Group alerts by user_id
             new_cache = {}
             
-            # Process heatmap alerts
-            for alert in heatmap_alerts:
+            # Process RSI tracker alerts (single alert per user)
+            for alert in rsi_tracker_alerts:
                 user_id = alert.get("user_id")
                 if user_id:
                     if user_id not in new_cache:
                         new_cache[user_id] = []
                     new_cache[user_id].append({
-                        "type": "heatmap",
+                        "type": "rsi_tracker",
                         "id": alert.get("id"),
-                        "alert_name": alert.get("alert_name"),
+                        "alert_name": alert.get("alert_name", "RSI Tracker Alert"),
                         "user_id": alert.get("user_id"),
-                        "user_email": alert.get("user_email"),  # Add user_email for email notifications
+                        "user_email": alert.get("user_email"),
                         "is_active": alert.get("is_active", True),
+                        # Optional pairs array; UI may manage subscriptions; fallback handled in service via env
                         "pairs": alert.get("pairs", []),
-                        "timeframes": alert.get("timeframes", []),
-                        "selected_indicators": alert.get("selected_indicators", []),
-                        "trading_style": alert.get("trading_style", "dayTrader"),
-                        "min_alignment": alert.get("min_alignment"),
-                        "cooldown_minutes": alert.get("cooldown_minutes"),
-                        # Optional gating for Type B (indicator flips) by style-weighted Buy Now %
-                        "gate_by_buy_now": alert.get("gate_by_buy_now"),
-                        "gate_buy_min": alert.get("gate_buy_min"),
-                        "gate_sell_max": alert.get("gate_sell_max"),
-                        "buy_threshold_min": alert.get("buy_threshold_min", 70),
-                        "buy_threshold_max": alert.get("buy_threshold_max", 100),
-                        "sell_threshold_min": alert.get("sell_threshold_min", 0),
-                        "sell_threshold_max": alert.get("sell_threshold_max", 30),
-                        "notification_methods": alert.get("notification_methods", ["email"]),
-                        "alert_frequency": alert.get("alert_frequency", "once"),
-                        "trigger_on_crossing": alert.get("trigger_on_crossing", True),
-                        "created_at": alert.get("created_at"),
-                        "updated_at": alert.get("updated_at")
-                    })
-            
-            # Process RSI alerts
-            for alert in rsi_alerts:
-                user_id = alert.get("user_id")
-                if user_id:
-                    if user_id not in new_cache:
-                        new_cache[user_id] = []
-                    new_cache[user_id].append({
-                        "type": "rsi",
-                        "id": alert.get("id"),
-                        "alert_name": alert.get("alert_name"),
-                        "user_id": alert.get("user_id"),
-                        "user_email": alert.get("user_email"),  # Add user_email for email notifications
-                        "is_active": alert.get("is_active", True),
-                        "pairs": alert.get("pairs", []),
-                        "timeframes": alert.get("timeframes", []),
+                        "timeframe": alert.get("timeframe", "1H"),
                         "rsi_period": alert.get("rsi_period", 14),
-                        "rsi_overbought_threshold": alert.get("rsi_overbought_threshold", 70),
-                        "rsi_oversold_threshold": alert.get("rsi_oversold_threshold", 30),
-                        "alert_conditions": alert.get("alert_conditions", []),
-                        # Bar timing policy: "close" (default) or "intrabar"
-                        "bar_policy": alert.get("bar_policy", "close"),
-                        # Per (pair, timeframe, side) cooldown minutes (default 30)
-                        "cooldown_minutes": alert.get("cooldown_minutes"),
-                        # Quiet hours removed per spec
+                        "rsi_overbought": alert.get("rsi_overbought", alert.get("rsi_overbought_threshold", 70)),
+                        "rsi_oversold": alert.get("rsi_oversold", alert.get("rsi_oversold_threshold", 30)),
                         "notification_methods": alert.get("notification_methods", ["email"]),
-                        "alert_frequency": alert.get("alert_frequency", "once"),
-                        "trigger_on_crossing": alert.get("trigger_on_crossing", True),
                         "created_at": alert.get("created_at"),
-                        "updated_at": alert.get("updated_at")
-                    })
-            
-            # Process RSI correlation alerts
-            for alert in rsi_correlation_alerts:
-                user_id = alert.get("user_id")
-                if user_id:
-                    if user_id not in new_cache:
-                        new_cache[user_id] = []
-                    new_cache[user_id].append({
-                        "type": "rsi_correlation",
-                        "id": alert.get("id"),
-                        "alert_name": alert.get("alert_name"),
-                        "user_id": alert.get("user_id"),
-                        "user_email": alert.get("user_email"),  # Add user_email for email notifications
-                        "is_active": alert.get("is_active", True),
-                        # Normalize correlation pairs under the common "pairs" key for consistency
-                        "pairs": alert.get("correlation_pairs", alert.get("pairs", [])),
-                        "timeframes": alert.get("timeframes", []),
-                        "rsi_period": alert.get("rsi_period", 14),
-                        "correlation_threshold": alert.get("correlation_threshold", 0.7),
-                        # Bar timing policy: "close" (default) or "intrabar"
-                        "bar_policy": alert.get("bar_policy", "close"),
-                        "notification_methods": alert.get("notification_methods", ["email"]),
-                        "alert_frequency": alert.get("alert_frequency", "once"),
-                        "trigger_on_crossing": alert.get("trigger_on_crossing", True),
-                        "created_at": alert.get("created_at"),
-                        "updated_at": alert.get("updated_at")
+                        "updated_at": alert.get("updated_at"),
                     })
             
             # Update cache
@@ -192,64 +118,23 @@ class AlertCache:
         finally:
             self._is_refreshing = False
     
-    async def _fetch_heatmap_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Fetch heatmap alerts from Supabase"""
+    async def _fetch_rsi_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Fetch RSI Tracker alerts from Supabase"""
         try:
-            url = f"{self.supabase_url}/rest/v1/heatmap_alerts"
+            url = f"{self.supabase_url}/rest/v1/rsi_tracker_alerts"
             params = {
                 "select": "*",
-                "is_active": "eq.true"
+                "is_active": "eq.true",
             }
-            
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
                 async with session.get(url, headers=headers, params=params) as response:
                     if response.status == 200:
                         return await response.json()
                     else:
-                        print(f"❌ Failed to fetch heatmap alerts: {response.status}")
+                        print(f"❌ Failed to fetch RSI tracker alerts: {response.status}")
                         return []
         except Exception as e:
-            print(f"❌ Error fetching heatmap alerts: {e}")
-            return []
-    
-    async def _fetch_rsi_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Fetch RSI alerts from Supabase"""
-        try:
-            url = f"{self.supabase_url}/rest/v1/rsi_alerts"
-            params = {
-                "select": "*",
-                "is_active": "eq.true"
-            }
-            
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.get(url, headers=headers, params=params) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        print(f"❌ Failed to fetch RSI alerts: {response.status}")
-                        return []
-        except Exception as e:
-            print(f"❌ Error fetching RSI alerts: {e}")
-            return []
-    
-    async def _fetch_rsi_correlation_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Fetch RSI correlation alerts from Supabase"""
-        try:
-            url = f"{self.supabase_url}/rest/v1/rsi_correlation_alerts"
-            params = {
-                "select": "*",
-                "is_active": "eq.true"
-            }
-            
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.get(url, headers=headers, params=params) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        print(f"❌ Failed to fetch RSI correlation alerts: {response.status}")
-                        return []
-        except Exception as e:
-            print(f"❌ Error fetching RSI correlation alerts: {e}")
+            print(f"❌ Error fetching RSI tracker alerts: {e}")
             return []
     
     async def start_refresh_scheduler(self):

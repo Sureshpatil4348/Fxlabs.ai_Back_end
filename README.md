@@ -197,12 +197,34 @@ Internal alert tick_data shape:
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
 | `/api/news/refresh` | POST | Manual news refresh | Yes |
-| `/api/heatmap-alerts` | POST | Create heatmap alert | Yes |
-| `/api/heatmap-alerts/user/{email}` | GET | Get user heatmap alerts | Yes |
-| `/api/rsi-alerts` | POST | Create RSI alert | Yes |
-| `/api/rsi-alerts/user/{email}` | GET | Get user RSI alerts | Yes |
-| `/api/rsi-correlation-alerts` | POST | Create RSI correlation alert | Yes |
-| `/api/rsi-correlation-alerts/user/{email}` | GET | Get user RSI correlation alerts | Yes |
+| `/api/alerts/cache` | GET | In-memory alerts cache (RSI Tracker) | Yes |
+| `/api/alerts/refresh` | POST | Force refresh alerts cache | Yes |
+
+### RSI Tracker Alert — Closed‑bar Crossing
+
+- Trigger policy: Alerts fire on RSI threshold crossings (Overbought ≥ OB, Oversold ≤ OS) on the current closed bar only (no live/intrabar evaluation).
+- Only‑NEW: Not required; detection uses previous vs current closed bar to identify a fresh crossing.
+- Rearm policy: Threshold‑level re‑arm. After a trigger at OB, re‑arm when RSI returns below OB; for OS, re‑arm when RSI returns above OS.
+- Evaluation timing: Closed‑bar only (evaluates at timeframe boundaries). Intrabar/live evaluation is disabled to ensure RSI‑closed compliance.
+- Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes).
+Notes:
+- Single alert per user from `rsi_tracker_alerts` table.
+- Backend enforces closed‑bar evaluation.
+
+#### Email Template (RSI)
+- Compact, per‑pair card format.
+- Fields per card:
+  - **pair**: `symbol`
+  - **timeframe**: `timeframe`
+  - **zone**: derived from `trigger_condition` → `Overbought` or `Oversold`
+  - **rsi**: `rsi_value`
+  - **price**: `current_price`
+  - **ts_local**: local time string (IST by default)
+Notes:
+- Multiple triggers render multiple cards in a single email.
+
+### Removed Alert Types
+- Heatmap alerts and RSI Correlation alerts have been removed in favor of a single, simplified RSI Tracker alert.
 
 ### Global Limit: Max 3 Pairs/User
 
