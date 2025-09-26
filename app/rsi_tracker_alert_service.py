@@ -277,6 +277,9 @@ class RSITrackerAlertService:
         if not user_email:
             return
         try:
+            logger.info(
+                f"📧 Scheduling RSI Tracker email -> user={user_email}, alert={alert_name}, pairs={len(triggered_pairs)}"
+            )
             await email_service.send_rsi_alert(
                 user_email=user_email,
                 alert_name=alert_name,
@@ -367,6 +370,9 @@ class RSITrackerAlertService:
                             asyncio.create_task(self._log_trigger(alert_id, symbol, timeframe, item["rsi_value"], cond))
 
                     if triggered_pairs:
+                        logger.info(
+                            f"🚨 RSI Tracker triggers detected: alert_id={alert_id} alert_name={alert_name} user={user_email} count={len(triggered_pairs)}"
+                        )
                         payload = {
                             "alert_id": alert_id,
                             "alert_name": alert_name,
@@ -379,7 +385,14 @@ class RSITrackerAlertService:
                         # Send email if configured (default on)
                         methods = alert.get("notification_methods") or ["email"]
                         if "email" in methods:
+                            logger.info(
+                                f"📤 Queueing email send for RSI Tracker alert_id={alert_id} via background task"
+                            )
                             asyncio.create_task(self._send_notification(user_email, alert_name, triggered_pairs, alert))
+                        else:
+                            logger.info(
+                                f"🔕 Email notifications disabled for alert_id={alert_id}; methods={methods}"
+                            )
 
             return triggers
         except Exception as e:

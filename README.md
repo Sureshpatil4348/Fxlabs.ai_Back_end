@@ -759,6 +759,24 @@ For support and questions:
 
 ## 🛠️ Troubleshooting
 
+### "RSI Tracker: triggers exist in DB but no emails/logs"
+- **What it means**: Records appear in `rsi_tracker_alert_triggers`, but you don’t see corresponding console logs or emails.
+- **Why it happened previously**: The tracker didn’t log info-level messages on successful triggers, and exceptions during email scheduling could be swallowed without a visible log.
+- **Fix in code**: The tracker now logs when triggers are detected and when emails are queued, and logs any exceptions during email scheduling.
+- **Quick checks**:
+  - **notification_methods**: Ensure your alert has `"notification_methods": ["email"]`. If it’s `"browser"` only, emails won’t send.
+    - Supabase check example: verify the `notification_methods` column for your alert row includes `"email"`.
+  - **Email service configured**: Set `SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME` in `.env`. The service logs diagnostics if not configured.
+  - **Log level**: Set `LOG_LEVEL=INFO` (or `DEBUG`) so you see tracker/email logs.
+  - **Cooldown/rate limits**: Emails are suppressed for 10 minutes for similar RSI values and rate-limited to 5/hour per user.
+  - **Scheduler running**: The minute scheduler runs inside `server.py` lifespan; confirm the server is started normally (not as a one-off script).
+  - **Supabase creds**: `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` must be set for cache/trigger logging to work.
+  
+Expected logs when working:
+  - `🚨 RSI Tracker triggers detected: ...`
+  - `📤 Queueing email send for RSI Tracker ...`
+  - Email service logs like `📧 RSI Alert Email Service - Starting email process` and `📊 SendGrid response: Status 202`.
+
 ### "SendGrid not configured, skipping RSI alert email"
 - Cause: `EmailService` didn't initialize a SendGrid client (`self.sg is None`). This happens when either the SendGrid library isn’t installed in your environment or `SENDGRID_API_KEY` isn’t present in the process environment.
 - Fix quickly:
