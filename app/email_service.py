@@ -112,6 +112,32 @@ class EmailService:
                     rsi = round(float(indicators['rsi']), 1)
                     pairs_summary.append(f"{symbol}:rsi:{rsi}")
             
+            # Heatmap Tracker Alerts (Probability Signal): {symbol, trigger_condition: 'buy'|'sell', buy_percent, sell_percent, final_score}
+            elif ('buy_percent' in pair or 'sell_percent' in pair or 'final_score' in pair) and 'symbol' in pair:
+                symbol = pair['symbol']
+                condition = pair.get('trigger_condition', '')
+                buy_pct = pair.get('buy_percent')
+                sell_pct = pair.get('sell_percent')
+                final = pair.get('final_score')
+                parts: List[str] = []
+                try:
+                    if buy_pct is not None:
+                        parts.append(f"buy={round(float(buy_pct), 1)}")
+                except Exception:
+                    pass
+                try:
+                    if sell_pct is not None:
+                        parts.append(f"sell={round(float(sell_pct), 1)}")
+                except Exception:
+                    pass
+                try:
+                    if final is not None:
+                        parts.append(f"score={round(float(final), 1)}")
+                except Exception:
+                    pass
+                meta = ",".join(parts) if parts else ""
+                pairs_summary.append(f"{symbol}:{condition}:{meta}")
+            
             # Fallback for unknown structure
             else:
                 symbol = pair.get('symbol', pair.get('symbol1', 'unknown'))
@@ -397,6 +423,19 @@ class EmailService:
                     rsi = self._get_rsi_value(indicators, 'rsi')
                     if rsi is not None:
                         values[f"{symbol}_rsi"] = rsi
+            
+            # Heatmap Tracker Alerts (Probability Signal)
+            elif ('buy_percent' in pair or 'sell_percent' in pair or 'final_score' in pair) and 'symbol' in pair:
+                symbol = pair['symbol']
+                buy_pct = self._safe_float_conversion(pair.get('buy_percent'))
+                sell_pct = self._safe_float_conversion(pair.get('sell_percent'))
+                final = self._safe_float_conversion(pair.get('final_score'))
+                if buy_pct is not None:
+                    values[f"{symbol}_buy_percent"] = buy_pct
+                if sell_pct is not None:
+                    values[f"{symbol}_sell_percent"] = sell_pct
+                if final is not None:
+                    values[f"{symbol}_final_score"] = final
         
         return values
 
@@ -678,6 +717,60 @@ class EmailService:
         except Exception as e:
             logger.error(f"❌ Error sending heatmap alert email: {e}")
             return False
+
+    async def send_heatmap_tracker_alert(
+        self,
+        user_email: str,
+        alert_name: str,
+        triggered_pairs: List[Dict[str, Any]],
+        alert_config: Dict[str, Any]
+    ) -> bool:
+        """Send Heatmap/Quantum Tracker (Probability Signal) email using simplified template."""
+
+        if not self.sg:
+            self._log_config_diagnostics(context="heatmap tracker alert email")
+            return False
+
+        # Smart cooldown/hash
+        alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
+        if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
+            logger.info(f"🕐 Heatmap tracker alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
+            return False
+
+        if self._is_user_over_limit(user_email):
+            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing Heatmap Tracker to digest.")
+            self._enqueue_digest(user_email, "HeatmapTracker", alert_name, triggered_pairs, alert_config)
+            await self._maybe_send_digest(user_email)
+            return False
+
+        self._cleanup_old_cooldowns()
+
+        try:
+            subject = f"Trading Alert: {alert_name}"
+            body = self._build_heatmap_tracker_email_body(alert_name, triggered_pairs, alert_config)
+            text_body = self._build_plain_text_heatmap_tracker(alert_name, triggered_pairs, alert_config)
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text_body,
+                category="heatmap-tracker",
+                ref_id=alert_hash[:24]
+            )
+
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"✅ Heatmap tracker alert email sent to {user_email}")
+                self._update_alert_cooldown(alert_hash, triggered_pairs)
+                self._record_user_send(user_email)
+                return True
+            else:
+                logger.error(f"❌ Failed to send heatmap tracker alert email: {response.status_code} - {response.body}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error sending heatmap tracker alert email: {e}")
+            return False
     
     def _build_heatmap_alert_email_body(
         self, 
@@ -792,6 +885,86 @@ class EmailService:
         """
         
         return html_body
+
+    def _build_heatmap_tracker_email_body(
+        self,
+        alert_name: str,
+        triggered_pairs: List[Dict[str, Any]],
+        alert_config: Dict[str, Any]
+    ) -> str:
+        """Build HTML email body for Heatmap/Quantum Tracker using simplified per‑pair cards."""
+
+        cards: List[str] = []
+        for pair in triggered_pairs:
+            symbol = pair.get("symbol", "N/A")
+            timeframe = pair.get("timeframe", "style-weighted")
+            cond = str(pair.get("trigger_condition", "")).strip().upper()
+            if cond == "BUY":
+                probability = pair.get("buy_percent", 0)
+                threshold = alert_config.get("buy_threshold", 70)
+            else:
+                probability = pair.get("sell_percent", 0)
+                threshold = alert_config.get("sell_threshold", 30)
+            color = "#0CCC7C" if cond == "BUY" else "#E5494D"
+
+            # Contributors if known; otherwise "-"
+            top_inds: Optional[str] = None
+            try:
+                selected = alert_config.get("selected_indicators") or []
+                if isinstance(selected, list) and selected:
+                    top_inds = ", ".join(selected)
+            except Exception:
+                top_inds = None
+            if not top_inds:
+                top_inds = "-"
+
+            card = f"""
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">New Signal Above Threshold</td></tr>
+  <tr><td style=\"padding:20px;\">
+    <div style=\"font-size:16px;margin-bottom:8px;\"><strong>{symbol}</strong> ({timeframe})</div>
+    <div style=\"margin-bottom:12px;\">
+      <span style=\"display:inline-block;padding:6px 12px;border-radius:999px;background:{color};color:#fff;font-weight:700;text-transform:uppercase;\">
+        {cond} • {round(float(probability), 2)}%
+      </span>
+    </div>
+    <div style=\"font-size:13px;color:#374151;\">Contributors: {top_inds}</div>
+    <div style=\"margin-top:14px;padding:12px;background:#F9FAFB;border-radius:10px;font-size:13px;\">Your alert threshold: {threshold}%</div>
+  </td></tr>
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>
+</table>
+<div style=\"height:12px\"></div>
+            """
+            cards.append(card)
+
+        return f"""
+<!doctype html>
+<html lang=\"en\">
+<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Probability Signal</title></head>
+<body style=\"margin:0;background:#F5F7FB;\">
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
+{''.join(cards)}
+</td></tr></table>
+</body></html>
+        """
+
+    def _build_plain_text_heatmap_tracker(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
+        lines = [
+            f"Probability Signal - {alert_name}",
+            f"Pairs: {len(pairs)}",
+        ]
+        for p in pairs:
+            sym = p.get("symbol", "?")
+            tf = p.get("timeframe", "style-weighted")
+            cond = str(p.get("trigger_condition", "")).upper() or "N/A"
+            if cond == "BUY":
+                prob = p.get("buy_percent", "?")
+                thr = cfg.get("buy_threshold", "?")
+            else:
+                prob = p.get("sell_percent", "?")
+                thr = cfg.get("sell_threshold", "?")
+            lines.append(f"- {sym} [{tf}]: {cond} {prob}% (thr {thr}%)")
+        return "\n".join(lines)
     
     async def send_test_email(self, user_email: str) -> bool:
         """Send a test email to verify email service is working"""
