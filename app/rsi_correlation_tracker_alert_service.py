@@ -68,12 +68,14 @@ class RSICorrelationTrackerAlertService:
 
                         async with pair_locks.acquire(f"{s1}:{timeframe}"):
                             async with pair_locks.acquire(f"{s2}:{timeframe}"):
-                                if mode == "rsi_threshold":
-                                    mismatch, val = await self._evaluate_rsi_threshold_mismatch(s1, s2, timeframe, rsi_period, rsi_ob, rsi_os)
-                                    trig_type = "rsi_mismatch"
-                                else:
-                                    mismatch, val = await self._evaluate_real_correlation_mismatch(s1, s2, timeframe, corr_window)
-                                    trig_type = "real_mismatch"
+                        if mode == "rsi_threshold":
+                            mismatch, val, cond_label = await self._evaluate_rsi_threshold_mismatch(
+                                s1, s2, timeframe, rsi_period, rsi_ob, rsi_os
+                            )
+                        else:
+                            mismatch, val, cond_label = await self._evaluate_real_correlation_mismatch(
+                                s1, s2, timeframe, corr_window
+                            )
 
                         prev = self._last_state.get(k, False)
                         self._last_state[k] = mismatch
@@ -81,18 +83,31 @@ class RSICorrelationTrackerAlertService:
                             logger.info(
                                 f"🚨 RSI Correlation Tracker trigger: alert_id={alert_id} pair={pair_key} tf={timeframe} mode={mode} type={trig_type}"
                             )
+                            if mode == "rsi_threshold":
+                                pair_entry = {
+                                    "symbol1": s1,
+                                    "symbol2": s2,
+                                    "timeframe": timeframe,
+                                    "trigger_condition": cond_label or "positive_mismatch",
+                                    # Optional display; template gracefully shows '-' when None
+                                    "rsi_corr_now": None,
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                }
+                            else:
+                                pair_entry = {
+                                    "symbol1": s1,
+                                    "symbol2": s2,
+                                    "timeframe": timeframe,
+                                    "trigger_condition": cond_label or "correlation_break",
+                                    "correlation_value": val if isinstance(val, (int, float)) else None,
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                }
+
                             payload = {
                                 "alert_id": alert_id,
                                 "alert_name": alert.get("alert_name", "RSI Correlation Tracker Alert"),
                                 "user_email": user_email,
-                                "triggered_pairs": [{
-                                    "symbol": pair_key,
-                                    "timeframe": timeframe,
-                                    "trigger_condition": trig_type,
-                                    "rsi_value": val if isinstance(val, (int, float)) else None,
-                                    "current_price": None,
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                }],
+                                "triggered_pairs": [pair_entry],
                                 "alert_config": alert,
                                 "triggered_at": datetime.now(timezone.utc).isoformat(),
                             }
@@ -115,33 +130,46 @@ class RSICorrelationTrackerAlertService:
             logger.error(f"Error checking RSI Correlation Tracker: {e}")
             return []
 
-    async def _evaluate_rsi_threshold_mismatch(self, s1: str, s2: str, timeframe: str, period: int, ob: int, os_: int) -> (bool, Optional[float]):
+    async def _evaluate_rsi_threshold_mismatch(self, s1: str, s2: str, timeframe: str, period: int, ob: int, os_: int) -> (bool, Optional[float], Optional[str]):
         try:
             r1 = await self._calculate_rsi_latest(s1, timeframe, period)
             r2 = await self._calculate_rsi_latest(s2, timeframe, period)
             if r1 is None or r2 is None:
-                return False, None
+                return False, None, None
             # Positive mismatch: one >= OB and other <= OS
             pos = (r1 >= ob and r2 <= os_) or (r2 >= ob and r1 <= os_)
             # Negative mismatch: both >= OB or both <= OS
             neg = (r1 >= ob and r2 >= ob) or (r1 <= os_ and r2 <= os_)
-            return (pos or neg), float((r1 + r2) / 2.0)
+            cond = "positive_mismatch" if pos else ("negative_mismatch" if neg else None)
+            return (pos or neg), float((r1 + r2) / 2.0), cond
         except Exception:
-            return False, None
+            return False, None, None
 
-    async def _evaluate_real_correlation_mismatch(self, s1: str, s2: str, timeframe: str, window: int) -> (bool, Optional[float]):
+    async def _evaluate_real_correlation_mismatch(self, s1: str, s2: str, timeframe: str, window: int) -> (bool, Optional[float], Optional[str]):
         try:
             corr = await self._calculate_returns_correlation(s1, s2, timeframe, window)
             if corr is None:
-                return False, None
+                return False, None, None
             # Thresholds from doc example
             # Positive pairs: correlation < +0.25 -> mismatch (use absolute if sign unknown; here keep rule simple)
             # Negative pairs: correlation > -0.15 -> mismatch
             # Without prior sign classification, we treat mismatch if |corr| < 0.25 (weak/unstable relation)
             mismatch = abs(corr) < 0.25
-            return mismatch, float(corr)
+            # Classify condition label for template mapping
+            cond: Optional[str]
+            if corr is None:
+                cond = None
+            elif corr >= 0.70:
+                cond = "strong_positive"
+            elif corr <= -0.70:
+                cond = "strong_negative"
+            elif abs(corr) <= 0.15:
+                cond = "weak_correlation"
+            else:
+                cond = "correlation_break"
+            return mismatch, float(corr), cond
         except Exception:
-            return False, None
+            return False, None, None
 
     async def _calculate_rsi_latest(self, symbol: str, timeframe: str, period: int) -> Optional[float]:
         try:
@@ -260,11 +288,14 @@ class RSICorrelationTrackerAlertService:
             logger.info(
                 f"📧 Scheduling RSI Correlation Tracker email -> user={user_email}, alert={payload.get('alert_name','RSI Correlation Tracker Alert')}, pairs={len(payload.get('triggered_pairs', []))}"
             )
-            await email_service.send_rsi_alert(
+            cfg = payload.get("alert_config", {})
+            calc_mode = (cfg.get("mode") or "rsi_threshold").lower()
+            await email_service.send_rsi_correlation_alert(
                 user_email=user_email,
                 alert_name=payload.get("alert_name", "RSI Correlation Tracker Alert"),
+                calculation_mode=calc_mode,
                 triggered_pairs=payload.get("triggered_pairs", []),
-                alert_config=payload.get("alert_config", {}),
+                alert_config=cfg,
             )
         except Exception as e:
             logger.error(f"Error sending correlation tracker email: {e}")

@@ -265,6 +265,7 @@ Notes:
   - RSI Threshold: evaluate pairwise RSI combinations (e.g., positive/negative mismatches, neutral break) using per‑pair RSI settings.
   - Real Correlation: compute Pearson correlation of returns over a configurable `correlation_window` (default 50) using historical OHLC closes for both symbols.
 - Outputs include RSI values (threshold mode) or `correlation_value` (real correlation mode), with per‑pair details in emails.
+  - Email uses a compact, mobile‑friendly HTML template titled “RSI Correlation Mismatch” with columns: Expected, RSI Corr Now, Trigger.
 
 #### Email Template (RSI Correlation — Threshold Mode)
 - Compact per‑pair card with RSI correlation summary.
