@@ -235,6 +235,24 @@ Notes:
   - Real Correlation: compute Pearson correlation of returns over a configurable `correlation_window` (default 50) using historical OHLC closes for both symbols.
 - Outputs include RSI values (threshold mode) or `correlation_value` (real correlation mode), with per‑pair details in emails.
 
+#### Email Template (Real Correlation)
+- Uses a compact, mobile‑friendly HTML card per triggered pair.
+- Fields per card:
+  - **pair_a/pair_b**: Symbols (e.g., `EURUSD` vs `GBPUSD`)
+  - **lookback**: `correlation_window` from alert config
+  - **timeframe**: TF of the evaluation (e.g., `1H`)
+  - **expected_corr**: Threshold expression derived from the triggered rule:
+    - strong_positive: `≥ strong_correlation_threshold`
+    - strong_negative: `≤ -strong_correlation_threshold`
+    - weak_correlation: `|corr| ≤ weak_correlation_threshold`
+    - correlation_break: `moderate_threshold ≤ |corr| < strong_threshold`
+  - **actual_corr**: Calculated `correlation_value` (rounded)
+  - **trigger_rule**: Humanized `trigger_condition` (e.g., `Strong positive correlation`)
+
+Notes:
+- Multiple triggered pairs render as multiple cards within a single email.
+- Subject remains `Trading Alert: <alert_name>` and a text/plain alternative is included.
+
 ### Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)
 
 - Per‑timeframe indicator strength is normalized to a score in [−100..+100].

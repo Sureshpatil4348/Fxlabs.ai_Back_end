@@ -7,7 +7,7 @@ import re
 from urllib.parse import quote as url_quote
 from threading import RLock
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 try:
     from sendgrid import SendGridAPIClient
     from sendgrid.helpers.mail import (
@@ -1159,7 +1159,81 @@ class EmailService:
         alert_config: Dict[str, Any]
     ) -> str:
         """Build HTML email body for RSI correlation alert"""
-        
+
+        # Use the provided compact template for REAL correlation mode (actual correlation alerts)
+        if calculation_mode == "real_correlation":
+            def format_expected_and_rule(pair: Dict[str, Any]) -> Tuple[str, str]:
+                condition = str(pair.get("trigger_condition", "")).strip()
+                strong_threshold = alert_config.get("strong_correlation_threshold", 0.70)
+                moderate_threshold = alert_config.get("moderate_correlation_threshold", 0.30)
+                weak_threshold = alert_config.get("weak_correlation_threshold", 0.15)
+
+                # expected_corr shown based on rule triggered
+                if condition == "strong_positive":
+                    expected = f"≥ {strong_threshold:.2f}"
+                    rule = "Strong positive correlation"
+                elif condition == "strong_negative":
+                    expected = f"≤ {-strong_threshold:.2f}"
+                    rule = "Strong negative correlation"
+                elif condition == "weak_correlation":
+                    expected = f"|corr| ≤ {weak_threshold:.2f}"
+                    rule = "Weak correlation"
+                elif condition == "correlation_break":
+                    expected = f"{moderate_threshold:.2f} ≤ |corr| < {strong_threshold:.2f}"
+                    rule = "Correlation break from strong"
+                else:
+                    expected = "Configured threshold"
+                    rule = condition.replace("_", " ").title() if condition else "Correlation signal"
+                return expected, rule
+
+            lookback = alert_config.get("correlation_window", 50)
+            # Build one content block per triggered pair inside the container
+            pair_blocks: List[str] = []
+            for pair in triggered_pairs:
+                pair_a = pair.get("symbol1", "N/A")
+                pair_b = pair.get("symbol2", "N/A")
+                timeframe = pair.get("timeframe", "N/A")
+                actual_corr = pair.get("correlation_value", 0)
+                expected_corr, trigger_rule = format_expected_and_rule(pair)
+
+                block = f"""
+    <tr><td style=\"padding:20px;\">
+      <div style=\"margin-bottom:12px;\"><strong>{pair_a}</strong> vs <strong>{pair_b}</strong> • Window: {lookback} • TF: {timeframe}</div>
+      <table role=\"presentation\" width=\"100%\" style=\"border:1px solid #E5E7EB;border-radius:10px\">
+        <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">
+          <td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">Actual Now</td><td style=\"padding:10px\">Trigger</td>
+        </tr>
+        <tr>
+          <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{expected_corr}</td>
+          <td style=\"padding:10px;border-top:1px solid #E5E7EB;\"><strong>{actual_corr}</strong></td>
+          <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{trigger_rule}</td>
+        </tr>
+      </table>
+      <div style=\"margin-top:14px;padding:12px;background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;font-size:13px;\">
+        Signal: <strong>Mismatch detected</strong>. Consider hedge/arbitrage per your strategy.
+      </div>
+    </td></tr>
+                """
+                pair_blocks.append(block)
+
+            blocks_html = "".join(pair_blocks)
+
+            # Wrap with the outer container from the provided template
+            return f"""
+<!doctype html>
+<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Correlation Alert</title></head>
+<body style=\"margin:0;background:#F5F7FB;\">
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Actual Correlation Mismatch</td></tr>
+  {blocks_html}
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>
+</table>
+</td></tr></table>
+</body></html>
+            """
+
+        # Fallback to the richer multi-section layout for RSI threshold mode
         # Build triggered pairs table
         pairs_table = ""
         for pair in triggered_pairs:
