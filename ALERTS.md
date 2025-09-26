@@ -143,3 +143,161 @@
 Notes
 - This document intentionally focuses on core product behavior and user‑facing configuration. Internal implementation snapshots, migration guides, and parity checklists have been removed to avoid duplication and to keep the spec concise.
 
+
+**Supabase — Table Schemas (Canonical)**
+
+- heatmap_alerts
+  - id: uuid (pk, default gen_random_uuid())
+  - user_id: uuid (nullable, optional linkage)
+  - user_email: text (indexed)
+  - alert_name: text
+  - is_active: boolean (default true)
+  - pairs: text[]
+  - timeframes: text[]
+  - selected_indicators: text[] (values: utbot, macd, ema21, ema50, ema200, ichimokuclone, rsi)
+  - trading_style: text (values: scalper|dayTrader|swing)
+  - min_alignment: int2 (nullable)
+  - buy_threshold_min: int2 (default 70)
+  - buy_threshold_max: int2 (default 100)
+  - sell_threshold_min: int2 (default 0)
+  - sell_threshold_max: int2 (default 30)
+  - cooldown_minutes: int2 (default 30)
+  - gate_by_buy_now: boolean (default false)
+  - gate_buy_min: int2 (default 60)
+  - gate_sell_max: int2 (default 40)
+  - alert_frequency: text (values: once|hourly|daily, default once)
+  - notification_methods: text[] (values subset of ["email","telegram"]) 
+  - trigger_on_crossing: boolean (default true)
+  - created_at: timestamptz (default now())
+  - updated_at: timestamptz (default now())
+
+- rsi_alerts
+  - id: uuid (pk)
+  - user_id: uuid (nullable)
+  - user_email: text (indexed)
+  - alert_name: text
+  - is_active: boolean (default true)
+  - pairs: text[]
+  - timeframes: text[]
+  - rsi_period: int2 (default 14)
+  - rsi_overbought_threshold: int2 (default 70)
+  - rsi_oversold_threshold: int2 (default 30)
+  - alert_conditions: text[] (values subset of ["overbought","oversold"]) 
+  - bar_policy: text (values: close|intrabar, default close)
+  - cooldown_minutes: int2 (default 30)
+  - timezone: text (default "Asia/Kolkata")
+  - quiet_start_local: text (nullable, HH:MM)
+  - quiet_end_local: text (nullable, HH:MM)
+  - notification_methods: text[] (values subset of ["email","telegram"]) 
+  - alert_frequency: text (values: once|hourly|daily, default once)
+  - trigger_on_crossing: boolean (default true)
+  - created_at: timestamptz (default now())
+  - updated_at: timestamptz (default now())
+
+- rsi_alert_triggers (append-only log)
+  - id: uuid (pk)
+  - alert_id: uuid (fk → rsi_alerts.id)
+  - symbol: text
+  - timeframe: text
+  - trigger_condition: text (values: overbought_cross|oversold_cross)
+  - rsi_value: numeric
+  - current_price: numeric
+  - price_change_percent: numeric
+  - triggered_at: timestamptz (default now())
+
+- rsi_correlation_alerts
+  - id: uuid (pk)
+  - user_id: uuid (nullable)
+  - user_email: text (indexed)
+  - alert_name: text
+  - is_active: boolean (default true)
+  - correlation_pairs: jsonb (array of [symbol1, symbol2])
+  - timeframes: text[]
+  - calculation_mode: text (values: rsi_threshold|real_correlation, default rsi_threshold)
+  - rsi_period: int2 (default 14)
+  - rsi_overbought_threshold: int2 (default 70)
+  - rsi_oversold_threshold: int2 (default 30)
+  - correlation_window: int2 (default 50)
+  - strong_correlation_threshold: numeric (default 0.70)
+  - moderate_correlation_threshold: numeric (default 0.30)
+  - weak_correlation_threshold: numeric (default 0.15)
+  - notification_methods: text[] (values subset of ["email","telegram"]) 
+  - alert_frequency: text (values: once|hourly|daily, default once)
+  - trigger_on_crossing: boolean (default true)
+  - created_at: timestamptz (default now())
+  - updated_at: timestamptz (default now())
+
+- rsi_correlation_alert_triggers (append-only log)
+  - id: uuid (pk)
+  - alert_id: uuid (fk → rsi_correlation_alerts.id)
+  - symbol1: text
+  - symbol2: text
+  - timeframe: text
+  - rsi1: numeric (nullable)
+  - rsi2: numeric (nullable)
+  - correlation_value: numeric (nullable)
+  - current_price1: numeric (nullable)
+  - current_price2: numeric (nullable)
+  - price_change1: numeric (nullable)
+  - price_change2: numeric (nullable)
+  - triggered_at: timestamptz (default now())
+
+- user_channels (for Telegram)
+  - id: uuid (pk)
+  - user_id: uuid (nullable)
+  - user_email: text (unique)
+  - telegram_chat_id: text (nullable)
+  - bot_token: text (nullable)
+  - created_at: timestamptz (default now())
+  - updated_at: timestamptz (default now())
+
+Indexes & Policies (recommended)
+- Create btree indexes on: heatmap_alerts.user_email, rsi_alerts.user_email, rsi_correlation_alerts.user_email.
+- Row Level Security (RLS): enable on all tables; policy owner=user_email.
+- Triggers: `updated_at` set via trigger on updates.
+
+
+**Frontend — Exact Implementation Requirements**
+
+Create Alerts UI
+- Type A (Heatmap Threshold)
+  - Fields: `alert_name`, `pairs` (1–3), `timeframes` (multi), `trading_style` (Scalper/Day/Swing), direction (Buy/Sell/Both), `buy_threshold_min` (slider 20–90, default 70), `sell_threshold_max` (slider 10–50, default 30), optional `min_alignment` (int, default off), `cooldown_minutes` (default 30), delivery `notification_methods` (email, telegram), `alert_frequency` (once/hourly/daily), optional `gate_by_buy_now` with `gate_buy_min`/`gate_sell_max`.
+  - Endpoint: POST `/api/heatmap-alerts` with payload reflecting `heatmap_alerts` columns.
+
+- Type B (Indicator Flip)
+  - Fields: `alert_name`, `pairs` (1–3), `timeframes` (up to 3), `selected_indicators` (1–2 from UTBOT, RSI, MACD, EMA 21/50/200, IchimokuClone), direction (Buy/Sell/Both), NEW toggle (K=3 fixed), optional `gate_by_buy_now` with 60/40 defaults, `cooldown_minutes`, delivery, `alert_frequency`.
+  - Endpoint: same POST `/api/heatmap-alerts` (Type B is part of Heatmap service using `selected_indicators`).
+  - Note: Backend currently implements UTBOT/MACD/EMA/Ichimoku flips; RSI flip is pending.
+
+- RSI OB/OS Alerts
+  - Fields: `alert_name`, `pairs` (per plan), `timeframes` (up to 3), `rsi_period`, thresholds OB/OS, `alert_conditions` (overbought/oversold), `bar_policy` (close/intrabar; close recommended), `cooldown_minutes`, `timezone`, `quiet_start_local`, `quiet_end_local`, delivery, `alert_frequency`.
+  - Endpoint: POST `/api/rsi-alerts`.
+
+- RSI Correlation Alerts
+  - Fields: `alert_name`, `correlation_pairs` (list of [symbol1,symbol2]), `timeframes` (up to 3), `calculation_mode` (rsi_threshold/real_correlation), `rsi_period`, OB/OS thresholds, `correlation_window`, strong/moderate/weak thresholds, delivery, `alert_frequency`.
+  - Endpoint: POST `/api/rsi-correlation-alerts`.
+
+List & Manage Alerts
+- Fetch per user:
+  - GET `/api/heatmap-alerts/user/{user_email}`
+  - GET `/api/rsi-alerts/user/{user_email}`
+  - GET `/api/rsi-correlation-alerts/user/{user_email}`
+- Delete heatmap alert: DELETE `/api/heatmap-alerts/{alert_id}`
+- Display list view: badge (A/B), summarized config, enabled status.
+
+Validation in UI
+- Enforce max 3 unique pairs per user across all alerts (show helpful error if exceeded; backend validates).
+- Validate timeframes ≤ 3; enforce supported values (5m,10m,15m,30m,1h,4h,1d).
+- Sliders numeric bounds: Buy min 20–90; Sell max 10–50; Cooldown ≥ 5.
+- If `gate_by_buy_now` enabled: defaults Buy ≥60 / Sell ≤40 unless overridden.
+
+Delivery Channels
+- Email: default enabled.
+- Telegram: expose fields to connect chat (store `user_channels.telegram_chat_id` and `bot_token`). Backend sending for Telegram is pending; UI should capture and persist credentials now.
+
+Quiet Hours (RSI only for now)
+- Expose `timezone` (IANA), `quiet_start_local`, `quiet_end_local` for RSI alerts; show helper text.
+- Heatmap/Correlation: leave hidden/disabled until backend parity.
+
+Testing Hooks
+- Manual check endpoints exist: `/api/*/check`, `/api/*/test-email` — wire QA buttons in dev mode.

@@ -254,6 +254,8 @@ Notes:
 
 - End‑of‑timeframe evaluation only: a unified scheduler triggers checks on timeframe boundaries (1M/5M/15M/30M/1H/4H/1D). Heatmap, RSI, and RSI Correlation are evaluated on TF closes; tick-driven checks are disabled by default.
 - Crossing/Flip triggers: fire when the metric crosses into the condition from the opposite side (or a regime flip occurs), not on every bar while in‑zone.
+
+See `ALERTS.md` for canonical Supabase table schemas and exact frontend implementation requirements (Type A/Type B/RSI/RSI‑Correlation), including field lists, endpoints, validation, and delivery channel setup.
 - Re‑arm on exit then re‑cross: once fired, do not re‑fire while the condition persists; re‑arm after leaving the zone and fire again only on a new cross‑in. Changing the configured threshold re‑arms immediately.
 - Rate limits, cooldowns, concurrency, alert frequency (once/hourly/daily), and quiet‑hours apply consistently across alert types.
 
