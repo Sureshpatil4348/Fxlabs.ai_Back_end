@@ -339,3 +339,33 @@ Testing Hooks
   - `trigger_on_crossing` is persisted but not used in flip/threshold evaluation (no‑op currently).
 - Delivery
   - Email sending implemented. Telegram capture supported at data level, but sending is not implemented.
+
+### Simplified Scope vs Current Implementation — Summary Table
+
+| Feature | Simplified Scope | Current Implementation | Status | Extras / Pending |
+|---|---|---|---|---|
+| Max tracked pairs/user | 3 total | Enforced at create for Heatmap/RSI/Correlation | Implemented | — |
+| Rate limit + digest | 5 alerts/user/hour + digest | Not implemented for alerts (only test-email endpoints rate-limited) | Missing | Digest batching missing |
+| Per‑pair concurrency | Avoid races | Pair locks across services | Implemented | — |
+| Stale TF skip | Skip if last candle age > 2× TF | Implemented in all services | Implemented | — |
+| Warm‑up | Indicators require warm‑up | Implemented (e.g., RSI series lookback; Heatmap checks when RSI selected) | Implemented | — |
+| Delivery: Email | Supported | Implemented | Implemented | — |
+| Delivery: Telegram | Supported | Credentials stored; sending not implemented | Missing | Pending backend sending |
+| RSI OB/OS: timeframes | Choose 1–3 | Supported (no strict server validation) | Implemented | UI must enforce ≤3 |
+| RSI OB/OS: thresholds/policy | Crossing ≥70/≤30 | Crossing‑only with Only‑NEW K=3 + 1‑bar confirm + hysteresis 65/35 | Implemented | Extras: Only‑NEW + confirmation + hysteresis |
+| RSI OB/OS: in‑zone | Not required | Not supported | N/A | — |
+| RSI OB/OS: bar timing | Close | Closed‑bar only | Implemented | Intrabar disabled |
+| RSI OB/OS: cooldown | 30m (configurable) | Default 30m; not persisted/configurable via API | Partial | Add `cooldown_minutes` to model/persisting to complete |
+| RSI OB/OS: quiet hours | Not required | Suppression logic exists; not persisted via API | Extra (partial) | Optional; wire through create if needed |
+| RSI Correlation: modes | RSI Threshold or Real | Both supported | Implemented | — |
+| RSI Correlation: conditions (real) | Strong/weak/break rules | Matches spec | Implemented | — |
+| RSI Correlation: conditions (RSI) | Threshold concept | Uses `positive_mismatch`/`negative_mismatch`/`neutral_break` | Implemented | Extra conditions vs spec; consider documenting |
+| RSI Correlation: TFs | Choose 1–3 | Supported (no strict server validation) | Implemented | UI must enforce ≤3 |
+| RSI Correlation: frequencies | once/hourly/daily | Service also supports `weekly` | Implemented | Extra: `weekly` |
+| Heatmap: pairs/timeframes | Up to 3 pairs, up to 3 TFs | Supported; global 3‑pair cap enforced; TF count not enforced server‑side | Implemented | UI must enforce ≤3 TFs |
+| Heatmap: thresholds | Buy ≥70, Sell ≤30 | Implemented; Buy Now % from style‑weighted Final Score | Implemented | — |
+| Heatmap: indicators (selection) | Choose 1–2 of 7 | Supports UTBOT, MACD, EMA21/50/200, IchimokuClone, RSI | Implemented | Backend also accepts `bollinger`, `stochastic` (extras; hide in UI) |
+| Heatmap: indicator flips | Not required by simplified scope | Implemented for EMA/ MACD/ Ichimoku/ UTBOT with K=3 + 1‑bar confirm | Extra | Gate by Buy Now % supported |
+| Heatmap: RSI flip | If exposed | Not implemented | Missing | Pending if needed |
+| Heatmap: style weighting | Implicit | Style defaults implemented; optional `style_weights_override` | Implemented | Extra: override capability |
+| Heatmap: trigger_on_crossing | — | Field persisted but not used in evaluation | N/A | No‑op currently |
