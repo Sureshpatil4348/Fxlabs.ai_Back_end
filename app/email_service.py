@@ -303,6 +303,27 @@ class EmailService:
         self._persist_unsubscribes()
         return True
 
+    def _is_user_over_limit(self, user_email: str) -> bool:
+        """Check per-user rate limit without mutating counters.
+
+        Only successful sends should count against the hourly cap. This helper
+        prunes old entries and checks the count without recording a new send.
+        """
+        now = datetime.now(timezone.utc)
+        window = timedelta(minutes=self.user_rate_window_minutes)
+        sends = [t for t in self.user_sends.get(user_email, []) if now - t < window]
+        # Persist pruned list to avoid unbounded growth
+        self.user_sends[user_email] = sends
+        return len(sends) >= self.user_rate_limit
+
+    def _record_user_send(self, user_email: str) -> None:
+        """Record a successful send for per-user rate limiting (mutating)."""
+        now = datetime.now(timezone.utc)
+        window = timedelta(minutes=self.user_rate_window_minutes)
+        sends = [t for t in self.user_sends.get(user_email, []) if now - t < window]
+        sends.append(now)
+        self.user_sends[user_email] = sends
+
     def resubscribe(self, email: str) -> bool:
         if not email:
             return False
@@ -670,18 +691,17 @@ class EmailService:
         if self.is_unsubscribed(user_email):
             logger.info(f"🔕 {user_email} is unsubscribed — skipping heatmap email")
             return False
-        # Per-user rate limiting with overflow digest
-        if not self._allow_user_send(user_email):
+        # Check smart cooldown before rate limit so attempts don't consume quota
+        alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
+        if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
+            logger.info(f"🕐 Heatmap alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
+            return False
+        
+        # Per-user rate limiting with overflow digest (count only successful sends)
+        if self._is_user_over_limit(user_email):
             logger.info(f"🔕 Rate limit reached for {user_email}. Queueing to digest.")
             self._enqueue_digest(user_email, "Heatmap", alert_name, triggered_pairs, alert_config)
             await self._maybe_send_digest(user_email)
-            return False
-        
-        # Check smart cooldown before sending
-        alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
-        
-        if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
-            logger.info(f"🕐 Heatmap alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
         
         # Clean up old cooldowns periodically
@@ -715,6 +735,8 @@ class EmailService:
                 logger.info(f"✅ Heatmap alert email sent to {user_email}")
                 # Update cooldown after successful send
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
+                # Record successful send for rate limiting
+                self._record_user_send(user_email)
                 return True
             else:
                 logger.error(f"❌ Failed to send email: {response.status_code} - {response.body}")
@@ -918,21 +940,20 @@ class EmailService:
         if self.is_unsubscribed(user_email):
             logger.info(f"🔕 {user_email} is unsubscribed — skipping RSI email")
             return False
-        # Per-user rate limiting with overflow digest
-        if not self._allow_user_send(user_email):
-            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing RSI to digest.")
-            self._enqueue_digest(user_email, "RSI", alert_name, triggered_pairs, alert_config)
-            await self._maybe_send_digest(user_email)
-            return False
-        
-        # Check smart cooldown before sending
+        # Check smart cooldown before rate limit so attempts don't consume quota
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
         logger.info(f"🔍 Generated alert hash: {alert_hash[:16]}...")
-        
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
             logger.info(f"🕐 RSI alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
         
+        # Per-user rate limiting with overflow digest (count only successful sends)
+        if self._is_user_over_limit(user_email):
+            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing RSI to digest.")
+            self._enqueue_digest(user_email, "RSI", alert_name, triggered_pairs, alert_config)
+            await self._maybe_send_digest(user_email)
+            return False
+
         logger.info(f"✅ RSI alert passed cooldown check, proceeding with email")
         
         # Clean up old cooldowns periodically
@@ -978,6 +999,8 @@ class EmailService:
                 # Update cooldown after successful send
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
                 logger.info(f"⏰ Updated cooldown for alert hash: {alert_hash[:16]}...")
+                # Record successful send for rate limiting
+                self._record_user_send(user_email)
                 return True
             else:
                 logger.error(f"❌ Failed to send RSI alert email: {response.status_code} - {response.body}")
@@ -1148,20 +1171,19 @@ class EmailService:
         if self.is_unsubscribed(user_email):
             logger.info(f"🔕 {user_email} is unsubscribed — skipping RSI correlation email")
             return False
-        # Per-user rate limiting with overflow digest
-        if not self._allow_user_send(user_email):
-            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing Correlation to digest.")
-            self._enqueue_digest(user_email, "Correlation", alert_name, triggered_pairs, alert_config)
-            await self._maybe_send_digest(user_email)
-            return False
-        
-        # Check smart cooldown before sending
+        # Check smart cooldown before rate limit so attempts don't consume quota
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs, calculation_mode)
-        
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
             logger.info(f"🕐 RSI correlation alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
         
+        # Per-user rate limiting with overflow digest (count only successful sends)
+        if self._is_user_over_limit(user_email):
+            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing Correlation to digest.")
+            self._enqueue_digest(user_email, "Correlation", alert_name, triggered_pairs, alert_config)
+            await self._maybe_send_digest(user_email)
+            return False
+
         # Clean up old cooldowns periodically
         self._cleanup_old_cooldowns()
         
@@ -1193,6 +1215,8 @@ class EmailService:
                 logger.info(f"✅ RSI correlation alert email sent to {user_email}")
                 # Update cooldown after successful send
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
+                # Record successful send for rate limiting
+                self._record_user_send(user_email)
                 return True
             else:
                 logger.error(f"❌ Failed to send RSI correlation alert email: {response.status_code} - {response.body}")

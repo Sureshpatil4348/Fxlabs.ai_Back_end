@@ -31,7 +31,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Scalable Architecture**: Async/await design for high concurrency
 - **Per-Pair Concurrency Cap**: Keyed async locks prevent concurrent evaluations for the same pair/timeframe across alert services
 - **Warm-up & Stale-Data Protection**: Skips evaluations when latest bar is stale (>2× timeframe) and enforces indicator lookback (e.g., RSI series) before triggering
-- **Rate Limits + Digest**: Caps alert emails to 5/hour per user; overflows are batched into a single digest email
+- **Rate Limits + Digest**: Caps alert emails to 5/hour per user (successful sends only); overflows are batched into a single digest email
 - **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers
 
@@ -553,6 +553,7 @@ Model behavior:
 - Medium severity:
   - External API keys (Perplexity/Jblanked) are expected via env; missing keys will limit news analysis. Behavior unchanged.
   - News analyzer uses simple keyword extraction to derive effect; this is heuristic, as before.
+  - Email rate limiting now counts only successfully delivered alert sends toward the 5/hour cap. Attempts skipped by cooldown/value-similarity do not consume quota. Digest emails are sent at most once per 60 minutes when overflow occurs.
 
 - Low severity:
   - Logging is console-based; consider structured logging for production observability.
