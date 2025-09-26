@@ -228,6 +228,18 @@ Notes:
 - Use `alert_conditions` values `"overbought"`/`"oversold"` to request threshold crossing detection; confirmed triggers return `overbought_cross`/`oversold_cross` in results.
 - Current API does not expose `bar_policy` and the backend enforces closed‑bar evaluation.
 
+#### Email Template (RSI)
+- Compact, per‑pair card format.
+- Fields per card:
+  - **pair**: `symbol`
+  - **timeframe**: `timeframe`
+  - **zone**: derived from `trigger_condition` → `Overbought` or `Oversold`
+  - **rsi**: `rsi_value`
+  - **price**: `current_price`
+  - **ts_local**: local time string (IST by default)
+Notes:
+- Multiple triggers render multiple cards in a single email.
+
 ### RSI Correlation Alerts — Threshold and Real Correlation
 
 - Modes:

@@ -949,137 +949,60 @@ class EmailService:
         triggered_pairs: List[Dict[str, Any]], 
         alert_config: Dict[str, Any]
     ) -> str:
-        """Build HTML email body for RSI alert"""
-        
-        # Build triggered pairs table
-        pairs_table = ""
+        """Build HTML email body for RSI alert using compact per‑pair cards"""
+
+        # Build one card (provided template) per triggered pair
+        cards: List[str] = []
+        ts_local = self._format_now_local("Asia/Kolkata")
         for pair in triggered_pairs:
             symbol = pair.get("symbol", "N/A")
+            timeframe = pair.get("timeframe", "N/A")
             rsi_value = pair.get("rsi_value", 0)
             price = pair.get("current_price", 0)
-            price_change = pair.get("price_change_percent", 0)
-            
-            # Color code RSI value
-            rsi_color = "#4a5568"  # Default gray
-            if rsi_value >= 70:
-                rsi_color = "#e74c3c"  # Red for overbought
-            elif rsi_value <= 30:
-                rsi_color = "#27ae60"  # Green for oversold
-            
-            pairs_table += f"""
-            <tr style="border-bottom: 1px solid #e9ecef;">
-                <td style="padding: 12px 8px; font-weight: 600; color: #1a1a1a;">{symbol}</td>
-                <td style="padding: 12px 8px; color: {rsi_color}; font-weight: 500;">{rsi_value:.2f}</td>
-                <td style="padding: 12px 8px; color: #4a5568;">{price:.5f}</td>
-                <td style="padding: 12px 8px; color: {'#059669' if price_change >= 0 else '#dc2626'}; font-weight: 500;">{price_change:+.2f}%</td>
-            </tr>
+            cond = str(pair.get("trigger_condition", "")).lower()
+            if "overbought" in cond:
+                zone = "Overbought"
+            elif "oversold" in cond:
+                zone = "Oversold"
+            else:
+                zone = "RSI signal"
+
+            card = f"""
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">RSI Alert • {symbol} ({timeframe})</td></tr>
+  <tr><td style=\"padding:20px;\">
+    <div style=\"margin-bottom:10px;\">RSI has entered <strong>{zone}</strong>.</div>
+    <div style=\"font-size:14px;line-height:1.6\">
+      <strong>Current RSI:</strong> {rsi_value}<br>
+      <strong>Price:</strong> {price}<br>
+      <strong>Time:</strong> {ts_local}
+    </div>
+    <div style=\"margin-top:16px;padding:12px;border-radius:10px;background:#F9FAFB;color:#374151;font-size:13px;\">
+      Heads-up: Oversold/Overbought readings can precede reversals or trend continuation. Combine with your plan.
+    </div>
+  </td></tr>
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>
+</table>
+<div style=\"height:12px\"></div>
             """
-        
-        # Get alert configuration details
-        rsi_period = alert_config.get("rsi_period", 14)
-        rsi_overbought = alert_config.get("rsi_overbought_threshold", 70)
-        rsi_oversold = alert_config.get("rsi_oversold_threshold", 30)
-        alert_conditions = alert_config.get("alert_conditions", [])
-        
+            cards.append(card)
+
+        cards_html = "".join(cards)
+
+        # Outer background wrapper (single body, multiple cards)
         return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>RSI Alert - {alert_name}</title>
-        </head>
-        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f8f9fa;">
-            <div style="max-width: 800px; margin: 0 auto; background-color: white; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-                
-                <!-- Header -->
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
-                    <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 300;">
-                        📊 RSI Alert Triggered
-                    </h1>
-                    <p style="color: rgba(255, 255, 255, 0.9); margin: 10px 0 0 0; font-size: 16px;">
-                        {alert_name}
-                    </p>
-                </div>
-                
-                <!-- Alert Summary -->
-                <div style="padding: 30px; background-color: #fff;">
-                    <div style="background-color: #e8f4fd; border-left: 4px solid #3498db; padding: 20px; margin-bottom: 25px; border-radius: 4px;">
-                        <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 18px;">🚨 Alert Summary</h3>
-                        <p style="margin: 0; color: #34495e; line-height: 1.6;">
-                            <strong>{len(triggered_pairs)} trading pair(s)</strong> have triggered your RSI alert conditions. 
-                            Review the details below and consider your trading strategy.
-                        </p>
-                    </div>
-                    
-                    <!-- Alert Configuration -->
-                    <div style="background-color: #f8f9fa; padding: 20px; margin-bottom: 25px; border-radius: 8px; border: 1px solid #e9ecef;">
-                        <h3 style="margin: 0 0 15px 0; color: #2c3e50; font-size: 16px;">⚙️ Alert Configuration</h3>
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">RSI Period</strong>
-                                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px;">{rsi_period}</p>
-                            </div>
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Overbought Threshold</strong>
-                                <p style="margin: 5px 0 0 0; color: #e74c3c; font-size: 14px;">{rsi_overbought}</p>
-                            </div>
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Oversold Threshold</strong>
-                                <p style="margin: 5px 0 0 0; color: #27ae60; font-size: 14px;">{rsi_oversold}</p>
-                            </div>
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Alert Conditions</strong>
-                                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px;">{', '.join([c.replace('_', ' ').title() for c in alert_conditions])}</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Triggered Pairs Table -->
-                    <h3 style="margin: 0 0 20px 0; color: #2c3e50; font-size: 18px;">📈 Triggered Trading Pairs</h3>
-                    <div style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
-                            <thead>
-                                <tr style="background-color: #34495e; color: white;">
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Symbol</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">RSI Value</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Current Price</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Price Change</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {pairs_table}
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <!-- Trading Tips -->
-                    <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 20px; margin-top: 25px; border-radius: 8px;">
-                        <h3 style="margin: 0 0 15px 0; color: #856404; font-size: 16px;">💡 Trading Tips</h3>
-                        <ul style="margin: 0; padding-left: 20px; color: #856404; line-height: 1.6;">
-                            <li><strong>Overbought (RSI ≥ {rsi_overbought}):</strong> Consider potential selling opportunities or short positions</li>
-                            <li><strong>Oversold (RSI ≤ {rsi_oversold}):</strong> Look for potential buying opportunities or long positions</li>
-                            <li>Always combine RSI signals with other technical analysis tools</li>
-                            <li>Consider market context and overall trend before making trading decisions</li>
-                        </ul>
-                    </div>
-                </div>
-                
-                <!-- Footer -->
-                <div style="background-color: #2c3e50; padding: 25px; text-align: center;">
-                    <p style="color: #bdc3c7; margin: 0 0 10px 0; font-size: 14px;">
-                        This alert was generated by <strong style="color: #ecf0f1;">FX Labs</strong>
-                    </p>
-                    <p style="color: #95a5a6; margin: 0; font-size: 12px;">{self._format_now_local("Asia/Kolkata")}</p>
-                    <div style="margin-top: 15px;">
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Manage Alerts</a>
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Trading Dashboard</a>
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Support</a>
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>
+<!doctype html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<title>FxLabs • RSI Alert</title>
+</head>
+<body style=\"margin:0;background:#F5F7FB;\">
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">
+<tr><td align=\"center\" style=\"padding:24px 12px;\">
+{cards_html}
+</td></tr></table>
+</body></html>
         """
     
     async def send_rsi_correlation_alert(
