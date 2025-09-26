@@ -1083,7 +1083,7 @@ class EmailService:
     ) -> str:
         """Build HTML email body for RSI correlation alert"""
 
-        # Use the provided compact template for REAL correlation mode (actual correlation alerts)
+        # Use the provided compact template for REAL correlation mode (actual price correlation)
         if calculation_mode == "real_correlation":
             def format_expected_and_rule(pair: Dict[str, Any]) -> Tuple[str, str]:
                 condition = str(pair.get("trigger_condition", "")).strip()
@@ -1156,211 +1156,70 @@ class EmailService:
 </body></html>
             """
 
-        # Fallback to the richer multi-section layout for RSI threshold mode
-        # Build triggered pairs table
-        pairs_table = ""
-        for pair in triggered_pairs:
-            symbol1 = pair.get("symbol1", "N/A")
-            symbol2 = pair.get("symbol2", "N/A")
-            timeframe = pair.get("timeframe", "N/A")
-            condition = pair.get("trigger_condition", "N/A")
-            price1 = pair.get("current_price1", 0)
-            price2 = pair.get("current_price2", 0)
-            price_change1 = pair.get("price_change1", 0)
-            price_change2 = pair.get("price_change2", 0)
-            
-            # Color code based on condition
-            condition_color = "#3498db"  # Blue for default
-            if "positive" in condition:
-                condition_color = "#27ae60"  # Green for positive
-            elif "negative" in condition:
-                condition_color = "#e74c3c"  # Red for negative
-            elif "weak" in condition:
-                condition_color = "#f39c12"  # Orange for weak
-            elif "break" in condition:
-                condition_color = "#9b59b6"  # Purple for break
-            
-            # Add mode-specific data
-            if calculation_mode == "rsi_threshold":
-                rsi1 = pair.get("rsi1", 0)
-                rsi2 = pair.get("rsi2", 0)
-                rsi_data = f"""
-                <td style="padding: 12px; color: #2c3e50;">{rsi1}</td>
-                <td style="padding: 12px; color: #2c3e50;">{rsi2}</td>
-                <td style="padding: 12px; color: #7f8c8d;">-</td>
-                """
-            else:  # real_correlation
-                correlation = pair.get("correlation_value", 0)
-                rsi_data = f"""
-                <td style="padding: 12px; color: #7f8c8d;">-</td>
-                <td style="padding: 12px; color: #7f8c8d;">-</td>
-                <td style="padding: 12px; color: #2c3e50; font-weight: bold;">{correlation}</td>
-                """
-            
-            pairs_table += f"""
-            <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 12px; font-weight: bold; color: #2c3e50;">{symbol1}</td>
-                <td style="padding: 12px; font-weight: bold; color: #2c3e50;">{symbol2}</td>
-                <td style="padding: 12px; color: #7f8c8d;">{timeframe}</td>
-                <td style="padding: 12px; font-weight: bold; color: {condition_color};">{condition.replace('_', ' ').title()}</td>
-                {rsi_data}
-                <td style="padding: 12px; color: #2c3e50;">{price1}</td>
-                <td style="padding: 12px; color: #2c3e50;">{price2}</td>
-                <td style="padding: 12px; color: {'#27ae60' if price_change1 >= 0 else '#e74c3c'};">{price_change1:+.2f}%</td>
-                <td style="padding: 12px; color: {'#27ae60' if price_change2 >= 0 else '#e74c3c'};">{price_change2:+.2f}%</td>
-            </tr>
-            """
-        
-        # Get alert configuration details
-        mode_display = "RSI Threshold" if calculation_mode == "rsi_threshold" else "Real Correlation"
-        
+        # RSI threshold mode: use provided compact RSI correlation mismatch template with RSI correlation
+        # One card per triggered pair
         if calculation_mode == "rsi_threshold":
-            rsi_period = alert_config.get("rsi_period", 14)
-            rsi_overbought = alert_config.get("rsi_overbought_threshold", 70)
-            rsi_oversold = alert_config.get("rsi_oversold_threshold", 30)
-            config_details = f"""
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">RSI Period</strong>
-                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px;">{rsi_period}</p>
-            </div>
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Overbought Threshold</strong>
-                <p style="margin: 5px 0 0 0; color: #e74c3c; font-size: 14px;">{rsi_overbought}</p>
-            </div>
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Oversold Threshold</strong>
-                <p style="margin: 5px 0 0 0; color: #27ae60; font-size: 14px;">{rsi_oversold}</p>
-            </div>
+            rsi_len = alert_config.get("rsi_period", 14)
+            def expected_and_rule(pair: Dict[str, Any]) -> Tuple[str, str]:
+                condition = str(pair.get("trigger_condition", "")).strip()
+                ob = alert_config.get("rsi_overbought_threshold", 70)
+                os_ = alert_config.get("rsi_oversold_threshold", 30)
+                if condition == "positive_mismatch":
+                    exp = f"One ≥ {ob}, one ≤ {os_}"
+                    rule = "Positive mismatch"
+                elif condition == "negative_mismatch":
+                    exp = f"Both ≥ {ob} or both ≤ {os_}"
+                    rule = "Negative mismatch"
+                elif condition == "neutral_break":
+                    exp = f"Both between {os_} and {ob}"
+                    rule = "Neutral break"
+                else:
+                    exp = "Configured RSI condition"
+                    rule = condition.replace("_", " ").title() if condition else "RSI condition"
+                return exp, rule
+
+            cards: List[str] = []
+            for pair in triggered_pairs:
+                pair_a = pair.get("symbol1", "N/A")
+                pair_b = pair.get("symbol2", "N/A")
+                timeframe = pair.get("timeframe", "N/A")
+                rsi_corr_now = pair.get("rsi_corr_now")
+                expected_corr, trigger_rule = expected_and_rule(pair)
+
+                card = f"""
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">RSI Correlation Mismatch</td></tr>
+  <tr><td style=\"padding:20px;\">
+    <div style=\"margin-bottom:12px;\"><strong>{pair_a}</strong> vs <strong>{pair_b}</strong> • RSI({rsi_len}) • TF: {timeframe}</div>
+    <table role=\"presentation\" width=\"100%\" style=\"border:1px solid #E5E7EB;border-radius:10px\">
+      <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">
+        <td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">RSI Corr Now</td><td style=\"padding:10px\">Trigger</td>
+      </tr>
+      <tr>
+        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{expected_corr}</td>
+        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\"><strong>{rsi_corr_now if rsi_corr_now is not None else '-'}</strong></td>
+        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{trigger_rule}</td>
+      </tr>
+    </table>
+    <div style=\"margin-top:14px;padding:12px;background:#ECFEF3;border:1px solid #A7F3D0;border-radius:10px;font-size:13px;\">
+      Note: RSI-based divergences can revert faster than price-corr; size risk accordingly.
+    </div>
+  </td></tr>
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>
+</table>
+<div style=\"height:12px\"></div>
+                """
+                cards.append(card)
+
+            return f"""
+<!doctype html>
+<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • RSI Correlation Alert</title></head>
+<body style=\"margin:0;background:#F5F7FB;\">
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
+{''.join(cards)}
+</td></tr></table>
+</body></html>
             """
-        else:  # real_correlation
-            correlation_window = alert_config.get("correlation_window", 50)
-            strong_threshold = alert_config.get("strong_correlation_threshold", 0.70)
-            moderate_threshold = alert_config.get("moderate_correlation_threshold", 0.30)
-            weak_threshold = alert_config.get("weak_correlation_threshold", 0.15)
-            config_details = f"""
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Correlation Window</strong>
-                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px;">{correlation_window}</p>
-            </div>
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Strong Threshold</strong>
-                <p style="margin: 5px 0 0 0; color: #e74c3c; font-size: 14px;">{strong_threshold}</p>
-            </div>
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Moderate Threshold</strong>
-                <p style="margin: 5px 0 0 0; color: #f39c12; font-size: 14px;">{moderate_threshold}</p>
-            </div>
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Weak Threshold</strong>
-                <p style="margin: 5px 0 0 0; color: #3498db; font-size: 14px;">{weak_threshold}</p>
-            </div>
-            """
-        
-        alert_conditions = alert_config.get("alert_conditions", [])
-        
-        return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>RSI Correlation Alert - {alert_name}</title>
-        </head>
-        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f8f9fa;">
-            <div style="max-width: 900px; margin: 0 auto; background-color: white; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-                
-                <!-- Header -->
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
-                    <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 300;">
-                        🔗 RSI Correlation Alert Triggered
-                    </h1>
-                    <p style="color: rgba(255, 255, 255, 0.9); margin: 10px 0 0 0; font-size: 16px;">
-                        {alert_name} - {mode_display} Mode
-                    </p>
-                </div>
-                
-                <!-- Alert Summary -->
-                <div style="padding: 30px; background-color: #fff;">
-                    <div style="background-color: #e8f4fd; border-left: 4px solid #3498db; padding: 20px; margin-bottom: 25px; border-radius: 4px;">
-                        <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 18px;">🚨 Correlation Alert Summary</h3>
-                        <p style="margin: 0; color: #34495e; line-height: 1.6;">
-                            <strong>{len(triggered_pairs)} correlation pair(s)</strong> have triggered your RSI correlation alert conditions. 
-                            Review the correlation analysis below and consider your trading strategy.
-                        </p>
-                    </div>
-                    
-                    <!-- Alert Configuration -->
-                    <div style="background-color: #f8f9fa; padding: 20px; margin-bottom: 25px; border-radius: 8px; border: 1px solid #e9ecef;">
-                        <h3 style="margin: 0 0 15px 0; color: #2c3e50; font-size: 16px;">⚙️ Alert Configuration</h3>
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Calculation Mode</strong>
-                                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px; font-weight: bold;">{mode_display}</p>
-                            </div>
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Alert Conditions</strong>
-                                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px;">{', '.join([c.replace('_', ' ').title() for c in alert_conditions])}</p>
-                            </div>
-                            {config_details}
-                        </div>
-                    </div>
-                    
-                    <!-- Triggered Pairs Table -->
-                    <h3 style="margin: 0 0 20px 0; color: #2c3e50; font-size: 18px;">📈 Triggered Correlation Pairs</h3>
-                    <div style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
-                            <thead>
-                                <tr style="background-color: #34495e; color: white;">
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Symbol 1</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Symbol 2</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Timeframe</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Condition</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">RSI 1</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">RSI 2</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Correlation</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Price 1</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Price 2</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Change 1</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Change 2</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {pairs_table}
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <!-- Trading Tips -->
-                    <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 20px; margin-top: 25px; border-radius: 8px;">
-                        <h3 style="margin: 0 0 15px 0; color: #856404; font-size: 16px;">💡 Correlation Trading Tips</h3>
-                        <ul style="margin: 0; padding-left: 20px; color: #856404; line-height: 1.6;">
-                            <li><strong>Positive Mismatch:</strong> One pair overbought, one oversold - potential divergence opportunity</li>
-                            <li><strong>Negative Mismatch:</strong> Both pairs in same extreme zone - trend continuation signal</li>
-                            <li><strong>Strong Positive Correlation:</strong> Pairs moving together - hedge or pair trading opportunities</li>
-                            <li><strong>Strong Negative Correlation:</strong> Pairs moving opposite - diversification benefits</li>
-                            <li><strong>Weak Correlation:</strong> Pairs moving independently - individual analysis needed</li>
-                            <li><strong>Correlation Break:</strong> Relationship changing - monitor for trend shifts</li>
-                            <li>Always consider market context and overall trend before making trading decisions</li>
-                        </ul>
-                    </div>
-                </div>
-                
-                <!-- Footer -->
-                <div style="background-color: #2c3e50; padding: 25px; text-align: center;">
-                    <p style="color: #bdc3c7; margin: 0 0 10px 0; font-size: 14px;">
-                        This alert was generated by <strong style="color: #ecf0f1;">FX Labs</strong>
-                    </p>
-                    <p style="color: #95a5a6; margin: 0; font-size: 12px;">{self._format_now_local("Asia/Kolkata")}</p>
-                    <div style="margin-top: 15px;">
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Manage Alerts</a>
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Trading Dashboard</a>
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Support</a>
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>
-        """
 
 # Global email service instance
 email_service = EmailService()

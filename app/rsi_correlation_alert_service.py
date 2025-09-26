@@ -306,6 +306,21 @@ class RSICorrelationAlertService:
             )
             
             if trigger_condition:
+                # Optional: compute correlation of recent RSI series to display in emails
+                rsi_corr_now = None
+                try:
+                    s1 = await self._get_recent_rsi_series(symbol1, timeframe, rsi_period, bars_needed=max(10, rsi_period))
+                    s2 = await self._get_recent_rsi_series(symbol2, timeframe, rsi_period, bars_needed=max(10, rsi_period))
+                    if s1 and s2:
+                        m = min(len(s1), len(s2))
+                        s1 = s1[-m:]
+                        s2 = s2[-m:]
+                        rsi_corr = self._calculate_series_correlation(s1, s2)
+                        if rsi_corr is not None:
+                            rsi_corr_now = round(float(rsi_corr), 3)
+                except Exception:
+                    rsi_corr_now = None
+
                 return {
                     "symbol1": symbol1,
                     "symbol2": symbol2,
@@ -317,6 +332,7 @@ class RSICorrelationAlertService:
                     "current_price2": market_data2.get("close", 0),
                     "price_change1": self._calculate_price_change_percent(market_data1),
                     "price_change2": self._calculate_price_change_percent(market_data2),
+                    "rsi_corr_now": rsi_corr_now,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
             
@@ -530,6 +546,93 @@ class RSICorrelationAlertService:
         rsi = 100 - (100 / (1 + rs))
         
         return rsi
+
+    async def _get_recent_rsi_series(self, symbol: str, timeframe: str, period: int, bars_needed: int) -> Optional[List[float]]:
+        """Compute recent RSI series using MT5 OHLC data if available."""
+        try:
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as MT5Timeframe
+
+            timeframe_map = {
+                "1M": MT5Timeframe.M1,
+                "5M": MT5Timeframe.M5,
+                "15M": MT5Timeframe.M15,
+                "30M": MT5Timeframe.M30,
+                "1H": MT5Timeframe.H1,
+                "4H": MT5Timeframe.H4,
+                "1D": MT5Timeframe.D1,
+                "1W": MT5Timeframe.W1
+            }
+
+            mt5_timeframe = timeframe_map.get(timeframe)
+            if not mt5_timeframe:
+                return None
+
+            count = max(period + bars_needed + 2, period + 5)
+            ohlc_data = get_ohlc_data(symbol, mt5_timeframe, count)
+            if not ohlc_data or len(ohlc_data) < period + 1:
+                return None
+            closes = [bar.close for bar in ohlc_data]
+            series = self._calculate_rsi_series(closes, period)
+            if not series:
+                return None
+            return series[-bars_needed:] if len(series) >= bars_needed else series
+        except Exception:
+            return None
+
+    def _calculate_rsi_series(self, closes: List[float], period: int) -> List[float]:
+        """Return RSI series using Wilder's smoothing for each bar after warmup."""
+        n = len(closes)
+        if n < period + 1:
+            return []
+        deltas = [closes[i] - closes[i - 1] for i in range(1, n)]
+        gains = [max(d, 0.0) for d in deltas]
+        losses = [max(-d, 0.0) for d in deltas]
+
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+
+        rsis: List[float] = []
+        if avg_loss == 0:
+            rsis.append(100.0)
+        else:
+            rs = avg_gain / avg_loss
+            rsis.append(100 - (100 / (1 + rs)))
+
+        for i in range(period, len(deltas)):
+            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+            if avg_loss == 0:
+                rsis.append(100.0)
+            else:
+                rs = avg_gain / avg_loss
+                rsis.append(100 - (100 / (1 + rs)))
+
+        return rsis
+
+    def _calculate_series_correlation(self, a: List[float], b: List[float]) -> Optional[float]:
+        try:
+            m = min(len(a), len(b))
+            if m < 3:
+                return None
+            a = a[-m:]
+            b = b[-m:]
+            mean_a = sum(a) / m
+            mean_b = sum(b) / m
+            num = sum((x - mean_a) * (y - mean_b) for x, y in zip(a, b))
+            den1 = (sum((x - mean_a) ** 2 for x in a)) ** 0.5
+            den2 = (sum((y - mean_b) ** 2 for y in b)) ** 0.5
+            if den1 == 0 or den2 == 0:
+                return 0.0
+            corr = num / (den1 * den2)
+            # Clamp
+            if corr > 1:
+                corr = 1.0
+            if corr < -1:
+                corr = -1.0
+            return float(corr)
+        except Exception:
+            return None
     
     async def _calculate_correlation(self, market_data1: Dict[str, Any], market_data2: Dict[str, Any], window: int = 50) -> Optional[float]:
         """Calculate Pearson correlation of returns over the last `window` bars using MT5 OHLC data.

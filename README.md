@@ -247,6 +247,21 @@ Notes:
   - Real Correlation: compute Pearson correlation of returns over a configurable `correlation_window` (default 50) using historical OHLC closes for both symbols.
 - Outputs include RSI values (threshold mode) or `correlation_value` (real correlation mode), with per‑pair details in emails.
 
+#### Email Template (RSI Correlation — Threshold Mode)
+- Compact per‑pair card with RSI correlation summary.
+- Fields per card:
+  - **pair_a/pair_b**: `symbol1`/`symbol2`
+  - **rsi_len**: `rsi_period`
+  - **timeframe**: `timeframe`
+  - **expected_corr**: derived from `trigger_condition` using OB/OS thresholds:
+    - positive_mismatch: `one ≥ overbought` and `one ≤ oversold`
+    - negative_mismatch: `both ≥ overbought` or `both ≤ oversold`
+    - neutral_break: `both between oversold and overbought`
+  - **rsi_corr_now**: correlation between recent RSI series for the pair (if computed)
+  - **trigger_rule**: humanized `trigger_condition`
+Notes:
+- Multiple triggered pairs render as multiple cards in one email.
+
 #### Email Template (Real Correlation)
 - Uses a compact, mobile‑friendly HTML card per triggered pair.
 - Fields per card:
