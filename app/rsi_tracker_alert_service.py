@@ -10,6 +10,7 @@ from .logging_config import configure_logging
 from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
+from .alert_logging import log_debug, log_info, log_warning, log_error
 
 
 configure_logging()
@@ -60,7 +61,17 @@ class RSITrackerAlertService:
                 return False
             dt = datetime.fromisoformat(ts_iso.replace("Z", "+00:00"))
             age = (datetime.now(timezone.utc) - dt).total_seconds()
-            return age > 2 * self._tf_seconds(timeframe)
+            stale = age > 2 * self._tf_seconds(timeframe)
+            if stale:
+                log_debug(
+                    logger,
+                    "market_data_stale",
+                    symbol=market_data.get("symbol"),
+                    timeframe=timeframe,
+                    age_seconds=age,
+                    ts=ts_iso,
+                )
+            return stale
         except Exception:
             return False
 
@@ -173,13 +184,42 @@ class RSITrackerAlertService:
 
             if st["armed_overbought"] and prev_val < overbought and curr_val >= overbought:
                 st["armed_overbought"] = False
+                log_info(
+                    logger,
+                    "rsi_cross_overbought",
+                    alert_id=alert_id,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    period=period,
+                    threshold=overbought,
+                    prev_rsi=round(float(prev_val), 2),
+                    curr_rsi=round(float(curr_val), 2),
+                )
                 return "overbought"
             if st["armed_oversold"] and prev_val > oversold and curr_val <= oversold:
                 st["armed_oversold"] = False
+                log_info(
+                    logger,
+                    "rsi_cross_oversold",
+                    alert_id=alert_id,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    period=period,
+                    threshold=oversold,
+                    prev_rsi=round(float(prev_val), 2),
+                    curr_rsi=round(float(curr_val), 2),
+                )
                 return "oversold"
             return None
         except Exception as e:
-            logger.error(f"Error detecting RSI crossing: {e}")
+            log_error(
+                logger,
+                "rsi_cross_error",
+                alert_id=alert_id,
+                symbol=symbol,
+                timeframe=timeframe,
+                error=str(e),
+            )
             return None
 
     def _allow_by_pair_cooldown(self, alert_id: str, symbol: str, timeframe: str, side: str, cooldown_minutes: Optional[int]) -> bool:
@@ -191,6 +231,16 @@ class RSITrackerAlertService:
         now = datetime.now(timezone.utc)
         last = self._pair_cooldowns.get(key)
         if last is not None and (now - last) < timedelta(minutes=minutes):
+            log_debug(
+                logger,
+                "pair_cooldown_block",
+                alert_id=alert_id,
+                symbol=symbol,
+                timeframe=timeframe,
+                side=side,
+                cooldown_minutes=minutes,
+                last_trigger_iso=last.isoformat(),
+            )
             return False
         self._pair_cooldowns[key] = now
         return True
@@ -216,7 +266,7 @@ class RSITrackerAlertService:
                 if ohlc:
                     bar = ohlc[-1]
                     tick = mt5.symbol_info_tick(symbol)
-                    return {
+                    data = {
                         "symbol": symbol,
                         "timeframe": timeframe,
                         "open": bar.open,
@@ -229,11 +279,19 @@ class RSITrackerAlertService:
                         "ask": getattr(tick, "ask", None) if tick else None,
                         "data_source": "MT5_REAL",
                     }
+                    log_debug(
+                        logger,
+                        "market_data_loaded",
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        source="MT5_REAL",
+                    )
+                    return data
         except Exception:
             pass
         # Fallback simulated data
         try:
-            return {
+            data = {
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "open": 1.1000,
@@ -244,6 +302,14 @@ class RSITrackerAlertService:
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "data_source": "SIMULATED",
             }
+            log_debug(
+                logger,
+                "market_data_loaded",
+                symbol=symbol,
+                timeframe=timeframe,
+                source="SIMULATED",
+            )
+            return data
         except Exception:
             return None
 
@@ -269,9 +335,36 @@ class RSITrackerAlertService:
                 async with session.post(url, headers=headers, json=payload) as resp:
                     if resp.status not in (200, 201):
                         txt = await resp.text()
-                        logger.error(f"Failed to log RSI tracker trigger: {resp.status} - {txt}")
+                        log_error(
+                            logger,
+                            "db_trigger_log_failed",
+                            status=resp.status,
+                            body=txt,
+                            alert_id=alert_id,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            trigger_condition=trigger_condition,
+                        )
+                    else:
+                        log_info(
+                            logger,
+                            "db_trigger_logged",
+                            alert_id=alert_id,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            trigger_condition=trigger_condition,
+                            rsi_value=round(float(rsi_value), 2),
+                        )
         except Exception as e:
-            logger.error(f"Error logging RSI tracker trigger: {e}")
+            log_error(
+                logger,
+                "db_trigger_log_error",
+                alert_id=alert_id,
+                symbol=symbol,
+                timeframe=timeframe,
+                trigger_condition=trigger_condition,
+                error=str(e),
+            )
 
     async def _send_notification(self, user_email: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], alert_config: Dict[str, Any]) -> None:
         if not user_email:
@@ -324,10 +417,24 @@ class RSITrackerAlertService:
                         key = f"{symbol}:{timeframe}"
                         async with pair_locks.acquire(key):
                             market = await self._get_market_data_for_symbol(symbol, timeframe)
-                            if not market or self._is_stale_market(market, timeframe):
+                            if not market:
+                                log_warning(
+                                    logger,
+                                    "market_data_missing",
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                )
+                                continue
+                            if self._is_stale_market(market, timeframe):
                                 continue
                             last_ts = await self._get_last_closed_bar_ts(symbol, timeframe)
                             if last_ts is None:
+                                log_debug(
+                                    logger,
+                                    "closed_bar_unknown",
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                )
                                 continue
                             prev_ts = self._last_closed_bar_ts.get(key)
                             if prev_ts is not None and prev_ts == last_ts:
@@ -370,8 +477,13 @@ class RSITrackerAlertService:
                             asyncio.create_task(self._log_trigger(alert_id, symbol, timeframe, item["rsi_value"], cond))
 
                     if triggered_pairs:
-                        logger.info(
-                            f"🚨 RSI Tracker triggers detected: alert_id={alert_id} alert_name={alert_name} user={user_email} count={len(triggered_pairs)}"
+                        log_info(
+                            logger,
+                            "rsi_tracker_triggers",
+                            alert_id=alert_id,
+                            alert_name=alert_name,
+                            user_email=user_email,
+                            count=len(triggered_pairs),
                         )
                         payload = {
                             "alert_id": alert_id,
@@ -385,18 +497,29 @@ class RSITrackerAlertService:
                         # Send email if configured (default on)
                         methods = alert.get("notification_methods") or ["email"]
                         if "email" in methods:
-                            logger.info(
-                                f"📤 Queueing email send for RSI Tracker alert_id={alert_id} via background task"
+                            log_info(
+                                logger,
+                                "email_queue",
+                                alert_type="rsi_tracker",
+                                alert_id=alert_id,
                             )
                             asyncio.create_task(self._send_notification(user_email, alert_name, triggered_pairs, alert))
                         else:
-                            logger.info(
-                                f"🔕 Email notifications disabled for alert_id={alert_id}; methods={methods}"
+                            log_info(
+                                logger,
+                                "email_disabled",
+                                alert_type="rsi_tracker",
+                                alert_id=alert_id,
+                                methods=methods,
                             )
 
             return triggers
         except Exception as e:
-            logger.error(f"Error checking RSI tracker alerts: {e}")
+            log_error(
+                logger,
+                "rsi_tracker_check_error",
+                error=str(e),
+            )
             return []
 
 
