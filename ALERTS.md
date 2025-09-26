@@ -266,12 +266,23 @@ Notes
 | RSI OB/OS | Quiet hours / timezone | match | Suppresses alerts within configured local quiet hours using alert timezone (default Asia/Kolkata). |
 | Correlation | RSI threshold + real correlation modes | match | Both modes implemented: RSI thresholds and real correlation computed from historical returns over a configurable window. |
 | Correlation | TF boundary evaluation + mismatch retriggers | match | Bar‑close evaluation supported; positive/negative mismatch triggers fire only on NEW mismatches and re‑arm after neutral break. |
+| Type B (Flip) | Per (pair, TF, indicator) cooldown | mismatch | Not enforced yet; flips rely on Only‑NEW (K=3) + 1‑bar confirmation (and optional Buy Now % gate). |
+| RSI OB/OS | RFI conditions (rfi_strong/rfi_moderate) | extra | Optional RFI checks supported alongside RSI; not part of core spec. |
+| Global | Alert frequency (once/hourly/daily) | partial | Enforced for Heatmap; not applied to RSI or Correlation services. |
+| Global | TF‑boundary evaluation (unified scheduler) | partial | RSI/Correlation use closed‑bar gating internally; Heatmap runs on tick invocation; unified TF scheduler planned. |
+| Global | Unsubscribe + email diagnostics | extra | One‑click List‑Unsubscribe, masked config diagnostics, and unsubscribe persistence implemented. |
+| Type A (Heatmap) | Style weights override | partial | Field exists in schema; backend calculation does not consume overrides yet. |
 
 **Known Gaps/Notes (Actionable)**
-- RSI condition keys: API payload must use `"overbought"`/`"oversold"` to enable crossing detection. The backend returns `overbought_cross`/`oversold_cross` when confirmed. The previous example with `"overbought_cross"` in the input was incorrect and is now fixed.
+- RSI condition keys: API payload must use "overbought"/"oversold" to enable crossing detection. The backend returns `overbought_cross`/`oversold_cross` when confirmed. The previous example with "overbought_cross" in the input was incorrect and is now fixed.
 - In‑zone policy: Pure in‑zone triggers for RSI (without crossing) are not currently wired through the public API path; the service primarily supports crossing with confirmation and hysteresis.
 - Evaluation timing: Intrabar (live) evaluation is disabled; backend always performs closed‑bar evaluations.
 - Notification methods: Email is the only supported delivery channel for now.
+- Type B flips cooldown: Per (pair, TF, indicator) cooldown is not implemented; consider adding an indicator‑scoped cooldown to reduce repeat flip emails.
+- Alert frequency: `alert_frequency` is honored in Heatmap but currently ignored by RSI and Correlation services; decide whether to enforce or remove from those models.
+- Scheduling parity: All alert types are launched from tick flow; RSI/Correlation enforce closed‑bar gating internally. A shared TF‑boundary scheduler for Heatmap would close the parity gap.
+- Style weights override: Schema supports `style_weights_override`; backend ignores it today. Implement to allow per‑alert TF weight customization.
+- Minimum alignment default: Backend uses `min_alignment=0` (off) unless explicitly provided. If the UI offers an "enabled" toggle, set N explicitly (recommended N=3) — no implicit default is applied server‑side.
 
 **Frontend/Supabase Follow-ups — Max Pairs/User (3)**
 - Frontend

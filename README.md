@@ -256,7 +256,7 @@ Notes:
 - Re‑arm on exit then re‑cross: once fired, do not re‑fire while the condition persists; re‑arm after leaving the zone and fire again only on a new cross‑in. Changing the configured threshold re‑arms immediately.
 - Rate limits, cooldowns, concurrency, and quiet‑hours apply consistently across alert types.
 
-See `ALERTS.md` for the full product/tech spec and the Parity Summary table.
+See `ALERTS.md` for the full product/tech spec, Parity Summary, and Known Gaps. The backend currently prioritizes closed‑bar evaluation for RSI/Correlation and tick‑invoked checks for Heatmap; a unified TF‑boundary scheduler for Heatmap is planned.
 
 ### 📰 News API Usage (External Source + Internal Endpoints)
 
