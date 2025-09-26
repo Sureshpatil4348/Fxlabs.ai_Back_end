@@ -267,7 +267,7 @@ Notes
 | Correlation | RSI threshold + real correlation modes | match | Both modes implemented: RSI thresholds and real correlation computed from historical returns over a configurable window. |
 | Correlation | TF boundary evaluation + mismatch retriggers | match | Bar‑close evaluation supported; positive/negative mismatch triggers fire only on NEW mismatches and re‑arm after neutral break. |
 | Type B (Flip) | Per (pair, TF, indicator) cooldown | match | Enforced: per (pair, timeframe, indicator) cooldown; default 30m; overridable via `cooldown_minutes`. |
-| RSI OB/OS | RFI conditions (rfi_strong/rfi_moderate) | extra | Optional RFI checks supported alongside RSI; not part of core spec. |
+| RSI OB/OS | RFI conditions (rfi_strong/rfi_moderate) | not supported | Removed to strictly follow core spec (RSI OB/OS only). |
 | Global | Alert frequency (once/hourly/daily) | match | Enforced across Heatmap, RSI, and RSI Correlation services. |
 | Global | TF‑boundary evaluation (unified scheduler) | match | Unified timeframe scheduler triggers Heatmap, RSI, and RSI Correlation checks on TF closes. Tick-driven checks disabled by default. |
 | Global | Unsubscribe + email diagnostics | extra | One‑click List‑Unsubscribe, masked config diagnostics, and unsubscribe persistence implemented. |

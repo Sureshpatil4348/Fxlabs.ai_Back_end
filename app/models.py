@@ -115,8 +115,6 @@ class RSIAlertRequest(BaseModel):
     rsi_overbought_threshold: int = 70
     rsi_oversold_threshold: int = 30
     alert_conditions: List[str]
-    rfi_strong_threshold: float = 0.80
-    rfi_moderate_threshold: float = 0.60
     notification_methods: List[str] = ["email"]
     alert_frequency: str = "once"
 
@@ -132,8 +130,6 @@ class RSIAlertResponse(BaseModel):
     rsi_overbought_threshold: int
     rsi_oversold_threshold: int
     alert_conditions: List[str]
-    rfi_strong_threshold: float
-    rfi_moderate_threshold: float
     notification_methods: List[str]
     alert_frequency: str
     is_active: bool

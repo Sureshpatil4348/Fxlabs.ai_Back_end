@@ -1130,8 +1130,6 @@ class EmailService:
                         <ul style="margin: 0; padding-left: 20px; color: #856404; line-height: 1.6;">
                             <li><strong>Overbought (RSI ≥ {rsi_overbought}):</strong> Consider potential selling opportunities or short positions</li>
                             <li><strong>Oversold (RSI ≤ {rsi_oversold}):</strong> Look for potential buying opportunities or long positions</li>
-                            <li><strong>RFI Strong:</strong> High volume and price movement - strong signal reliability</li>
-                            <li><strong>RFI Moderate:</strong> Moderate volume activity - use with other indicators</li>
                             <li>Always combine RSI signals with other technical analysis tools</li>
                             <li>Consider market context and overall trend before making trading decisions</li>
                         </ul>

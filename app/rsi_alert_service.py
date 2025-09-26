@@ -147,10 +147,6 @@ class RSIAlertService:
             rsi_overbought = alert.get("rsi_overbought_threshold", 70)
             rsi_oversold = alert.get("rsi_oversold_threshold", 30)
             
-            # RFI settings
-            rfi_strong_threshold = alert.get("rfi_strong_threshold", 0.80)
-            rfi_moderate_threshold = alert.get("rfi_moderate_threshold", 0.60)
-            
             # Quiet hours check (suppress during configured local window)
             if self._is_within_quiet_hours(alert):
                 logger.debug(f"🔕 Quiet hours active for alert '{alert_name}', skipping evaluation")
@@ -209,11 +205,7 @@ class RSIAlertService:
                             logger.debug(f"⏳ Warm-up insufficient for {symbol} {timeframe} (need ≥{bars_needed} RSI points)")
                             continue
 
-                        # Calculate RFI score
-                        rfi_score = await self._calculate_rfi_score(market_data, rsi_value)
-
-                        if rfi_score is not None:
-                            logger.debug(f"📊 RFI calculated for {symbol} {timeframe}: {rfi_score:.3f}")
+                        # RFI support removed to align with core spec
 
                         # Check alert conditions: prefer RSI crossings with confirmation + Only NEW + hysteresis
                         trigger_condition = None
@@ -227,18 +219,11 @@ class RSIAlertService:
                                 oversold=rsi_oversold,
                             )
 
-                        # If no RSI crossing, consider RFI-only conditions when present
-                        if not trigger_condition and ("rfi_strong" in alert_conditions or "rfi_moderate" in alert_conditions):
-                            trigger_condition = self._check_rsi_conditions(
-                                rsi_value, rfi_score, alert_conditions,
-                                rsi_overbought, rsi_oversold,
-                                rfi_strong_threshold, rfi_moderate_threshold
-                            )
+                        # RFI-only conditions removed (stick to core RSI spec)
 
                         if trigger_condition:
                             logger.info(f"🚨 CONDITION MATCHED: {symbol} {timeframe} - {trigger_condition}")
-                            rfi_display = f"{rfi_score:.3f}" if rfi_score is not None else "N/A"
-                            logger.info(f"   RSI: {rsi_value:.2f}, RFI: {rfi_display}")
+                            logger.info(f"   RSI: {rsi_value:.2f}")
 
                             # Enforce per (alert, symbol, timeframe, side) cooldown
                             side = "overbought" if "overbought" in trigger_condition else (
@@ -252,7 +237,6 @@ class RSIAlertService:
                                 "symbol": symbol,
                                 "timeframe": timeframe,
                                 "rsi_value": round(rsi_value, 2),
-                                "rfi_score": round(rfi_score, 2) if rfi_score else None,
                                 "trigger_condition": trigger_condition,
                                 "current_price": market_data.get("close", 0),
                                 "price_change_percent": self._calculate_price_change_percent(market_data),
@@ -527,58 +511,7 @@ class RSIAlertService:
         
         return rsi
     
-    async def _calculate_rfi_score(self, market_data: Dict[str, Any], rsi_value: float) -> Optional[float]:
-        """Calculate RFI (Relative Flow Index) score"""
-        
-        try:
-            # This is a simplified RFI calculation
-            # In a real system, you'd calculate actual RFI using volume and price data
-            
-            volume = market_data.get("volume", 1000)
-            price_change = abs(market_data.get("close", 1.1000) - market_data.get("open", 1.1000))
-            
-            # Simulate RFI calculation
-            volume_factor = min(volume / 1000, 2.0)  # Normalize volume
-            price_factor = min(price_change * 1000, 1.0)  # Normalize price change
-            
-            rfi_score = (volume_factor + price_factor) / 2
-            rfi_score = max(0, min(1, rfi_score))  # Ensure 0-1 range
-            
-            return rfi_score
-            
-        except Exception as e:
-            logger.error(f"❌ Error calculating RFI score: {e}")
-            return None
-    
-    def _check_rsi_conditions(
-        self, 
-        rsi_value: float, 
-        rfi_score: Optional[float],
-        alert_conditions: List[str],
-        rsi_overbought: int,
-        rsi_oversold: int,
-        rfi_strong_threshold: float,
-        rfi_moderate_threshold: float
-    ) -> Optional[str]:
-        """Check if any alert conditions are met"""
-        
-        try:
-            for condition in alert_conditions:
-                if condition == "overbought" and rsi_value >= rsi_overbought:
-                    return "overbought"
-                elif condition == "oversold" and rsi_value <= rsi_oversold:
-                    return "oversold"
-                elif condition == "rfi_strong" and rfi_score and rfi_score >= rfi_strong_threshold:
-                    return "rfi_strong"
-                elif condition == "rfi_moderate" and rfi_score and rfi_score >= rfi_moderate_threshold:
-                    return "rfi_moderate"
-                # Note: crossup/crossdown would need historical RSI data to detect crossings
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"❌ Error checking RSI conditions: {e}")
-            return None
+    # RFI helpers removed (stick to core RSI spec)
     
     def _calculate_price_change_percent(self, market_data: Dict[str, Any]) -> float:
         """Calculate price change percentage"""
@@ -675,7 +608,6 @@ class RSIAlertService:
                     "symbol": pair_data.get("symbol"),
                     "timeframe": pair_data.get("timeframe"),
                     "rsi_value": pair_data.get("rsi_value"),
-                    "rfi_score": pair_data.get("rfi_score"),
                     "current_price": pair_data.get("current_price"),
                     "price_change_percent": pair_data.get("price_change_percent"),
                     "triggered_at": datetime.now(timezone.utc).isoformat()
@@ -863,8 +795,6 @@ class RSIAlertService:
                 "rsi_overbought_threshold": alert_data.get("rsi_overbought_threshold", 70),
                 "rsi_oversold_threshold": alert_data.get("rsi_oversold_threshold", 30),
                 "alert_conditions": alert_data.get("alert_conditions", []),
-                "rfi_strong_threshold": alert_data.get("rfi_strong_threshold", 0.80),
-                "rfi_moderate_threshold": alert_data.get("rfi_moderate_threshold", 0.60),
                 "notification_methods": alert_data.get("notification_methods", ["email"]),
                 "alert_frequency": alert_data.get("alert_frequency", "once"),
                 "is_active": True,

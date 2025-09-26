@@ -139,8 +139,6 @@ class AlertCache:
                         "rsi_overbought_threshold": alert.get("rsi_overbought_threshold", 70),
                         "rsi_oversold_threshold": alert.get("rsi_oversold_threshold", 30),
                         "alert_conditions": alert.get("alert_conditions", []),
-                        "rfi_strong_threshold": alert.get("rfi_strong_threshold", 0.80),
-                        "rfi_moderate_threshold": alert.get("rfi_moderate_threshold", 0.60),
                         # Bar timing policy: "close" (default) or "intrabar"
                         "bar_policy": alert.get("bar_policy", "close"),
                         # Per (pair, timeframe, side) cooldown minutes (default 30)
