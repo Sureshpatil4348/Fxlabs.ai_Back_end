@@ -161,7 +161,7 @@ class HeatmapAlertService:
                     continue
 
                 trading_style = (alert.get("trading_style") or alert.get("style") or "dayTrader").lower()
-                style_weights = self._style_tf_weights(trading_style)
+                style_weights = self._get_style_weights(alert, trading_style, tf_strengths)
                 final_score = self._compute_final_score(tf_strengths, style_weights)
                 buy_now_percent = round((final_score + 100) / 2, 2)
 
@@ -528,6 +528,34 @@ class HeatmapAlertService:
             return {"1H": 0.25, "4H": 0.45, "1D": 0.30}
         # default: day trader
         return {"15M": 0.2, "30M": 0.35, "1H": 0.35, "4H": 0.10}
+
+    def _get_style_weights(self, alert: Dict[str, Any], trading_style: str, tf_strengths: Dict[str, float]) -> Dict[str, float]:
+        """Return weights, applying optional per-alert overrides when valid.
+
+        Expects alert["style_weights_override"] as a mapping of timeframe->weight.
+        Rules:
+        - Only include TFs present in tf_strengths (selected TFs for this pair).
+        - Ignore non-numeric or negative weights; drop unknown TF keys.
+        - If all provided overrides are invalid or empty, fall back to defaults.
+        - If provided weights don't sum to >0, fall back to defaults.
+        """
+        try:
+            override = alert.get("style_weights_override")
+            if isinstance(override, dict) and override:
+                filtered: Dict[str, float] = {}
+                for tf, w in override.items():
+                    if tf in tf_strengths:
+                        try:
+                            val = float(w)
+                            if val > 0:
+                                filtered[tf] = val
+                        except Exception:
+                            continue
+                if filtered and sum(filtered.values()) > 0:
+                    return filtered
+        except Exception:
+            pass
+        return self._style_tf_weights(trading_style)
 
     def _compute_final_score(self, tf_strengths: Dict[str, float], weights: Dict[str, float]) -> float:
         """Compute style-weighted Final Score in [-100, 100] from per‑TF strengths [0..100]."""

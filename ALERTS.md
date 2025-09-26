@@ -271,7 +271,7 @@ Notes
 | Global | Alert frequency (once/hourly/daily) | match | Enforced across Heatmap, RSI, and RSI Correlation services. |
 | Global | TF‑boundary evaluation (unified scheduler) | match | Unified timeframe scheduler triggers Heatmap, RSI, and RSI Correlation checks on TF closes. Tick-driven checks disabled by default. |
 | Global | Unsubscribe + email diagnostics | extra | One‑click List‑Unsubscribe, masked config diagnostics, and unsubscribe persistence implemented. |
-| Type A (Heatmap) | Style weights override | partial | Field exists in schema; backend calculation does not consume overrides yet. |
+| Type A (Heatmap) | Style weights override | match | Backend consumes per-alert `style_weights_override` for TF weighting; falls back to defaults if invalid. |
 
 **Known Gaps/Notes (Actionable)**
 - RSI condition keys: API payload must use "overbought"/"oversold" to enable crossing detection. The backend returns `overbought_cross`/`oversold_cross` when confirmed. The previous example with "overbought_cross" in the input was incorrect and is now fixed.

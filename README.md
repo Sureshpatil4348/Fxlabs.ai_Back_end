@@ -34,6 +34,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Rate Limits + Digest**: Caps alert emails to 5/hour per user (successful sends only); overflows are batched into a single digest email
 - **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers
+  - Per-alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
 
 ## 🚀 Quick Start
 
