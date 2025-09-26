@@ -29,7 +29,7 @@ import logging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, UNSUBSCRIBE_SECRET, UNSUBSCRIBE_STORE_FILE
+from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL
 
 
 class EmailService:
@@ -41,11 +41,7 @@ class EmailService:
         # Prefer authenticated subdomain sender for DMARC alignment (example: alerts@alerts.fxlabs.ai)
         self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@alerts.fxlabs.ai")).strip()
         self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs Alerts")).strip()
-        # Unsubscribe storage (in-memory set with JSON file persistence)
-        self._unsub_file = UNSUBSCRIBE_STORE_FILE
-        self._unsub_lock = RLock()
-        self.unsubscribed_emails: set[str] = set()
-        self._load_unsubscribes()
+        # Unsubscribe feature removed per spec
         
         # Smart cooldown mechanism - value-based cooldown for similar alerts
         self.cooldown_minutes = 10  # Reduced to 10 minutes for better responsiveness
@@ -200,17 +196,7 @@ class EmailService:
             mail.add_header("X-Mailer", "FX Labs Alert System")
         except Exception:
             pass
-        # List-Unsubscribe for better inboxing and one-click UX
-        try:
-            values: List[str] = ["<mailto:unsubscribe@fxlabs.ai>"]
-            if PUBLIC_BASE_URL and UNSUBSCRIBE_SECRET and to_email_addr:
-                token = hmac.new(UNSUBSCRIBE_SECRET.encode("utf-8"), str(to_email_addr).encode("utf-8"), hashlib.sha256).hexdigest()
-                http_url = f"{PUBLIC_BASE_URL.rstrip('/')}/unsubscribe?email={url_quote(str(to_email_addr))}&token={token}"
-                values.append(f"<{http_url}>")
-            mail.add_header("List-Unsubscribe", ", ".join(values))
-            mail.add_header("List-Unsubscribe-Post", "List-Unsubscribe=One-Click")
-        except Exception:
-            pass
+        # List-Unsubscribe headers removed per spec
         return mail
 
     def _disable_tracking(self, mail: Mail) -> None:
@@ -263,45 +249,7 @@ class EmailService:
                 pass
         return mail
 
-    # ------------------ Unsubscribe management ------------------
-    def _load_unsubscribes(self) -> None:
-        try:
-            if self._unsub_file and os.path.exists(self._unsub_file):
-                with self._unsub_lock:
-                    with open(self._unsub_file, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                        if isinstance(data, list):
-                            self.unsubscribed_emails = {str(e).strip().lower() for e in data if e}
-                        elif isinstance(data, dict) and isinstance(data.get("emails"), list):
-                            self.unsubscribed_emails = {str(e).strip().lower() for e in data.get("emails", []) if e}
-        except Exception:
-            # Fail open: start with empty set if file unreadable
-            self.unsubscribed_emails = set()
-
-    def _persist_unsubscribes(self) -> None:
-        try:
-            if not self._unsub_file:
-                return
-            os.makedirs(os.path.dirname(self._unsub_file), exist_ok=True)
-            with self._unsub_lock:
-                with open(self._unsub_file, "w", encoding="utf-8") as f:
-                    json.dump(sorted(self.unsubscribed_emails), f, ensure_ascii=False, indent=2)
-        except Exception:
-            # Persistence failures are non-fatal
-            pass
-
-    def unsubscribe(self, email: str) -> bool:
-        if not email:
-            return False
-        key = str(email).strip().lower()
-        if not self._looks_like_email(key):
-            return False
-        with self._unsub_lock:
-            if key in self.unsubscribed_emails:
-                return True
-            self.unsubscribed_emails.add(key)
-        self._persist_unsubscribes()
-        return True
+    # Unsubscribe management removed per spec
 
     def _is_user_over_limit(self, user_email: str) -> bool:
         """Check per-user rate limit without mutating counters.
@@ -324,22 +272,9 @@ class EmailService:
         sends.append(now)
         self.user_sends[user_email] = sends
 
-    def resubscribe(self, email: str) -> bool:
-        if not email:
-            return False
-        key = str(email).strip().lower()
-        with self._unsub_lock:
-            if key in self.unsubscribed_emails:
-                self.unsubscribed_emails.remove(key)
-                self._persist_unsubscribes()
-                return True
-        return False
-
     def is_unsubscribed(self, email: str) -> bool:
-        try:
-            return str(email).strip().lower() in self.unsubscribed_emails
-        except Exception:
-            return False
+        # Unsubscribe support removed: always False
+        return False
 
     def _build_plain_text_rsi(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
         lines = [
@@ -688,9 +623,7 @@ class EmailService:
         if not self.sg:
             self._log_config_diagnostics(context="heatmap alert email")
             return False
-        if self.is_unsubscribed(user_email):
-            logger.info(f"🔕 {user_email} is unsubscribed — skipping heatmap email")
-            return False
+        # Unsubscribe support removed
         # Check smart cooldown before rate limit so attempts don't consume quota
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
@@ -866,9 +799,7 @@ class EmailService:
         if not self.sg:
             logger.warning("SendGrid not configured, cannot send test email")
             return False
-        if self.is_unsubscribed(user_email):
-            logger.info(f"🔕 {user_email} is unsubscribed — skipping test email")
-            return False
+        # Unsubscribe support removed
         
         try:
             subject = "System Test - FX Labs"
@@ -937,9 +868,7 @@ class EmailService:
         if not self.sg:
             self._log_config_diagnostics(context="RSI alert email")
             return False
-        if self.is_unsubscribed(user_email):
-            logger.info(f"🔕 {user_email} is unsubscribed — skipping RSI email")
-            return False
+        # Unsubscribe support removed
         # Check smart cooldown before rate limit so attempts don't consume quota
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
         logger.info(f"🔍 Generated alert hash: {alert_hash[:16]}...")
@@ -1166,9 +1095,7 @@ class EmailService:
         if not self.sg:
             self._log_config_diagnostics(context="RSI correlation alert email")
             return False
-        if self.is_unsubscribed(user_email):
-            logger.info(f"🔕 {user_email} is unsubscribed — skipping RSI correlation email")
-            return False
+        # Unsubscribe support removed
         # Check smart cooldown before rate limit so attempts don't consume quota
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs, calculation_mode)
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):

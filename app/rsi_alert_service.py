@@ -568,13 +568,7 @@ class RSIAlertService:
             else:
                 logger.warning(f"⚠️ Failed to send RSI alert email to {user_email}")
                 logger.warning(f"   Alert: {alert_name} (ID: {alert_id})")
-                try:
-                    diag_text = email_service.get_config_diagnostics_text()
-                    if diag_text:
-                        logger.warning(f"   Email diagnostics: {diag_text}")
-                except Exception:
-                    # Keep logging resilient; diagnostics are best-effort
-                    pass
+                # Email diagnostics removed per spec
             
             # Log the trigger in database
             logger.info(f"📝 Logging RSI alert trigger to database...")
