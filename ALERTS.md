@@ -352,7 +352,6 @@ Testing Hooks
 | RSI OB/OS: in‑zone | Not required | Not supported | N/A | — |
 | RSI OB/OS: bar timing | Close | Closed‑bar only (evaluates at TF boundaries) | Implemented | Intrabar disabled |
 | RSI OB/OS: cooldown | 30m (configurable) | Configurable via API; persisted to `rsi_alerts.cooldown_minutes` | Implemented | — |
- 
 | RSI Correlation: modes | RSI Threshold or Real | Both supported | Implemented | — |
 | RSI Correlation: conditions (real) | Strong/weak/break rules | Matches spec | Implemented | — |
 | RSI Correlation: conditions (RSI) | Threshold concept | Uses `positive_mismatch`/`negative_mismatch`/`neutral_break` | Implemented | Extra conditions vs spec; consider documenting |
