@@ -214,14 +214,12 @@ Internal alert tick_data shape:
 - If adding an alert would exceed the limit, the API returns `400` with a clear message indicating current tracked count and requested additions.
 - Tip for UIs: call `GET /api/alerts/user/{user_id}` or the specific per-type list endpoints and compute the union of symbols to show remaining slots.
 
-### RSI Alerts — Crossing + NEW + Confirmation
+### RSI Alerts — Closed‑bar Crossing
 
-- Trigger policy: Alerts now fire on RSI threshold crossings (Overbought ≥ OB, Oversold ≤ OS) rather than raw in‑zone checks.
-- Only‑NEW: Crossing must have occurred within the last K=3 closed bars (default).
-- 1‑bar confirmation: After crossing, require 1 additional closed bar still in the crossed zone before triggering.
-- Hysteresis re‑arm: Once an Overbought trigger fires, the alert re‑arms only after RSI falls below 65; for Oversold, re‑arm after RSI rises above 35.
-- Fallback: If historical RSI series is unavailable, the service falls back to in‑zone checks for continuity.
- - Evaluation timing: Closed-bar only (evaluates once per closed bar). Intrabar/live evaluation is disabled in this iteration to ensure RSI-closed compliance.
+- Trigger policy: Alerts fire on RSI threshold crossings (Overbought ≥ OB, Oversold ≤ OS) on the current closed bar only (no live/intrabar evaluation).
+- Only‑NEW: Not required; detection uses previous vs current closed bar to identify a fresh crossing.
+- Rearm policy: Threshold‑level re‑arm. After a trigger at OB, re‑arm when RSI returns below OB; for OS, re‑arm when RSI returns above OS.
+- Evaluation timing: Closed‑bar only (evaluates at timeframe boundaries). Intrabar/live evaluation is disabled to ensure RSI‑closed compliance.
 - Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes). Override with `cooldown_minutes` on the alert (persisted to `rsi_alerts.cooldown_minutes`).
 Notes:
 - Use `alert_conditions` values `"overbought"`/`"oversold"` to request threshold crossing detection; confirmed triggers return `overbought_cross`/`oversold_cross` in results.

@@ -25,11 +25,12 @@ class RSIAlertService:
         self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
         self.last_triggered_alerts: Dict[str, datetime] = {}  # Track last trigger time per alert
         self.default_cooldown_seconds = 300  # 5 minutes default cooldown
-        # Crossing/confirmation/hysteresis defaults (global rule)
-        self.only_new_bars = 3           # Consider crossings that happened within last K closed bars
-        self.confirmation_bars = 1       # Require 1 closed bar confirmation after crossing
-        self.rearm_overbought = 65       # Hysteresis re-arm for overbought (after falling below 65)
-        self.rearm_oversold = 35         # Hysteresis re-arm for oversold (after rising above 35)
+        # Crossing policy: closed-bar only; immediate on crossing; threshold-level re-arm
+        self.only_new_bars = 0           # Not used; preserved for compatibility
+        self.confirmation_bars = 0       # No additional bar confirmation
+        # Legacy hysteresis thresholds (unused in threshold-level re-arm)
+        self.rearm_overbought = 65
+        self.rearm_oversold = 35
         # In-memory hysteresis state: key -> { 'armed_overbought': bool, 'armed_oversold': bool }
         self._hysteresis_map: Dict[str, Dict[str, bool]] = {}
         # Track last evaluated closed bar per (symbol, timeframe) for bar-close policy
@@ -195,8 +196,8 @@ class RSIAlertService:
 
                         logger.debug(f"📊 RSI calculated for {symbol} {timeframe}: {rsi_value:.2f}")
 
-                        # Warm-up: ensure sufficient RSI lookback exists for crossings/confirmation
-                        bars_needed = max(5, self.only_new_bars + self.confirmation_bars + 2)
+                        # Warm-up: ensure we have prev and current closed-bar RSI
+                        bars_needed = 3
                         rsis = await self._get_recent_rsi_series(symbol, timeframe, rsi_period, bars_needed)
                         if not rsis or len(rsis) < bars_needed:
                             logger.debug(f"⏳ Warm-up insufficient for {symbol} {timeframe} (need ≥{bars_needed} RSI points)")
@@ -607,53 +608,37 @@ class RSIAlertService:
         overbought: int,
         oversold: int,
     ) -> Optional[str]:
-        """Detect RSI threshold crossings with 1-bar confirmation and hysteresis re-arm.
+        """Detect RSI threshold crossings at current closed bar with threshold-level re-arm.
 
         Returns one of: "overbought_cross", "oversold_cross", or None.
         """
         try:
-            rsis = await self._get_recent_rsi_series(symbol, timeframe, period, bars_needed=max(5, self.only_new_bars + self.confirmation_bars + 2))
-            if not rsis or len(rsis) < (self.only_new_bars + self.confirmation_bars + 1):
+            rsis = await self._get_recent_rsi_series(symbol, timeframe, period, bars_needed=3)
+            if not rsis or len(rsis) < 2:
                 return None
 
             # Hysteresis arm/disarm state per alert-symbol-timeframe
             key = f"{alert_id}:{symbol}:{timeframe}"
             st = self._hysteresis_map.setdefault(key, {"armed_overbought": True, "armed_oversold": True})
 
-            latest = rsis[-1]
-            # Rearm logic
-            if not st["armed_overbought"] and latest <= self.rearm_overbought:
+            prev_val = rsis[-2]
+            curr_val = rsis[-1]
+
+            # Threshold-level re-arm: re-enable once RSI returns to the opposite side of the threshold
+            if not st["armed_overbought"] and curr_val < overbought:
                 st["armed_overbought"] = True
-            if not st["armed_oversold"] and latest >= self.rearm_oversold:
+            if not st["armed_oversold"] and curr_val > oversold:
                 st["armed_oversold"] = True
 
-            # Scan last window for crossing with confirmation
-            window_start = max(1, len(rsis) - (self.only_new_bars + self.confirmation_bars))
-            best_idx = None
-            best_type = None
-            for i in range(window_start, len(rsis) - self.confirmation_bars):
-                prev_val = rsis[i - 1]
-                curr_val = rsis[i]
+            # Overbought crossing at current closed bar
+            if st["armed_overbought"] and prev_val < overbought and curr_val >= overbought:
+                st["armed_overbought"] = False
+                return "overbought_cross"
 
-                # Overbought crossing + confirmation
-                if st["armed_overbought"] and prev_val < overbought and curr_val >= overbought:
-                    confirm_idx = i + self.confirmation_bars
-                    if confirm_idx < len(rsis) and rsis[confirm_idx] >= overbought:
-                        best_idx, best_type = i, "overbought_cross"
-
-                # Oversold crossing + confirmation
-                if st["armed_oversold"] and prev_val > oversold and curr_val <= oversold:
-                    confirm_idx = i + self.confirmation_bars
-                    if confirm_idx < len(rsis) and rsis[confirm_idx] <= oversold:
-                        if best_idx is None or i > best_idx:
-                            best_idx, best_type = i, "oversold_cross"
-
-            if best_type:
-                if best_type == "overbought_cross":
-                    st["armed_overbought"] = False
-                else:
-                    st["armed_oversold"] = False
-                return best_type
+            # Oversold crossing at current closed bar
+            if st["armed_oversold"] and prev_val > oversold and curr_val <= oversold:
+                st["armed_oversold"] = False
+                return "oversold_cross"
 
             return None
         except Exception as e:

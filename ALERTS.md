@@ -348,9 +348,9 @@ Testing Hooks
 | Delivery: Email | Supported | Implemented | Implemented | — |
 | Delivery: Telegram | Supported | Credentials stored; sending not implemented | Missing | Pending backend sending |
 | RSI OB/OS: timeframes | Choose 1–3 | Supported (no strict server validation) | Implemented | UI must enforce ≤3 |
-| RSI OB/OS: thresholds/policy | Crossing ≥70/≤30 | Crossing‑only with Only‑NEW K=3 + 1‑bar confirm + hysteresis 65/35 | Implemented | Extras: Only‑NEW + confirmation + hysteresis |
+| RSI OB/OS: thresholds/policy | Crossing ≥70/≤30 | Crossing‑only on closed bars; no extra confirmation; threshold‑level re‑arm | Implemented | — |
 | RSI OB/OS: in‑zone | Not required | Not supported | N/A | — |
-| RSI OB/OS: bar timing | Close | Closed‑bar only | Implemented | Intrabar disabled |
+| RSI OB/OS: bar timing | Close | Closed‑bar only (evaluates at TF boundaries) | Implemented | Intrabar disabled |
 | RSI OB/OS: cooldown | 30m (configurable) | Configurable via API; persisted to `rsi_alerts.cooldown_minutes` | Implemented | — |
  
 | RSI Correlation: modes | RSI Threshold or Real | Both supported | Implemented | — |
