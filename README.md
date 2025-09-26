@@ -315,6 +315,19 @@ Notes:
  - Cooldown: Per (alert, symbol, direction) cooldown window (default 30 minutes). You can override via `cooldown_minutes` on the alert.
 - Indicator Flips (Type B): UTBOT, Ichimoku (Tenkan/Kijun), MACD, and EMA(21/50/200) flips supported with Only‑NEW K=3 and 1‑bar confirmation. Optional gate: require style‑weighted Buy Now % ≥ buy_min (BUY) or ≤ sell_max (SELL); defaults 60/40. Cooldown: per (pair, timeframe, indicator) using `cooldown_minutes` (default 30m).
 
+#### Email Template (Custom Indicator Tracker)
+- Compact per‑pair card with indicator flip summary.
+- Fields per card:
+  - **pair**: `symbol`
+  - **indicators_csv**: from `alert_config.selected_indicators`
+  - **signal**: `trigger_condition` uppercased (`BUY`/`SELL`)
+  - **probability**: `buy_percent` for BUY, `sell_percent` for SELL (if available)
+  - **timeframe**: `timeframe`
+  - **ts_local**: generated server-side in IST
+Notes:
+- Multiple triggers render multiple cards in one email.
+- Subject remains `Trading Alert: <alert_name>` and a text/plain alternative is included.
+
 ### Alert Scheduling & Re‑triggering (Global)
 
 - End‑of‑timeframe evaluation only: a unified scheduler triggers checks on timeframe boundaries (1M/5M/15M/30M/1H/4H/1D). Heatmap, RSI, and RSI Correlation are evaluated on TF closes; tick-driven checks are disabled by default.

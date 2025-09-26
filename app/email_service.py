@@ -142,7 +142,12 @@ class EmailService:
             else:
                 symbol = pair.get('symbol', pair.get('symbol1', 'unknown'))
                 # Support both field name variants
+                cond_parts: List[str] = []
                 condition = pair.get('condition', pair.get('trigger_condition', 'unknown'))
+                indicator_name = pair.get('indicator')
+                if indicator_name:
+                    cond_parts.append(f"ind={indicator_name}")
+                cond_meta = ",".join(cond_parts)
                 pairs_summary.append(f"{symbol}:{condition}")
         
         # Sort to ensure consistent hashing
@@ -1115,6 +1120,59 @@ class EmailService:
             logger.error(f"   User: {user_email}")
             logger.error(f"   Alert: {alert_name}")
             return False
+
+    async def send_custom_indicator_alert(
+        self,
+        user_email: str,
+        alert_name: str,
+        triggered_pairs: List[Dict[str, Any]],
+        alert_config: Dict[str, Any]
+    ) -> bool:
+        """Send Custom Indicator alert email (flip to BUY/SELL) using compact template."""
+
+        if not self.sg:
+            self._log_config_diagnostics(context="custom indicator alert email")
+            return False
+
+        alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
+        if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
+            logger.info(f"🕐 Custom indicator alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
+            return False
+
+        if self._is_user_over_limit(user_email):
+            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing Custom Indicator to digest.")
+            self._enqueue_digest(user_email, "CustomIndicator", alert_name, triggered_pairs, alert_config)
+            await self._maybe_send_digest(user_email)
+            return False
+
+        self._cleanup_old_cooldowns()
+
+        try:
+            subject = f"Trading Alert: {alert_name}"
+            body = self._build_custom_indicator_email_body(alert_name, triggered_pairs, alert_config)
+            text_body = self._build_plain_text_custom_indicator(alert_name, triggered_pairs, alert_config)
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text_body,
+                category="custom-indicator",
+                ref_id=alert_hash[:24]
+            )
+
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"✅ Custom indicator alert email sent to {user_email}")
+                self._update_alert_cooldown(alert_hash, triggered_pairs)
+                self._record_user_send(user_email)
+                return True
+            else:
+                logger.error(f"❌ Failed to send custom indicator alert email: {response.status_code} - {response.body}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error sending custom indicator alert email: {e}")
+            return False
     
     def _build_rsi_alert_email_body(
         self, 
@@ -1177,6 +1235,74 @@ class EmailService:
 </td></tr></table>
 </body></html>
         """
+
+    def _build_custom_indicator_email_body(
+        self,
+        alert_name: str,
+        triggered_pairs: List[Dict[str, Any]],
+        alert_config: Dict[str, Any]
+    ) -> str:
+        """Build HTML for Custom Indicator signal using provided compact template."""
+
+        cards: List[str] = []
+        ts_local = self._format_now_local("Asia/Kolkata")
+        indicators_csv = ", ".join((alert_config.get("selected_indicators") or [])) or "-"
+        for pair in triggered_pairs:
+            symbol = pair.get("symbol", "N/A")
+            timeframe = pair.get("timeframe", "N/A")
+            cond = str(pair.get("trigger_condition", "")).strip().upper()
+            color = "#0CCC7C" if cond == "BUY" else "#E5494D"
+            if cond == "BUY":
+                probability = pair.get("buy_percent", pair.get("probability", 0))
+            else:
+                probability = pair.get("sell_percent", pair.get("probability", 0))
+
+            card = f"""
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Custom Indicator Alert</td></tr>
+  <tr><td style=\"padding:20px;\">
+    <div style=\"font-size:16px;margin-bottom:4px;\"><strong>{symbol}</strong></div>
+    <div style=\"font-size:13px;color:#374151;margin-bottom:10px;\">Indicators selected: {indicators_csv}</div>
+    <div style=\"margin-bottom:12px;\">
+      <span style=\"display:inline-block;padding:6px 12px;border-radius:999px;background:{color};color:#fff;font-weight:700;text-transform:uppercase;\">
+        {cond} • {round(float(probability), 2)}%
+      </span>
+    </div>
+    <div style=\"font-size:13px;color:#374151;\">Generated at {ts_local} (TF: {timeframe})</div>
+  </td></tr>
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>
+</table>
+<div style=\"height:12px\"></div>
+            """
+            cards.append(card)
+
+        return f"""
+<!doctype html>
+<html lang=\"en\">
+<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Custom Indicator Signal</title></head>
+<body style=\"margin:0;background:#F5F7FB;\">
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
+{''.join(cards)}
+</td></tr></table>
+</body></html>
+        """
+
+    def _build_plain_text_custom_indicator(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
+        lines = [
+            f"Custom Indicator - {alert_name}",
+            f"Pairs: {len(pairs)}",
+        ]
+        inds = ", ".join((cfg.get("selected_indicators") or [])) or "-"
+        for p in pairs:
+            sym = p.get("symbol", "?")
+            tf = p.get("timeframe", "?")
+            cond = str(p.get("trigger_condition", "")).upper() or "N/A"
+            if cond == "BUY":
+                prob = p.get("buy_percent", p.get("probability", "?"))
+            else:
+                prob = p.get("sell_percent", p.get("probability", "?"))
+            lines.append(f"- {sym} [{tf}]: {cond} {prob}% | Indicators: {inds}")
+        return "\n".join(lines)
     
     async def send_rsi_correlation_alert(
         self, 

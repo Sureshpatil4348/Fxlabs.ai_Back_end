@@ -106,7 +106,7 @@ class HeatmapIndicatorTrackerAlertService:
 
     async def _send_email(self, user_email: str, payload: Dict[str, Any]) -> None:
         try:
-            await email_service.send_rsi_alert(
+            await email_service.send_custom_indicator_alert(
                 user_email=user_email,
                 alert_name=payload.get("alert_name", "Indicator Tracker Alert"),
                 triggered_pairs=payload.get("triggered_pairs", []),
