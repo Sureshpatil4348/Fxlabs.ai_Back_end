@@ -109,7 +109,7 @@ class RSICorrelationTrackerAlertService:
                         prev = self._last_state.get(k, False)
                         self._last_state[k] = mismatch
                         if (not prev) and mismatch:
-                            # Derive a trigger label if not provided by evaluator
+                            # Derive a trigger label for logs/email; DB uses schema-compliant type below
                             trig_type = cond_label or ("mismatch" if mode == "rsi_threshold" else "correlation_break")
                             logger.info(
                                 f"🚨 RSI Correlation Tracker trigger: alert_id={alert_id} pair={pair_key} tf={timeframe} mode={mode} type={trig_type}"
@@ -153,7 +153,9 @@ class RSICorrelationTrackerAlertService:
                                 "triggered_at": datetime.now(timezone.utc).isoformat(),
                             }
                             triggers.append(payload)
-                            asyncio.create_task(self._log_trigger(alert_id, timeframe, mode, trig_type, pair_key, val))
+                            # Map to schema-compliant trigger_type for DB
+                            db_trig_type = "rsi_mismatch" if mode == "rsi_threshold" else "real_mismatch"
+                            asyncio.create_task(self._log_trigger(alert_id, timeframe, mode, db_trig_type, pair_key, val))
                             # Optional email reusing RSI template (single card); symbol shown as pair_key
                             methods = alert.get("notification_methods") or ["email"]
                             if "email" in methods:
