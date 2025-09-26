@@ -34,6 +34,9 @@ class HeatmapAlertService:
         # Flip detection defaults (Type B Indicator Flip)
         self.flip_only_new_bars = 3      # Only NEW within last K bars
         self.flip_confirmation_bars = 1  # 1-bar confirmation
+        # Per (pair, timeframe, indicator) cooldown for flips
+        self.flip_cooldown_minutes_default = 30
+        self._flip_cooldowns: Dict[str, datetime] = {}
         
     async def check_heatmap_alerts(self, tick_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Check all heatmap alerts against current tick data"""
@@ -246,6 +249,15 @@ class HeatmapAlertService:
                             continue
                         if sig == "SELL" and not (buy_now_percent <= gate_sell_max):
                             continue
+                    # Enforce per (pair, timeframe, indicator) cooldown for flips
+                    if not self._allow_by_flip_cooldown(
+                        alert,
+                        alert_id,
+                        pair,
+                        fc.get("timeframe"),
+                        fc.get("indicator"),
+                    ):
+                        continue
                     triggered_pairs.append({
                         **fc,
                         "buy_now_percent": buy_now_percent,
@@ -330,6 +342,38 @@ class HeatmapAlertService:
                 return False
         # Allowed -> update last
         self._pair_cooldowns[key] = now
+        return True
+
+    def _allow_by_flip_cooldown(
+        self,
+        alert: Dict[str, Any],
+        alert_id: str,
+        symbol: str,
+        timeframe: str,
+        indicator: str,
+    ) -> bool:
+        """Check/update per (pair, timeframe, indicator) cooldown window for flips.
+
+        Returns True if allowed to trigger now; updates last time on allow.
+        """
+        try:
+            cd_min = alert.get("cooldown_minutes")
+            cooldown_minutes = int(cd_min) if cd_min is not None else self.flip_cooldown_minutes_default
+        except Exception:
+            cooldown_minutes = self.flip_cooldown_minutes_default
+
+        # Normalize indicator to lowercase for key stability
+        ind = (indicator or "").lower()
+        tf = timeframe or ""
+        key = f"{alert_id}:{symbol}:{tf}:{ind}"
+        now = datetime.now(timezone.utc)
+        last = self._flip_cooldowns.get(key)
+        if last is not None:
+            delta = (now - last).total_seconds() / 60.0
+            if delta < cooldown_minutes:
+                return False
+        # Allowed -> update last
+        self._flip_cooldowns[key] = now
         return True
 
     async def _get_ohlc_arrays(self, symbol: str, timeframe: str, count: int = 120):
