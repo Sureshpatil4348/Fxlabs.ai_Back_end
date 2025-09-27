@@ -142,6 +142,22 @@ Automatic email 5 minutes before each scheduled news item
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events `news_reminder_due_items`, `news_users_fetch_*`, and `news_reminder_completed`.
 - Requirements: SendGrid configured (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`) and Supabase (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`). If either is missing, the scheduler logs and skips sending.
 
+## Daily Morning Brief
+Automated daily email at 09:00 IST to all users
+
+- What: A daily brief sent to all users at 09:00 IST containing:
+  - Core signals for EUR/USD, XAU/USD, BTC/USD from the All‑in‑One (Quantum) model
+  - RSI(14) on 4H: lists of pairs currently Oversold (≤30) and Overbought (≥70)
+  - Today’s high/medium‑impact news from the local news cache (IST day)
+- Who: All user emails discovered by unioning `user_email` across active alert tables (same method as News Reminder).
+- When: A daily scheduler computes the next 09:00 IST and sleeps until then; after sending, it schedules for the next day.
+- Data sources:
+  - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `dayTrader` style for EURUSDm, XAUUSDm, BTCUSDm
+  - RSI(14) 4H: uses real MT5 OHLC via `get_ohlc_data` and computes RSI locally
+  - News: filters `global_news_cache` for items with IST date == today and impact in {high, medium}
+- Template: Responsive table layout; badges (BUY=#0CCC7C, SELL=#E5494D); simple lists for RSI and a compact news table.
+- Logging: `daily_sleep_until`, `daily_build_start`, `daily_build_done`, `daily_send_batch`, `daily_completed`, with error events on failures.
+
 Email HTML structure example (simplified):
 
 ```html

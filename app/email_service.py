@@ -1496,5 +1496,193 @@ class EmailService:
 </body></html>
             """
 
+    def _build_daily_html(self, payload: Dict[str, Any]) -> str:
+        def esc(v: Any) -> str:
+            try:
+                s = str(v)
+                return s
+            except Exception:
+                return ""
+        date_local = esc(payload.get("date_local_IST", ""))
+        # Core signals rows
+        rows = []
+        for s in payload.get("core_signals", []) or []:
+            pair = esc(s.get("pair", ""))
+            signal = esc(s.get("signal", ""))
+            probability = esc(s.get("probability", ""))
+            tf = esc(s.get("tf", ""))
+            badge_bg = esc(s.get("badge_bg", "#6B7280"))
+            rows.append(f"""
+                <tr>
+                  <td style=\"padding:10px 8px;border-top:1px solid #F1F5F9;\">{pair}</td>
+                  <td style=\"padding:10px 8px;border-top:1px solid #F1F5F9;\">
+                    <span style=\"display:inline-block;padding:4px 10px;border-radius:999px;background:{badge_bg};color:#ffffff;font-size:12px;font-weight:700;text-transform:uppercase;\">{signal}</span>
+                  </td>
+                  <td style=\"padding:10px 8px;border-top:1px solid #F1F5F9;\">{probability}%</td>
+                  <td style=\"padding:10px 8px;border-top:1px solid #F1F5F9;\">{tf}</td>
+                </tr>
+            """)
+        core_html = "\n".join(rows)
+
+        # H4 lists
+        os_list = "\n".join([
+            f"<div style=\"padding:6px 0;border-top:1px dashed #E5E7EB;\"><strong>{esc(x.get('pair',''))}</strong> • RSI {esc(x.get('rsi',''))}</div>"
+            for x in (payload.get("rsi_oversold") or [])
+        ])
+        ob_list = "\n".join([
+            f"<div style=\"padding:6px 0;border-top:1px dashed #E5E7EB;\"><strong>{esc(x.get('pair',''))}</strong> • RSI {esc(x.get('rsi',''))}</div>"
+            for x in (payload.get("rsi_overbought") or [])
+        ])
+
+        # News rows
+        news_rows = []
+        for n in payload.get("news", []) or []:
+            title = esc(n.get("title", ""))
+            time_local = esc(n.get("time_local", ""))
+            expected = esc(n.get("expected", "-"))
+            forecast = esc(n.get("forecast", "-"))
+            bias = esc(n.get("bias", "-"))
+            news_rows.append(f"""
+                <tr>
+                  <td style=\"padding:10px;border-bottom:1px solid #E5E7EB;\">
+                    <div style=\"font-size:14px;font-weight:700;\">{title} <span style=\"font-weight:400;color:#6B7280\">• {time_local}</span></div>
+                    <div style=\"font-size:13px;margin-top:4px;\">
+                      Exp: <strong>{expected}</strong> | Fcast: <strong>{forecast}</strong> | Bias: <strong>{bias}</strong>
+                    </div>
+                  </td>
+                </tr>
+            """)
+        news_html = "\n".join(news_rows)
+
+        return f"""
+<!doctype html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\">
+<title>FxLabs • Daily Morning Brief</title>
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<style>
+@media screen and (max-width:600px){{ .container{{width:100%!important}} .stack{{display:block!important;width:100%!important}}}}
+</style>
+</head>
+<body style=\"margin:0;background:#F5F7FB;\">
+  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">
+    <tr>
+      <td align=\"center\" style=\"padding:24px 12px;\">
+        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+          <tr>
+            <td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;\">
+              <table role=\"presentation\" width=\"100%\"><tr>
+                <td align=\"left\" style=\"font-weight:700;font-size:18px;\">FxLabs Daily • {date_local}</td>
+                <td align=\"right\" style=\"font-size:12px;color:#6B7280;\">IST 09:00</td>
+              </tr></table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style=\"padding:20px;\">
+              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>
+              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">
+                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">
+                  <td style=\"padding:10px 8px;\">Pair</td>
+                  <td style=\"padding:10px 8px;\">Signal</td>
+                  <td style=\"padding:10px 8px;\">Probability</td>
+                  <td style=\"padding:10px 8px;\">Timeframe</td>
+                </tr>
+                {core_html}
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style=\"padding:0 20px 20px;\">
+              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>
+              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">                
+                <tr class=\"stack\">
+                  <td class=\"stack\" valign=\"top\" style=\"width:50%;padding:12px;background:#F9FAFB;border-radius:10px;\">
+                    <div style=\"font-size:12px;color:#6B7280;margin-bottom:6px;\">Oversold</div>
+                    {os_list}
+                  </td>
+                  <td class=\"stack\" valign=\"top\" style=\"width:20px;\">&nbsp;</td>
+                  <td class=\"stack\" valign=\"top\" style=\"width:50%;padding:12px;background:#F9FAFB;border-radius:10px;\">
+                    <div style=\"font-size:12px;color:#6B7280;margin-bottom:6px;\">Overbought</div>
+                    {ob_list}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style=\"padding:0 20px 20px;\">
+              <div style=\"font-weight:700;margin-bottom:8px;\">Today's High/Medium-Impact News</div>
+              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">
+                {news_html}
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">
+              This information is for education only and not financial advice. © FxLabs AI
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+        """
+
+    def _build_daily_text(self, payload: Dict[str, Any]) -> str:
+        lines: List[str] = []
+        lines.append(f"FxLabs Daily • {payload.get('date_local_IST','')}")
+        lines.append("")
+        lines.append("Signal Summary (Core Pairs):")
+        for s in payload.get("core_signals", []) or []:
+            lines.append(f"- {s.get('pair','')}: {s.get('signal','')} {s.get('probability','')}% [{s.get('tf','')}]")
+        lines.append("")
+        lines.append("H4 Oversold:")
+        for x in payload.get("rsi_oversold", []) or []:
+            lines.append(f"- {x.get('pair','')}: RSI {x.get('rsi','')}")
+        lines.append("H4 Overbought:")
+        for x in payload.get("rsi_overbought", []) or []:
+            lines.append(f"- {x.get('pair','')}: RSI {x.get('rsi','')}")
+        lines.append("")
+        lines.append("Today's High/Medium-Impact News:")
+        for n in payload.get("news", []) or []:
+            lines.append(f"- {n.get('time_local','')} • {n.get('title','')} (Exp {n.get('expected','-')}, Fcast {n.get('forecast','-')}, Bias {n.get('bias','-')})")
+        lines.append("")
+        lines.append("Education only. © FxLabs AI")
+        return "\n".join(lines)
+
+    async def send_daily_brief(self, user_email: str, payload: Dict[str, Any]) -> bool:
+        if not self.sg:
+            self._log_config_diagnostics(context="daily brief email")
+            return False
+        subject = "FxLabs • Daily Morning Brief"
+        html = self._build_daily_html(payload)
+        text = self._build_daily_text(payload)
+        mail = self._build_mail(
+            subject=subject,
+            to_email_addr=user_email,
+            html_body=html,
+            text_body=text,
+            category="daily-brief",
+            ref_id=None,
+        )
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"✅ Daily brief sent to {user_email}")
+                return True
+            logger.error(f"❌ Failed to send daily brief: status={response.status_code}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Error sending daily brief: {e}")
+            return False
+
 # Global email service instance
 email_service = EmailService()

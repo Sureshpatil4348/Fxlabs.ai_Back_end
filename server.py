@@ -34,6 +34,7 @@ from app.rsi_correlation_tracker_alert_service import rsi_correlation_tracker_al
 from app.heatmap_tracker_alert_service import heatmap_tracker_alert_service
 from app.heatmap_indicator_tracker_alert_service import heatmap_indicator_tracker_alert_service
 from app.email_service import email_service
+from app.daily_mail_service import daily_mail_scheduler
 from app.models import Timeframe, Tick, OHLC, SubscriptionInfo, NewsItem, NewsAnalysis
 from app.mt5_utils import (
     MT5_TIMEFRAMES,
@@ -66,6 +67,8 @@ async def lifespan(app: FastAPI):
     news_task = asyncio.create_task(news.news_scheduler())
     # Start news reminder 1-minute scheduler
     news_reminder_task = asyncio.create_task(news.news_reminder_scheduler())
+    # Start daily morning brief scheduler (09:00 IST)
+    daily_task = asyncio.create_task(daily_mail_scheduler())
 
     # Start minute alerts scheduler (fetch + evaluate RSI Tracker)
     global _minute_scheduler_task, _minute_scheduler_running
@@ -77,6 +80,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     news_task.cancel()
     news_reminder_task.cancel()
+    daily_task.cancel()
     if _minute_scheduler_task:
         _minute_scheduler_task.cancel()
     try:
@@ -85,6 +89,10 @@ async def lifespan(app: FastAPI):
         pass
     try:
         await news_reminder_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await daily_task
     except asyncio.CancelledError:
         pass
     if _minute_scheduler_task:
