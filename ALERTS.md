@@ -20,9 +20,9 @@
   - Supported trading pairs (MT5-suffixed): `EURUSDm, GBPUSDm, USDJPYm, USDCHFm, AUDUSDm, USDCADm, NZDUSDm, EURGBPm, EURJPYm, EURCHFm, EURAUDm, EURCADm, EURNZDm, GBPJPYm, GBPCHFm, GBPAUDm, GBPCADm, GBPNZDm, AUDJPYm, AUDCHFm, AUDCADm, AUDNZDm, NZDJPYm, NZDCHFm, NZDCADm, CADJPYm, CADCHFm, CHFJPYm, XAUUSDm, XAGUSDm, BTCUSDm, ETHUSDm`.
 
 **System Safeguards**
-- Rate limit: max 5 emails/user/hour (overflow → digest).
 - Per‑pair concurrency and warm‑up enforced.
 - Skip stale TFs (last candle age > 2× TF length).
+  - Note: Per-user email rate limits and digest have been removed. Alerts are sent immediately when not blocked by service-specific cooldowns (e.g., value-based email cooldown).
 
 **Message Structure (email)**
 - Title: RSI Alert • {PAIR} ({TF})

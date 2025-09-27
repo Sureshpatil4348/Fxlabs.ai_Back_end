@@ -31,7 +31,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Scalable Architecture**: Async/await design for high concurrency
 - **Per-Pair Concurrency Cap**: Keyed async locks prevent concurrent evaluations for the same pair/timeframe across alert services
 - **Warm-up & Stale-Data Protection**: Skips evaluations when latest bar is stale (>2× timeframe) and enforces indicator lookback (e.g., RSI series) before triggering
-- **Rate Limits + Digest**: Caps alert emails to 5/hour per user (successful sends only); overflows are batched into a single digest email
+// Removed: Rate Limits + Digest (alerts send immediately subject to value-based cooldown)
 - **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers
   - Per-alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
@@ -344,7 +344,7 @@ Notes:
 
 See `ALERTS.md` for canonical Supabase table schemas and exact frontend implementation requirements (Type A/Type B/RSI/RSI‑Correlation), including field lists, endpoints, validation, and delivery channel setup.
 - Re‑arm on exit then re‑cross: once fired, do not re‑fire while the condition persists; re‑arm after leaving the zone and fire again only on a new cross‑in. Changing the configured threshold re‑arms immediately.
-- Rate limits, cooldowns, concurrency, and alert frequency (once/hourly/daily) apply consistently across alert types.
+- Cooldowns, concurrency, and alert frequency (once/hourly/daily) apply consistently across alert types. Per-user rate limits and digest have been removed.
 
 See `ALERTS.md` for the consolidated alerts product & tech spec.
 
@@ -641,7 +641,7 @@ Model behavior:
 - Medium severity:
   - External API keys (Perplexity/Jblanked) are expected via env; missing keys will limit news analysis. Behavior unchanged.
   - News analyzer uses simple keyword extraction to derive effect; this is heuristic, as before.
-  - Email rate limiting now counts only successfully delivered alert sends toward the 5/hour cap. Attempts skipped by cooldown/value-similarity do not consume quota. Digest emails are sent at most once per 60 minutes when overflow occurs.
+  - Email per-user rate limiting and digest have been removed. Alerts are sent immediately when not blocked by the value-based cooldown.
 
 - Low severity:
   - Logging is console-based; consider structured logging for production observability.
@@ -811,7 +811,7 @@ For support and questions:
     - Supabase check example: verify the `notification_methods` column for your alert row includes `"email"`.
   - **Email service configured**: Set `SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME` in `.env`. The service logs diagnostics if not configured.
   - **Log level**: Set `LOG_LEVEL=INFO` (or `DEBUG`) so you see tracker/email logs.
-  - **Cooldown/rate limits**: Emails are suppressed for 10 minutes for similar RSI values and rate-limited to 5/hour per user.
+  - **Cooldown only**: Emails are suppressed for 10 minutes for similar values via smart cooldown. No per-user rate limits or digest.
   - **Scheduler running**: The minute scheduler runs inside `server.py` lifespan; confirm the server is started normally (not as a one-off script).
   - **Supabase creds**: `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` must be set for cache/trigger logging to work.
   

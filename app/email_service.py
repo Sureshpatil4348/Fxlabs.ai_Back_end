@@ -69,12 +69,6 @@ class EmailService:
             # Provide comprehensive diagnostics on what's missing/misaligned
             self._log_config_diagnostics(context="startup")
 
-        # Per-user rate limits + digest
-        self.user_rate_window_minutes = 60
-        self.user_rate_limit = 5
-        self.user_sends: Dict[str, List[datetime]] = {}
-        self.digest_buffers: Dict[str, List[Dict[str, Any]]] = {}
-        self.digest_last_sent: Dict[str, datetime] = {}
     
     def _generate_alert_hash(self, user_email: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], calculation_mode: str = None) -> str:
         """Generate a unique hash for similar alerts to implement value-based cooldown (supports all alert types)"""
@@ -283,26 +277,7 @@ class EmailService:
 
     # Unsubscribe management removed per spec
 
-    def _is_user_over_limit(self, user_email: str) -> bool:
-        """Check per-user rate limit without mutating counters.
-
-        Only successful sends should count against the hourly cap. This helper
-        prunes old entries and checks the count without recording a new send.
-        """
-        now = datetime.now(timezone.utc)
-        window = timedelta(minutes=self.user_rate_window_minutes)
-        sends = [t for t in self.user_sends.get(user_email, []) if now - t < window]
-        # Persist pruned list to avoid unbounded growth
-        self.user_sends[user_email] = sends
-        return len(sends) >= self.user_rate_limit
-
-    def _record_user_send(self, user_email: str) -> None:
-        """Record a successful send for per-user rate limiting (mutating)."""
-        now = datetime.now(timezone.utc)
-        window = timedelta(minutes=self.user_rate_window_minutes)
-        sends = [t for t in self.user_sends.get(user_email, []) if now - t < window]
-        sends.append(now)
-        self.user_sends[user_email] = sends
+    # Per-user rate limiting removed per product decision
 
     def is_unsubscribed(self, email: str) -> bool:
         # Unsubscribe support removed: always False
@@ -564,97 +539,7 @@ class EmailService:
             if alert_hash in self.alert_cooldowns
         }
 
-    # ------------------ Rate limit + digest helpers ------------------
-    def _allow_user_send(self, user_email: str) -> bool:
-        now = datetime.now(timezone.utc)
-        window = timedelta(minutes=self.user_rate_window_minutes)
-        sends = [t for t in self.user_sends.get(user_email, []) if now - t < window]
-        if len(sends) >= self.user_rate_limit:
-            self.user_sends[user_email] = sends
-            return False
-        sends.append(now)
-        self.user_sends[user_email] = sends
-        return True
-
-    def _enqueue_digest(self, user_email: str, alert_type: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], alert_config: Dict[str, Any]) -> None:
-        buf = self.digest_buffers.setdefault(user_email, [])
-        buf.append({
-            "type": alert_type,
-            "alert": alert_name,
-            "pairs": triggered_pairs,
-            "config": alert_config,
-            "time": datetime.now(timezone.utc).isoformat(),
-        })
-
-    async def _maybe_send_digest(self, user_email: str) -> None:
-        now = datetime.now(timezone.utc)
-        last = self.digest_last_sent.get(user_email)
-        if last and (now - last) < timedelta(minutes=self.user_rate_window_minutes):
-            return
-        entries = self.digest_buffers.get(user_email, [])
-        if not entries:
-            return
-        subject = f"Alert Digest ({len(entries)} items)"
-        body = self._build_digest_body(entries)
-        # Build a simple text digest
-        lines = [subject]
-        for e in entries:
-            etype = e.get("type", "Alert")
-            aname = e.get("alert", "Unnamed")
-            pairs = e.get("pairs", [])
-            lines.append(f"- {etype}: {aname} ({len(pairs)} items)")
-        text = "\n".join(lines)
-        mail = self._build_mail(
-            subject=subject,
-            to_email_addr=user_email,
-            html_body=body,
-            text_body=text,
-            category="digest",
-            ref_id=hashlib.sha1((user_email + subject).encode()).hexdigest()[:24]
-        )
-        try:
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
-            if response.status_code in [200, 201, 202]:
-                logger.info(f"📬 Sent digest email to {user_email} with {len(entries)} items")
-                self.digest_last_sent[user_email] = now
-                self.digest_buffers[user_email] = []
-        except Exception as e:
-            logger.error(f"❌ Failed to send digest email: {e}")
-
-    def _build_digest_body(self, entries: List[Dict[str, Any]]) -> str:
-        rows = ""
-        for e in entries:
-            etype = e.get("type", "Alert")
-            aname = e.get("alert", "Unnamed")
-            pairs = e.get("pairs", [])
-            rows += f"""
-            <tr style='border-bottom:1px solid #eee;'>
-                <td style='padding:8px 6px;'>{etype}</td>
-                <td style='padding:8px 6px;'>{aname}</td>
-                <td style='padding:8px 6px;'>{len(pairs)}</td>
-            </tr>
-            """
-        ts = self._format_now_local("Asia/Kolkata")
-        return f"""
-        <html><body style='font-family:Arial, sans-serif;'>
-        <h2 style='margin:0 0 10px 0;'>📬 Alert Digest</h2>
-        <p style='color:#555; margin:0 0 10px 0;'>Consolidated alerts due to rate limiting — {ts}</p>
-        <table style='width:100%; border-collapse:collapse;'>
-            <thead>
-                <tr style='background:#f0f2f5;'>
-                    <th style='text-align:left; padding:8px 6px;'>Type</th>
-                    <th style='text-align:left; padding:8px 6px;'>Alert</th>
-                    <th style='text-align:left; padding:8px 6px;'>Items</th>
-                </tr>
-            </thead>
-            <tbody>
-                {rows}
-            </tbody>
-        </table>
-        <p style='color:#999; font-size:12px; margin-top:10px;'>You are receiving a digest because the per-hour alert limit was exceeded.</p>
-        </body></html>
-        """
+    # Digest helpers removed per product decision
     
     async def send_heatmap_alert(
         self, 
@@ -673,13 +558,6 @@ class EmailService:
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
             logger.info(f"🕐 Heatmap alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
-            return False
-        
-        # Per-user rate limiting with overflow digest (count only successful sends)
-        if self._is_user_over_limit(user_email):
-            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing to digest.")
-            self._enqueue_digest(user_email, "Heatmap", alert_name, triggered_pairs, alert_config)
-            await self._maybe_send_digest(user_email)
             return False
         
         # Clean up old cooldowns periodically
@@ -713,8 +591,6 @@ class EmailService:
                 logger.info(f"✅ Heatmap alert email sent to {user_email}")
                 # Update cooldown after successful send
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
-                # Record successful send for rate limiting
-                self._record_user_send(user_email)
                 return True
             else:
                 logger.error(f"❌ Failed to send email: status={response.status_code}")
@@ -743,12 +619,6 @@ class EmailService:
             logger.info(f"🕐 Heatmap tracker alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
 
-        if self._is_user_over_limit(user_email):
-            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing Heatmap Tracker to digest.")
-            self._enqueue_digest(user_email, "HeatmapTracker", alert_name, triggered_pairs, alert_config)
-            await self._maybe_send_digest(user_email)
-            return False
-
         self._cleanup_old_cooldowns()
 
         try:
@@ -769,7 +639,6 @@ class EmailService:
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ Heatmap tracker alert email sent to {user_email}")
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
-                self._record_user_send(user_email)
                 return True
             else:
                 logger.error(f"❌ Failed to send heatmap tracker alert email: status={response.status_code}")
@@ -1054,13 +923,6 @@ class EmailService:
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
             logger.info(f"🕐 RSI alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
-        
-        # Per-user rate limiting with overflow digest (count only successful sends)
-        if self._is_user_over_limit(user_email):
-            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing RSI to digest.")
-            self._enqueue_digest(user_email, "RSI", alert_name, triggered_pairs, alert_config)
-            await self._maybe_send_digest(user_email)
-            return False
 
         logger.info(f"✅ RSI alert passed cooldown check, proceeding with email")
         
@@ -1107,8 +969,6 @@ class EmailService:
                 # Update cooldown after successful send
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
                 logger.info(f"⏰ Updated cooldown for alert hash: {alert_hash[:16]}...")
-                # Record successful send for rate limiting
-                self._record_user_send(user_email)
                 return True
             else:
                 logger.error(f"❌ Failed to send RSI alert email: status={response.status_code}")
@@ -1140,12 +1000,6 @@ class EmailService:
             logger.info(f"🕐 Custom indicator alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
 
-        if self._is_user_over_limit(user_email):
-            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing Custom Indicator to digest.")
-            self._enqueue_digest(user_email, "CustomIndicator", alert_name, triggered_pairs, alert_config)
-            await self._maybe_send_digest(user_email)
-            return False
-
         self._cleanup_old_cooldowns()
 
         try:
@@ -1166,7 +1020,6 @@ class EmailService:
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ Custom indicator alert email sent to {user_email}")
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
-                self._record_user_send(user_email)
                 return True
             else:
                 logger.error(f"❌ Failed to send custom indicator alert email: status={response.status_code}")
@@ -1324,13 +1177,6 @@ class EmailService:
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
             logger.info(f"🕐 RSI correlation alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
-        
-        # Per-user rate limiting with overflow digest (count only successful sends)
-        if self._is_user_over_limit(user_email):
-            logger.info(f"🔕 Rate limit reached for {user_email}. Queueing Correlation to digest.")
-            self._enqueue_digest(user_email, "Correlation", alert_name, triggered_pairs, alert_config)
-            await self._maybe_send_digest(user_email)
-            return False
 
         # Clean up old cooldowns periodically
         self._cleanup_old_cooldowns()
@@ -1363,8 +1209,6 @@ class EmailService:
                 logger.info(f"✅ RSI correlation alert email sent to {user_email}")
                 # Update cooldown after successful send
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
-                # Record successful send for rate limiting
-                self._record_user_send(user_email)
                 return True
             else:
                 logger.error(f"❌ Failed to send RSI correlation alert email: status={response.status_code}")
