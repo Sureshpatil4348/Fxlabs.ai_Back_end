@@ -312,29 +312,8 @@ class RSITrackerAlertService:
                     return data
         except Exception:
             pass
-        # Fallback simulated data
-        try:
-            data = {
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "open": 1.1000,
-                "high": 1.1010,
-                "low": 1.0990,
-                "close": 1.1005,
-                "volume": 1000,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": "SIMULATED",
-            }
-            log_debug(
-                logger,
-                "market_data_loaded",
-                symbol=symbol,
-                timeframe=timeframe,
-                source="SIMULATED",
-            )
-            return data
-        except Exception:
-            return None
+        # No fallback: require real MT5 data
+        return None
 
     async def _log_trigger(self, alert_id: str, symbol: str, timeframe: str, rsi_value: float, trigger_condition: str) -> None:
         if not self.supabase_url or not self.supabase_service_key:

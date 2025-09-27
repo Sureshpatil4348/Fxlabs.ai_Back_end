@@ -563,7 +563,7 @@ The modular structure isolates responsibilities while preserving all existing be
 
 - `app/mt5_utils.py:get_current_tick(symbol: str) -> Optional[Tick]`
   - Ensures the symbol is selected and returns a `Tick` from `mt5.symbol_info_tick`.
-  - Used by RSI alert services to avoid ImportErrors and simulated fallbacks.
+  - Used by alert services; system now requires real MT5 data only (no simulation).
 
 ## 📊 Supported Data Types
 

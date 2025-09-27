@@ -426,85 +426,46 @@ class RSIAlertService:
         """Get market data for a specific symbol and timeframe using real MT5 data"""
         
         try:
-            # Try to get real MT5 data first
-            try:
-                from .mt5_utils import get_ohlc_data, get_current_tick
-                from .models import Timeframe as MT5Timeframe
-                
-                # Convert timeframe string to MT5 Timeframe enum
-                timeframe_map = {
-                    "1M": MT5Timeframe.M1,
-                    "5M": MT5Timeframe.M5,
-                    "15M": MT5Timeframe.M15,
-                    "30M": MT5Timeframe.M30,
-                    "1H": MT5Timeframe.H1,
-                    "4H": MT5Timeframe.H4,
-                    "1D": MT5Timeframe.D1,
-                    "1W": MT5Timeframe.W1
-                }
-                
-                mt5_timeframe = timeframe_map.get(timeframe)
-                if mt5_timeframe:
-                    # Get real OHLC data from MT5
-                    ohlc_data = get_ohlc_data(symbol, mt5_timeframe, 50)
-                    if ohlc_data and len(ohlc_data) > 0:
-                        latest_bar = ohlc_data[-1]
-                        tick_data = get_current_tick(symbol)
-                        
-                        logger.debug(f"✅ Using real MT5 data for {symbol} {timeframe}")
-                        log_debug(
-                            logger,
-                            "market_data_loaded",
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            source="MT5_REAL",
-                        )
-                        return {
-                            "symbol": symbol,
-                            "timeframe": timeframe,
-                            "open": latest_bar.open,
-                            "high": latest_bar.high,
-                            "low": latest_bar.low,
-                            "close": latest_bar.close,
-                            "volume": latest_bar.volume,
-                            "timestamp": latest_bar.time_iso,
-                            "bid": tick_data.bid if tick_data else None,
-                            "ask": tick_data.ask if tick_data else None,
-                            "data_source": "MT5_REAL"
-                        }
-            except ImportError:
-                logger.warning(f"⚠️ MT5 not available, using fallback data for {symbol}")
-            except Exception as mt5_error:
-                logger.warning(f"⚠️ MT5 error for {symbol}: {mt5_error}, using fallback data")
-            
-            # Fallback: check tick data first, then simulate
-            tick_symbols = tick_data.get("symbols", [])
-            tick_market_data = tick_data.get("tick_data", {})
-            
-            if symbol in tick_symbols and symbol in tick_market_data:
-                return tick_market_data[symbol]
-            
-            # Final fallback: simulate market data
-            logger.debug(f"⚠️ Using simulated data for {symbol} - no real data available")
+            from .mt5_utils import get_ohlc_data, get_current_tick
+            from .models import Timeframe as MT5Timeframe
+            timeframe_map = {
+                "1M": MT5Timeframe.M1,
+                "5M": MT5Timeframe.M5,
+                "15M": MT5Timeframe.M15,
+                "30M": MT5Timeframe.M30,
+                "1H": MT5Timeframe.H1,
+                "4H": MT5Timeframe.H4,
+                "1D": MT5Timeframe.D1,
+                "1W": MT5Timeframe.W1
+            }
+            mt5_timeframe = timeframe_map.get(timeframe)
+            if not mt5_timeframe:
+                return None
+            ohlc_data = get_ohlc_data(symbol, mt5_timeframe, 50)
+            if not ohlc_data:
+                return None
+            latest_bar = ohlc_data[-1]
+            current_tick = get_current_tick(symbol)
             log_debug(
                 logger,
                 "market_data_loaded",
                 symbol=symbol,
                 timeframe=timeframe,
-                source="SIMULATED",
+                source="MT5_REAL",
             )
             return {
                 "symbol": symbol,
                 "timeframe": timeframe,
-                "open": 1.1000,
-                "high": 1.1010,
-                "low": 1.0990,
-                "close": 1.1005,
-                "volume": 1000,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "data_source": "SIMULATED"
+                "open": latest_bar.open,
+                "high": latest_bar.high,
+                "low": latest_bar.low,
+                "close": latest_bar.close,
+                "volume": latest_bar.volume,
+                "timestamp": latest_bar.time_iso,
+                "bid": current_tick.bid if current_tick else None,
+                "ask": current_tick.ask if current_tick else None,
+                "data_source": "MT5_REAL"
             }
-            
         except Exception as e:
             logger.error(f"❌ Error getting market data for {symbol}: {e}")
             return None
@@ -513,52 +474,31 @@ class RSIAlertService:
         """Calculate real RSI using historical OHLC data from MT5"""
         
         try:
-            # If we have real MT5 data, calculate actual RSI
-            if market_data.get("data_source") == "MT5_REAL":
-                try:
-                    from .mt5_utils import get_ohlc_data
-                    from .models import Timeframe as MT5Timeframe
-                    
-                    symbol = market_data["symbol"]
-                    timeframe = market_data["timeframe"]
-                    
-                    # Convert timeframe string to MT5 Timeframe enum
-                    timeframe_map = {
-                        "1M": MT5Timeframe.M1,
-                        "5M": MT5Timeframe.M5,
-                        "15M": MT5Timeframe.M15,
-                        "30M": MT5Timeframe.M30,
-                        "1H": MT5Timeframe.H1,
-                        "4H": MT5Timeframe.H4,
-                        "1D": MT5Timeframe.D1,
-                        "1W": MT5Timeframe.W1
-                    }
-                    
-                    mt5_timeframe = timeframe_map.get(timeframe)
-                    if mt5_timeframe:
-                        # Get historical OHLC data for RSI calculation
-                        ohlc_data = get_ohlc_data(symbol, mt5_timeframe, period + 10)
-                        if ohlc_data and len(ohlc_data) >= period + 1:
-                            # Extract close prices
-                            closes = [bar.close for bar in ohlc_data]
-                            
-                            # Calculate real RSI
-                            rsi_value = self._calculate_rsi_from_closes(closes, period)
-                            if rsi_value is not None:
-                                logger.debug(f"✅ Calculated real RSI for {symbol}: {rsi_value:.2f}")
-                                return rsi_value
-                except Exception as mt5_error:
-                    logger.warning(f"⚠️ MT5 RSI calculation failed: {mt5_error}")
-            
-            # Fallback: simulate RSI calculation
-            close_price = market_data.get("close", 1.1000)
-            price_factor = (close_price - 1.1000) * 1000
-            rsi_value = 50 + price_factor * 2
-            rsi_value = max(0, min(100, rsi_value))
-            
-            logger.debug(f"⚠️ Using simulated RSI for {market_data.get('symbol', 'unknown')}: {rsi_value:.2f}")
+            if market_data.get("data_source") != "MT5_REAL":
+                return None
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as MT5Timeframe
+            symbol = market_data["symbol"]
+            timeframe = market_data["timeframe"]
+            timeframe_map = {
+                "1M": MT5Timeframe.M1,
+                "5M": MT5Timeframe.M5,
+                "15M": MT5Timeframe.M15,
+                "30M": MT5Timeframe.M30,
+                "1H": MT5Timeframe.H1,
+                "4H": MT5Timeframe.H4,
+                "1D": MT5Timeframe.D1,
+                "1W": MT5Timeframe.W1
+            }
+            mt5_timeframe = timeframe_map.get(timeframe)
+            if not mt5_timeframe:
+                return None
+            ohlc_data = get_ohlc_data(symbol, mt5_timeframe, period + 10)
+            if not ohlc_data or len(ohlc_data) < period + 1:
+                return None
+            closes = [bar.close for bar in ohlc_data]
+            rsi_value = self._calculate_rsi_from_closes(closes, period)
             return rsi_value
-            
         except Exception as e:
             log_error(
                 logger,
