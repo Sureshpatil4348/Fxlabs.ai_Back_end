@@ -5,7 +5,7 @@ create table if not exists public.rsi_tracker_alerts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users(id) on delete cascade,
   user_email text not null,
-  timeframe text not null check (timeframe in ('1M','5M','15M','30M','1H','4H','1D','1W')),
+  timeframe text not null check (timeframe in ('5M','15M','30M','1H','4H','1D','1W')),
   rsi_period int2 not null check (rsi_period between 5 and 50) default 14,
   rsi_overbought int2 not null check (rsi_overbought between 60 and 90) default 70,
   rsi_oversold int2 not null check (rsi_oversold between 10 and 40) default 30,
@@ -25,7 +25,7 @@ create table if not exists public.rsi_tracker_alert_triggers (
   triggered_at timestamptz not null default now(),
   trigger_condition text not null check (trigger_condition in ('overbought','oversold')),
   symbol text not null,
-  timeframe text not null check (timeframe in ('1M','5M','15M','30M','1H','4H','1D','1W')),
+  timeframe text not null check (timeframe in ('5M','15M','30M','1H','4H','1D','1W')),
   rsi_value numeric(5,2) not null check (rsi_value >= 0 and rsi_value <= 100),
   created_at timestamptz not null default now()
 );

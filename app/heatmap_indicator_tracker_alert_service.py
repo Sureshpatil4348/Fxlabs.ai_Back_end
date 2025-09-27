@@ -30,6 +30,12 @@ class HeatmapIndicatorTrackerAlertService:
         self.supabase_url = os.environ.get("SUPABASE_URL", "")
         self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
 
+    def _normalize_timeframe(self, timeframe: str) -> str:
+        """Enforce minimum timeframe of 5M for alerts."""
+        if timeframe == "1M":
+            return "5M"
+        return timeframe
+
     def _key(self, alert_id: str, symbol: str, timeframe: str, indicator: str) -> str:
         return f"{alert_id}:{symbol}:{timeframe}:{indicator}"
 
@@ -45,7 +51,7 @@ class HeatmapIndicatorTrackerAlertService:
 
                     alert_id = alert.get("id")
                     user_email = alert.get("user_email", "")
-                    timeframe = alert.get("timeframe", "1H")
+                    timeframe = self._normalize_timeframe(alert.get("timeframe", "1H"))
                     indicator = (alert.get("indicator") or "ema21").lower()
                     pairs: List[str] = alert.get("pairs", []) or []
                     # Start-of-alert evaluation log

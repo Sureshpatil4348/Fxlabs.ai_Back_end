@@ -400,7 +400,6 @@ class RSIAlertService:
 
     def _tf_seconds(self, timeframe: str) -> int:
         mapping = {
-            "1M": 60,
             "5M": 5 * 60,
             "15M": 15 * 60,
             "30M": 30 * 60,
@@ -409,7 +408,7 @@ class RSIAlertService:
             "1D": 24 * 60 * 60,
             "1W": 7 * 24 * 60 * 60,
         }
-        return mapping.get(timeframe, 60)
+        return mapping.get(timeframe, 5 * 60)
 
     def _is_stale_market(self, market_data: Dict[str, Any], timeframe: str) -> bool:
         try:
@@ -429,7 +428,6 @@ class RSIAlertService:
             from .mt5_utils import get_ohlc_data, get_current_tick
             from .models import Timeframe as MT5Timeframe
             timeframe_map = {
-                "1M": MT5Timeframe.M1,
                 "5M": MT5Timeframe.M5,
                 "15M": MT5Timeframe.M15,
                 "30M": MT5Timeframe.M30,
@@ -481,7 +479,6 @@ class RSIAlertService:
             symbol = market_data["symbol"]
             timeframe = market_data["timeframe"]
             timeframe_map = {
-                "1M": MT5Timeframe.M1,
                 "5M": MT5Timeframe.M5,
                 "15M": MT5Timeframe.M15,
                 "30M": MT5Timeframe.M30,
@@ -723,7 +720,6 @@ class RSIAlertService:
             from .mt5_utils import get_ohlc_data
             from .models import Timeframe as MT5Timeframe
             tf_map = {
-                "1M": MT5Timeframe.M1,
                 "5M": MT5Timeframe.M5,
                 "15M": MT5Timeframe.M15,
                 "30M": MT5Timeframe.M30,
@@ -796,7 +792,6 @@ class RSIAlertService:
             from .models import Timeframe as MT5Timeframe
 
             timeframe_map = {
-                "1M": MT5Timeframe.M1,
                 "5M": MT5Timeframe.M5,
                 "15M": MT5Timeframe.M15,
                 "30M": MT5Timeframe.M30,

@@ -64,9 +64,6 @@ async def lifespan(app: FastAPI):
     
     # Initialize news cache and start scheduler (loads FS cache on start)
     news_task = asyncio.create_task(news.news_scheduler())
-    
-    # Initialize alert cache and start scheduler
-    alert_cache_task = asyncio.create_task(alert_cache.start_refresh_scheduler())
 
     # Start minute alerts scheduler (fetch + evaluate RSI Tracker)
     global _minute_scheduler_task, _minute_scheduler_running
@@ -77,15 +74,10 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     news_task.cancel()
-    alert_cache_task.cancel()
     if _minute_scheduler_task:
         _minute_scheduler_task.cancel()
     try:
         await news_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        await alert_cache_task
     except asyncio.CancelledError:
         pass
     if _minute_scheduler_task:
@@ -245,10 +237,7 @@ def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
 
 def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe) -> datetime:
     """Calculate when the next OHLC update should be sent"""
-    if timeframe == Timeframe.M1:
-        # Next minute boundary
-        next_update = subscription_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
-    elif timeframe == Timeframe.M5:
+    if timeframe == Timeframe.M5:
         # Next 5-minute boundary
         current_minute = subscription_time.minute
         next_minute = ((current_minute // 5) + 1) * 5
@@ -293,8 +282,13 @@ def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe
             days_ahead = 7
         next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
     else:
-        # Default to 1 minute
-        next_update = subscription_time + timedelta(minutes=1)
+        # Default to 5 minutes
+        current_minute = subscription_time.minute
+        next_minute = ((current_minute // 5) + 1) * 5
+        if next_minute >= 60:
+            next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_update = subscription_time.replace(minute=next_minute, second=0, microsecond=0)
     
     return next_update
 
@@ -387,7 +381,7 @@ async def _get_user_tracked_symbols(user_email: str) -> Set[str]:
 
 
 async def _minute_alerts_scheduler():
-    """Every minute: refresh alerts and evaluate RSI Tracker alerts."""
+    """Every 5 minutes: refresh alerts and evaluate all alert types."""
     try:
         while _minute_scheduler_running:
             try:
@@ -410,7 +404,7 @@ async def _minute_alerts_scheduler():
                 await heatmap_indicator_tracker_alert_service.check_heatmap_indicator_tracker_alerts()
             except Exception as e:
                 print(f"❌ Indicator Tracker evaluation error: {e}")
-            await asyncio.sleep(60)
+            await asyncio.sleep(300)
     except asyncio.CancelledError:
         return
     except Exception as e:
@@ -428,7 +422,7 @@ def test_websocket():
     return {"message": "WebSocket endpoint available at /ws/market"}
 
 @app.get("/api/ohlc/{symbol}")
-def get_ohlc(symbol: str, timeframe: str = Query("1M"), count: int = Query(250, le=500), x_api_key: Optional[str] = Depends(require_api_token_header)):
+def get_ohlc(symbol: str, timeframe: str = Query("5M"), count: int = Query(250, le=500), x_api_key: Optional[str] = Depends(require_api_token_header)):
     """Get OHLC data for a symbol and timeframe"""
     try:
         tf = Timeframe(timeframe)
@@ -722,7 +716,7 @@ class WSClient:
         if action == "subscribe":
             # New subscription format
             symbol = message.get("symbol", "")
-            timeframe = message.get("timeframe", "1M")
+            timeframe = message.get("timeframe", "5M")
             data_types = message.get("data_types", ["ticks", "ohlc"])
             
             if not symbol:
@@ -917,7 +911,7 @@ if __name__ == "__main__":
     print("📊 Available endpoints:")
     print("   - WebSocket (new): ws://localhost:8000/ws/market")
     print("   - WebSocket (legacy): ws://localhost:8000/ws/ticks")
-    print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=1M&count=100")
+    print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=5M&count=100")
     print("   - News Analysis: GET /api/news/analysis")
     print("   - News Refresh: POST /api/news/refresh")
     print("   - Alert Cache: GET /api/alerts/cache")

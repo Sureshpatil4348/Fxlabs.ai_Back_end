@@ -339,7 +339,7 @@ Notes:
 
 ### Alert Scheduling & Re‑triggering (Global)
 
-- End‑of‑timeframe evaluation only: a unified scheduler triggers checks on timeframe boundaries (1M/5M/15M/30M/1H/4H/1D). Heatmap, RSI, and RSI Correlation are evaluated on TF closes; tick-driven checks are disabled by default.
+- End‑of‑timeframe evaluation only: scheduler runs every 5 minutes; alerts are evaluated on timeframe closes (5M/15M/30M/1H/4H/1D). Tick-driven checks are disabled by default.
 - Crossing/Flip triggers: fire when the metric crosses into the condition from the opposite side (or a regime flip occurs), not on every bar while in‑zone.
 
 See `ALERTS.md` for canonical Supabase table schemas and exact frontend implementation requirements (Type A/Type B/RSI/RSI‑Correlation), including field lists, endpoints, validation, and delivery channel setup.
@@ -393,11 +393,11 @@ Cache policy (weekly merge & dedup):
 const ws = new WebSocket('ws://localhost:8000/ws/market');
 
 ws.onopen = () => {
-    // Subscribe to EURUSD 1-minute data
+    // Subscribe to EURUSD 5-minute data (minimum supported)
     ws.send(JSON.stringify({
         action: 'subscribe',
         symbol: 'EURUSD',
-        timeframe: '1M',
+        timeframe: '5M',
         data_types: ['ticks', 'ohlc']
     }));
 };
@@ -446,7 +446,6 @@ The system uses intelligent caching to optimize performance:
 # Global cache structure
 global_ohlc_cache = {
     "EURUSD": {
-        "1M": deque([100_OHLC_bars]),
         "5M": deque([100_OHLC_bars]),
         # Only caches subscribed timeframes
     }
@@ -572,8 +571,7 @@ The modular structure isolates responsibilities while preserving all existing be
 ## 📊 Supported Data Types
 
 ### Timeframes
-- **1M** - 1 Minute
-- **5M** - 5 Minutes
+- **5M** - 5 Minutes (minimum supported)
 - **15M** - 15 Minutes
 - **30M** - 30 Minutes
 - **1H** - 1 Hour

@@ -40,9 +40,14 @@ class RSITrackerAlertService:
         # Track last evaluated closed bar per (symbol, timeframe)
         self._last_closed_bar_ts: Dict[str, int] = {}
 
+    def _normalize_timeframe(self, timeframe: str) -> str:
+        """Enforce minimum timeframe of 5M for alerts."""
+        if timeframe == "1M":
+            return "5M"
+        return timeframe
+
     def _tf_seconds(self, timeframe: str) -> int:
         mapping = {
-            "1M": 60,
             "5M": 5 * 60,
             "15M": 15 * 60,
             "30M": 30 * 60,
@@ -51,7 +56,7 @@ class RSITrackerAlertService:
             "1D": 24 * 60 * 60,
             "1W": 7 * 24 * 60 * 60,
         }
-        return mapping.get(timeframe, 60)
+        return mapping.get(timeframe, 5 * 60)
 
     def _discover_symbols(self) -> List[str]:
         """Return fixed, supported symbols for RSI tracking (broker-suffixed)."""
@@ -83,7 +88,6 @@ class RSITrackerAlertService:
             from .mt5_utils import get_ohlc_data
             from .models import Timeframe as MT5Timeframe
             tf_map = {
-                "1M": MT5Timeframe.M1,
                 "5M": MT5Timeframe.M5,
                 "15M": MT5Timeframe.M15,
                 "30M": MT5Timeframe.M30,
@@ -107,7 +111,6 @@ class RSITrackerAlertService:
             from .mt5_utils import get_ohlc_data
             from .models import Timeframe as MT5Timeframe
             tf_map = {
-                "1M": MT5Timeframe.M1,
                 "5M": MT5Timeframe.M5,
                 "15M": MT5Timeframe.M15,
                 "30M": MT5Timeframe.M30,
@@ -233,7 +236,6 @@ class RSITrackerAlertService:
             from .models import Timeframe as MT5Timeframe
             import MetaTrader5 as mt5  # type: ignore
             tf_map = {
-                "1M": MT5Timeframe.M1,
                 "5M": MT5Timeframe.M5,
                 "15M": MT5Timeframe.M15,
                 "30M": MT5Timeframe.M30,
@@ -360,7 +362,7 @@ class RSITrackerAlertService:
                     alert_id = alert.get("id")
                     alert_name = alert.get("alert_name", "RSI Tracker Alert")
                     user_email = alert.get("user_email", "")
-                    timeframe = alert.get("timeframe", "1H")
+                    timeframe = self._normalize_timeframe(alert.get("timeframe", "1H"))
                     rsi_period = int(alert.get("rsi_period", 14))
                     rsi_overbought = int(alert.get("rsi_overbought", alert.get("rsi_overbought_threshold", 70)))
                     rsi_oversold = int(alert.get("rsi_oversold", alert.get("rsi_oversold_threshold", 30)))

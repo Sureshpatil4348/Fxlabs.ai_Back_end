@@ -66,7 +66,7 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
 {
   "type": "connected",
   "message": "WebSocket connected successfully",
-  "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W"],
+  "supported_timeframes": ["5M", "15M", "30M", "1H", "4H", "1D", "1W"],
   "supported_data_types": ["ticks", "ohlc"]
 }
 ```
@@ -76,7 +76,7 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
 {
   "action": "subscribe",
   "symbol": "EURUSD",
-  "timeframe": "1M",
+  "timeframe": "5M",
   "data_types": ["ticks", "ohlc"]
 }
 ```
@@ -91,7 +91,7 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
 {
   "type": "subscribed",
   "symbol": "EURUSD",
-  "timeframe": "1M",
+  "timeframe": "5M",
   "data_types": ["ticks", "ohlc"]
 }
 ```
@@ -101,11 +101,11 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
 {
   "type": "initial_ohlc",
   "symbol": "EURUSD",
-  "timeframe": "1M",
+  "timeframe": "5M",
   "data": [
     {
       "symbol": "EURUSD",
-      "timeframe": "1M",
+      "timeframe": "5M",
       "time": 1703001600000,
       "time_iso": "2023-12-19T16:00:00+00:00",
       "open": 1.1050,
@@ -144,7 +144,7 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
   "type": "ohlc_update",
   "data": {
     "symbol": "EURUSD",
-    "timeframe": "1M",
+    "timeframe": "5M",
     "time": 1703001660000,
     "time_iso": "2023-12-19T16:01:00+00:00",
     "open": 1.1052,
@@ -239,7 +239,6 @@ curl "http://localhost:8000/api/ohlc/EURUSD?timeframe=1M&count=10"
 ```python
 global_ohlc_cache = {
     "EURUSD": {
-        "1M": deque([100_OHLC_bars]),
         "5M": deque([100_OHLC_bars]),
         # ... other timeframes only if subscribed
     }

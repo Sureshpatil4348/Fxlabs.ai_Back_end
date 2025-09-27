@@ -16,7 +16,7 @@ class AlertCache:
         # Cache storage: {user_id: [alert_configs]}
         self._cache: Dict[str, List[Dict[str, Any]]] = {}
         self._last_refresh: Optional[datetime] = None
-        self._refresh_interval = timedelta(minutes=1)  # refresh frequently for minute scheduler
+        self._refresh_interval = timedelta(minutes=5)  # align with 5-minute alert scheduler
         self._is_refreshing = False
         
         # Supabase configuration

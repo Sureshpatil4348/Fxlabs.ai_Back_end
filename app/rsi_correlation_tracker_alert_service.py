@@ -35,6 +35,12 @@ class RSICorrelationTrackerAlertService:
         # Track last evaluated closed bar per (pair_key, timeframe) to enforce closed-bar evaluation
         self._last_closed_bar_ts: Dict[str, int] = {}
 
+    def _normalize_timeframe(self, timeframe: str) -> str:
+        """Enforce minimum timeframe of 5M for alerts."""
+        if timeframe == "1M":
+            return "5M"
+        return timeframe
+
     def _discover_pair_keys(self) -> List[str]:
         """Return fixed, documented correlation pair keys."""
         return RSI_CORRELATION_PAIR_KEYS
@@ -47,7 +53,7 @@ class RSICorrelationTrackerAlertService:
         try:
             from .mt5_utils import get_ohlc_data
             from .models import Timeframe as TF
-            tf_map = {"1M": TF.M1, "5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+            tf_map = {"5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
             mtf = tf_map.get( timeframe )
             if not mtf:
                 return None
@@ -70,7 +76,7 @@ class RSICorrelationTrackerAlertService:
 
                     alert_id = alert.get("id")
                     user_email = alert.get("user_email", "")
-                    timeframe = alert.get("timeframe", "1H")
+                    timeframe = self._normalize_timeframe(alert.get("timeframe", "1H"))
                     mode = (alert.get("mode") or "rsi_threshold").lower()
                     rsi_period = int(alert.get("rsi_period", 14))
                     rsi_ob = int(alert.get("rsi_overbought", 70))
@@ -286,7 +292,7 @@ class RSICorrelationTrackerAlertService:
         try:
             from .mt5_utils import get_ohlc_data
             from .models import Timeframe as TF
-            tf_map = {"1M": TF.M1, "5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+            tf_map = {"5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
             mtf = tf_map.get(timeframe)
             if not mtf:
                 return None
@@ -328,7 +334,7 @@ class RSICorrelationTrackerAlertService:
         try:
             from .mt5_utils import get_ohlc_data
             from .models import Timeframe as TF
-            tf_map = {"1M": TF.M1, "5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+            tf_map = {"5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
             mtf = tf_map.get(timeframe)
             if not mtf:
                 return None

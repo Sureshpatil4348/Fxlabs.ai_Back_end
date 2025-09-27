@@ -6,7 +6,7 @@ create table if not exists public.heatmap_indicator_tracker_alerts (
   user_id uuid references auth.users(id) on delete cascade,
   user_email text not null,
   pairs jsonb not null, -- array of 1-3 symbols
-  timeframe text not null check (timeframe in ('1M','5M','15M','30M','1H','4H','1D','1W')),
+  timeframe text not null check (timeframe in ('5M','15M','30M','1H','4H','1D','1W')),
   indicator text not null check (indicator in ('ema21','ema50','ema200','macd','rsi','utbot','ichimokuclone')),
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
@@ -25,7 +25,7 @@ create table if not exists public.heatmap_indicator_tracker_alert_triggers (
   alert_id uuid not null references public.heatmap_indicator_tracker_alerts(id) on delete cascade,
   triggered_at timestamptz not null default now(),
   symbol text not null,
-  timeframe text not null check (timeframe in ('1M','5M','15M','30M','1H','4H','1D','1W')),
+  timeframe text not null check (timeframe in ('5M','15M','30M','1H','4H','1D','1W')),
   indicator text not null check (indicator in ('ema21','ema50','ema200','macd','rsi','utbot','ichimokuclone')),
   signal text not null check (signal in ('buy','sell')),
   created_at timestamptz not null default now()

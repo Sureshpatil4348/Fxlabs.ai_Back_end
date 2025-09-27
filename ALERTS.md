@@ -6,14 +6,14 @@
 **Global Rules**
 - Max tracked pairs per user: up to 3.
 - Trigger style: crossing into overbought/oversold; not on every bar while in‑zone.
-- Closed‑bar evaluation for RSI family: evaluate RSI on the last closed candlestick only (no intrabar/tick evaluation).
+- Closed‑bar evaluation for RSI family: evaluate RSI on the last closed candlestick only (no intrabar/tick evaluation). Minimum supported timeframe is 5M.
 - Retrigger policy: once triggered, re‑arm only after leaving the triggerable zone and trigger again only on a fresh crossing back in.
 - Timezone for display: Asia/Kolkata.
 - System safeguards: rate limit 5 emails/user/hour (overflow → digest), per‑pair concurrency cap, warm‑up for RSI, skip stale TFs (last candle age > 2× TF length).
 
 **Simplified Scope (Current Support)**
 - RSI Tracker Alert (single per user)
-  - Timeframe: choose exactly one (e.g., `1M`, `5M`, `15M`, `30M`, `1H`, `4H`, `1D`, `1W`).
+  - Timeframe: choose exactly one (e.g., `5M`, `15M`, `30M`, `1H`, `4H`, `1D`, `1W`).
   - RSI settings: `rsi_period` (5–50), `rsi_overbought` (60–90), `rsi_oversold` (10–40).
   - Pairs: fixed set, backend uses a documented list (no per-alert selection, no env overrides).
   - Behavior: If any pair crosses into overbought/oversold on the closed candle, a trigger is recorded and emailed.

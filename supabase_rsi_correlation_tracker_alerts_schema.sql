@@ -5,7 +5,7 @@ create table if not exists public.rsi_correlation_tracker_alerts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references auth.users(id) on delete cascade,
   user_email text not null,
-  timeframe text not null check (timeframe in ('1M','5M','15M','30M','1H','4H','1D','1W')),
+  timeframe text not null check (timeframe in ('5M','15M','30M','1H','4H','1D','1W')),
   mode text not null check (mode in ('rsi_threshold','real_correlation')),
   rsi_period int2 check (rsi_period between 5 and 50),
   rsi_overbought int2 check (rsi_overbought between 60 and 90),
@@ -28,7 +28,7 @@ create table if not exists public.rsi_correlation_tracker_alert_triggers (
   mode text not null check (mode in ('rsi_threshold','real_correlation')),
   trigger_type text not null check (trigger_type in ('rsi_mismatch','real_mismatch')),
   pair_key text not null,
-  timeframe text not null check (timeframe in ('1M','5M','15M','30M','1H','4H','1D','1W')),
+  timeframe text not null check (timeframe in ('5M','15M','30M','1H','4H','1D','1W')),
   value numeric(6,3) null,
   created_at timestamptz not null default now()
 );
