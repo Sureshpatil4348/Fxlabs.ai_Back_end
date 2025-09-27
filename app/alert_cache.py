@@ -4,6 +4,10 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 import aiohttp
 import json
+import logging
+
+from .logging_config import configure_logging
+from .alert_logging import log_debug, log_info, log_warning, log_error
 
 class AlertCache:
     """Simple in-memory cache for user alert configurations"""
@@ -12,7 +16,7 @@ class AlertCache:
         # Cache storage: {user_id: [alert_configs]}
         self._cache: Dict[str, List[Dict[str, Any]]] = {}
         self._last_refresh: Optional[datetime] = None
-        self._refresh_interval = timedelta(minutes=5)  # 5 minutes
+        self._refresh_interval = timedelta(minutes=5)  # align with 5-minute alert scheduler
         self._is_refreshing = False
         
         # Supabase configuration
@@ -66,6 +70,12 @@ class AlertCache:
         try:
             self._is_refreshing = True
             print("🔄 Refreshing alert cache...")
+            configure_logging()
+            logger = logging.getLogger(__name__)
+            log_info(
+                logger,
+                "alert_cache_refresh_start",
+            )
             
             # Fetch all active alerts from Supabase
             headers = {
@@ -74,96 +84,105 @@ class AlertCache:
                 "Content-Type": "application/json"
             }
             
-            # Fetch heatmap alerts
-            heatmap_alerts = await self._fetch_heatmap_alerts(headers)
-            
-            # Fetch RSI alerts
-            rsi_alerts = await self._fetch_rsi_alerts(headers)
-            
-            # Fetch RSI correlation alerts
-            rsi_correlation_alerts = await self._fetch_rsi_correlation_alerts(headers)
+            # Fetch RSI Tracker alerts (single-alert model)
+            rsi_tracker_alerts = await self._fetch_rsi_tracker_alerts(headers)
+            # Fetch RSI Correlation Tracker alerts (single-alert model)
+            rsi_corr_tracker_alerts = await self._fetch_rsi_correlation_tracker_alerts(headers)
+            # Fetch Heatmap/Quantum Tracker alerts (single-alert model)
+            heatmap_tracker_alerts = await self._fetch_heatmap_tracker_alerts(headers)
+            # Fetch Heatmap Custom Indicator Tracker alerts (single-alert model)
+            heatmap_indicator_tracker_alerts = await self._fetch_heatmap_indicator_tracker_alerts(headers)
             
             # Group alerts by user_id
             new_cache = {}
             
-            # Process heatmap alerts
-            for alert in heatmap_alerts:
+            # Process RSI tracker alerts (single alert per user)
+            for alert in rsi_tracker_alerts:
                 user_id = alert.get("user_id")
                 if user_id:
                     if user_id not in new_cache:
                         new_cache[user_id] = []
                     new_cache[user_id].append({
-                        "type": "heatmap",
+                        "type": "rsi_tracker",
                         "id": alert.get("id"),
-                        "alert_name": alert.get("alert_name"),
+                        "alert_name": alert.get("alert_name", "RSI Tracker Alert"),
                         "user_id": alert.get("user_id"),
-                        "user_email": alert.get("user_email"),  # Add user_email for email notifications
+                        "user_email": alert.get("user_email"),
+                        "is_active": alert.get("is_active", True),
+                        "timeframe": alert.get("timeframe", "1H"),
+                        "rsi_period": alert.get("rsi_period", 14),
+                        "rsi_overbought": alert.get("rsi_overbought", alert.get("rsi_overbought_threshold", 70)),
+                        "rsi_oversold": alert.get("rsi_oversold", alert.get("rsi_oversold_threshold", 30)),
+                        "notification_methods": alert.get("notification_methods", ["email"]),
+                        "created_at": alert.get("created_at"),
+                        "updated_at": alert.get("updated_at"),
+                    })
+
+            # Process RSI correlation tracker alerts (single alert per user)
+            for alert in rsi_corr_tracker_alerts:
+                user_id = alert.get("user_id")
+                if user_id:
+                    if user_id not in new_cache:
+                        new_cache[user_id] = []
+                    new_cache[user_id].append({
+                        "type": "rsi_correlation_tracker",
+                        "id": alert.get("id"),
+                        "alert_name": alert.get("alert_name", "RSI Correlation Tracker Alert"),
+                        "user_id": alert.get("user_id"),
+                        "user_email": alert.get("user_email"),
+                        "is_active": alert.get("is_active", True),
+                        "timeframe": alert.get("timeframe", "1H"),
+                        "mode": alert.get("mode", "rsi_threshold"),
+                        "rsi_period": alert.get("rsi_period", 14),
+                        "rsi_overbought": alert.get("rsi_overbought", 70),
+                        "rsi_oversold": alert.get("rsi_oversold", 30),
+                        "correlation_window": alert.get("correlation_window", 50),
+                        "notification_methods": alert.get("notification_methods", ["email"]),
+                        "created_at": alert.get("created_at"),
+                        "updated_at": alert.get("updated_at"),
+                    })
+
+            # Process Heatmap/Quantum tracker alerts (single alert per user)
+            for alert in heatmap_tracker_alerts:
+                user_id = alert.get("user_id")
+                if user_id:
+                    if user_id not in new_cache:
+                        new_cache[user_id] = []
+                    new_cache[user_id].append({
+                        "type": "heatmap_tracker",
+                        "id": alert.get("id"),
+                        "alert_name": alert.get("alert_name", "Heatmap Tracker Alert"),
+                        "user_id": alert.get("user_id"),
+                        "user_email": alert.get("user_email"),
                         "is_active": alert.get("is_active", True),
                         "pairs": alert.get("pairs", []),
-                        "timeframes": alert.get("timeframes", []),
-                        "selected_indicators": alert.get("selected_indicators", []),
                         "trading_style": alert.get("trading_style", "dayTrader"),
-                        "buy_threshold_min": alert.get("buy_threshold_min", 70),
-                        "buy_threshold_max": alert.get("buy_threshold_max", 100),
-                        "sell_threshold_min": alert.get("sell_threshold_min", 0),
-                        "sell_threshold_max": alert.get("sell_threshold_max", 30),
-                        "notification_methods": alert.get("notification_methods", ["browser"]),
-                        "alert_frequency": alert.get("alert_frequency", "once"),
-                        "trigger_on_crossing": alert.get("trigger_on_crossing", True),
+                        "buy_threshold": alert.get("buy_threshold", 70),
+                        "sell_threshold": alert.get("sell_threshold", 30),
+                        "notification_methods": alert.get("notification_methods", ["email"]),
                         "created_at": alert.get("created_at"),
-                        "updated_at": alert.get("updated_at")
+                        "updated_at": alert.get("updated_at"),
                     })
-            
-            # Process RSI alerts
-            for alert in rsi_alerts:
+
+            # Process Heatmap Custom Indicator tracker alerts (single alert per user)
+            for alert in heatmap_indicator_tracker_alerts:
                 user_id = alert.get("user_id")
                 if user_id:
                     if user_id not in new_cache:
                         new_cache[user_id] = []
                     new_cache[user_id].append({
-                        "type": "rsi",
+                        "type": "heatmap_indicator_tracker",
                         "id": alert.get("id"),
-                        "alert_name": alert.get("alert_name"),
+                        "alert_name": alert.get("alert_name", "Indicator Tracker Alert"),
                         "user_id": alert.get("user_id"),
-                        "user_email": alert.get("user_email"),  # Add user_email for email notifications
+                        "user_email": alert.get("user_email"),
                         "is_active": alert.get("is_active", True),
                         "pairs": alert.get("pairs", []),
-                        "timeframes": alert.get("timeframes", []),
-                        "rsi_period": alert.get("rsi_period", 14),
-                        "rsi_overbought_threshold": alert.get("rsi_overbought_threshold", 70),
-                        "rsi_oversold_threshold": alert.get("rsi_oversold_threshold", 30),
-                        "alert_conditions": alert.get("alert_conditions", []),
-                        "rfi_strong_threshold": alert.get("rfi_strong_threshold", 0.80),
-                        "rfi_moderate_threshold": alert.get("rfi_moderate_threshold", 0.60),
-                        "notification_methods": alert.get("notification_methods", ["browser"]),
-                        "alert_frequency": alert.get("alert_frequency", "once"),
-                        "trigger_on_crossing": alert.get("trigger_on_crossing", True),
+                        "timeframe": alert.get("timeframe", "1H"),
+                        "indicator": alert.get("indicator", "ema21"),
+                        "notification_methods": alert.get("notification_methods", ["email"]),
                         "created_at": alert.get("created_at"),
-                        "updated_at": alert.get("updated_at")
-                    })
-            
-            # Process RSI correlation alerts
-            for alert in rsi_correlation_alerts:
-                user_id = alert.get("user_id")
-                if user_id:
-                    if user_id not in new_cache:
-                        new_cache[user_id] = []
-                    new_cache[user_id].append({
-                        "type": "rsi_correlation",
-                        "id": alert.get("id"),
-                        "alert_name": alert.get("alert_name"),
-                        "user_id": alert.get("user_id"),
-                        "user_email": alert.get("user_email"),  # Add user_email for email notifications
-                        "is_active": alert.get("is_active", True),
-                        "pairs": alert.get("pairs", []),
-                        "timeframes": alert.get("timeframes", []),
-                        "rsi_period": alert.get("rsi_period", 14),
-                        "correlation_threshold": alert.get("correlation_threshold", 0.7),
-                        "notification_methods": alert.get("notification_methods", ["browser"]),
-                        "alert_frequency": alert.get("alert_frequency", "once"),
-                        "trigger_on_crossing": alert.get("trigger_on_crossing", True),
-                        "created_at": alert.get("created_at"),
-                        "updated_at": alert.get("updated_at")
+                        "updated_at": alert.get("updated_at"),
                     })
             
             # Update cache
@@ -172,72 +191,104 @@ class AlertCache:
             
             total_alerts = sum(len(alerts) for alerts in new_cache.values())
             print(f"✅ Alert cache refreshed: {len(new_cache)} users, {total_alerts} total alerts")
+            log_info(
+                logger,
+                "alert_cache_refreshed",
+                users=len(new_cache),
+                total_alerts=total_alerts,
+            )
             
         except Exception as e:
             print(f"❌ Error refreshing alert cache: {e}")
             import traceback
             traceback.print_exc()
+            try:
+                configure_logging()
+                logger = logging.getLogger(__name__)
+                log_error(
+                    logger,
+                    "alert_cache_refresh_error",
+                    error=str(e),
+                )
+            except Exception:
+                pass
         finally:
             self._is_refreshing = False
     
-    async def _fetch_heatmap_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Fetch heatmap alerts from Supabase"""
+    async def _fetch_rsi_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Fetch RSI Tracker alerts from Supabase"""
         try:
-            url = f"{self.supabase_url}/rest/v1/heatmap_alerts"
+            url = f"{self.supabase_url}/rest/v1/rsi_tracker_alerts"
             params = {
                 "select": "*",
-                "is_active": "eq.true"
+                "is_active": "eq.true",
             }
-            
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
                 async with session.get(url, headers=headers, params=params) as response:
                     if response.status == 200:
                         return await response.json()
                     else:
-                        print(f"❌ Failed to fetch heatmap alerts: {response.status}")
+                        print(f"❌ Failed to fetch RSI tracker alerts: {response.status}")
                         return []
         except Exception as e:
-            print(f"❌ Error fetching heatmap alerts: {e}")
+            print(f"❌ Error fetching RSI tracker alerts: {e}")
             return []
-    
-    async def _fetch_rsi_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Fetch RSI alerts from Supabase"""
+
+    async def _fetch_rsi_correlation_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Fetch RSI Correlation Tracker alerts from Supabase"""
         try:
-            url = f"{self.supabase_url}/rest/v1/rsi_alerts"
+            url = f"{self.supabase_url}/rest/v1/rsi_correlation_tracker_alerts"
             params = {
                 "select": "*",
-                "is_active": "eq.true"
+                "is_active": "eq.true",
             }
-            
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
                 async with session.get(url, headers=headers, params=params) as response:
                     if response.status == 200:
                         return await response.json()
                     else:
-                        print(f"❌ Failed to fetch RSI alerts: {response.status}")
+                        print(f"❌ Failed to fetch RSI correlation tracker alerts: {response.status}")
                         return []
         except Exception as e:
-            print(f"❌ Error fetching RSI alerts: {e}")
+            print(f"❌ Error fetching RSI correlation tracker alerts: {e}")
             return []
-    
-    async def _fetch_rsi_correlation_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Fetch RSI correlation alerts from Supabase"""
+
+    async def _fetch_heatmap_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Fetch Heatmap/Quantum tracker alerts from Supabase"""
         try:
-            url = f"{self.supabase_url}/rest/v1/rsi_correlation_alerts"
+            url = f"{self.supabase_url}/rest/v1/heatmap_tracker_alerts"
             params = {
                 "select": "*",
-                "is_active": "eq.true"
+                "is_active": "eq.true",
             }
-            
             async with aiohttp.ClientSession(timeout=self.timeout) as session:
                 async with session.get(url, headers=headers, params=params) as response:
                     if response.status == 200:
                         return await response.json()
                     else:
-                        print(f"❌ Failed to fetch RSI correlation alerts: {response.status}")
+                        print(f"❌ Failed to fetch heatmap tracker alerts: {response.status}")
                         return []
         except Exception as e:
-            print(f"❌ Error fetching RSI correlation alerts: {e}")
+            print(f"❌ Error fetching heatmap tracker alerts: {e}")
+            return []
+
+    async def _fetch_heatmap_indicator_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Fetch Heatmap Custom Indicator tracker alerts from Supabase"""
+        try:
+            url = f"{self.supabase_url}/rest/v1/heatmap_indicator_tracker_alerts"
+            params = {
+                "select": "*",
+                "is_active": "eq.true",
+            }
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                async with session.get(url, headers=headers, params=params) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        print(f"❌ Failed to fetch heatmap indicator tracker alerts: {response.status}")
+                        return []
+        except Exception as e:
+            print(f"❌ Error fetching heatmap indicator tracker alerts: {e}")
             return []
     
     async def start_refresh_scheduler(self):

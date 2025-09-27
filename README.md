@@ -25,10 +25,16 @@ A high-performance, real-time financial market data streaming service built with
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
-- **Smart Email Cooldown**: Value-based cooldown prevents spam while allowing significant RSI changes
+- **Smart Email Cooldown**: Value-based cooldown prevents spam while allowing significant RSI changes (email-level only; RSI Tracker pair-level cooldown removed)
 - **Intelligent Caching**: Memory-efficient selective data caching
 - **High Performance**: 99.9% bandwidth reduction through selective streaming
 - **Scalable Architecture**: Async/await design for high concurrency
+- **Per-Pair Concurrency Cap**: Keyed async locks prevent concurrent evaluations for the same pair/timeframe across alert services
+- **Warm-up & Stale-Data Protection**: Skips evaluations when latest bar is stale (>2× timeframe) and enforces indicator lookback (e.g., RSI series) before triggering
+// Removed: Rate Limits + Digest (alerts send immediately subject to value-based cooldown)
+- **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
+- **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers
+  - Per-alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
 
 ## 🚀 Quick Start
 
@@ -132,14 +138,25 @@ PORT=8000
 PERPLEXITY_API_KEY=your_perplexity_key
 JBLANKED_API_URL=https://www.jblanked.com/news/api/forex-factory/calendar/week/
 JBLANKED_API_KEY=your_jblanked_key
-NEWS_UPDATE_INTERVAL_HOURS=24
-NEWS_CACHE_MAX_ITEMS=100
+NEWS_UPDATE_INTERVAL_HOURS=1
+JBLANKED_API_KEY=your_jblanked_key
+NEWS_UPDATE_INTERVAL_HOURS=1
+NEWS_CACHE_MAX_ITEMS=500
 
 # Alert System Configuration
 SENDGRID_API_KEY=your_sendgrid_api_key
-FROM_EMAIL=your_email@domain.com
+FROM_EMAIL=alerts@fxlabs.ai
 FROM_NAME=FX Labs Alerts
+PUBLIC_BASE_URL=https://api.fxlabs.ai
+UNSUBSCRIBE_SECRET=change_me_to_a_random_secret
+UNSUBSCRIBE_STORE_FILE=/var/fxlabs/unsubscribes.json
 ```
+
+#### Environment Loading (.env)
+- The app now auto-loads `.env` via `python-dotenv` in `app/config.py`.
+- Place your `.env` at the project root (same folder as `server.py`).
+- Existing process environment variables are not overridden (safe-by-default).
+- This fixes cases where macOS/Linux sessions didn’t see `SENDGRID_API_KEY` unless exported manually.
 
 ## 📡 API Documentation
 
@@ -180,12 +197,160 @@ Internal alert tick_data shape:
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
 | `/api/news/refresh` | POST | Manual news refresh | Yes |
-| `/api/heatmap-alerts` | POST | Create heatmap alert | Yes |
-| `/api/heatmap-alerts/user/{email}` | GET | Get user heatmap alerts | Yes |
-| `/api/rsi-alerts` | POST | Create RSI alert | Yes |
-| `/api/rsi-alerts/user/{email}` | GET | Get user RSI alerts | Yes |
-| `/api/rsi-correlation-alerts` | POST | Create RSI correlation alert | Yes |
-| `/api/rsi-correlation-alerts/user/{email}` | GET | Get user RSI correlation alerts | Yes |
+| `/api/alerts/cache` | GET | In-memory alerts cache (RSI Tracker) | Yes |
+| `/api/alerts/refresh` | POST | Force refresh alerts cache | Yes |
+
+### RSI Tracker Alert — Closed‑bar Crossing
+
+- Trigger policy: Alerts fire on RSI threshold crossings (Overbought ≥ OB, Oversold ≤ OS) on the current closed bar only (no live/intrabar evaluation).
+- Only‑NEW: Not required; detection uses previous vs current closed bar to identify a fresh crossing.
+- Startup warm‑up: On first observation per (symbol, timeframe) after server start, the last closed bar is baselined and no email is sent for existing in‑zone conditions; triggers begin from the next new closed bar.
+- Rearm policy: Threshold‑level re‑arm. After a trigger at OB, re‑arm when RSI returns below OB; for OS, re‑arm when RSI returns above OS.
+- Evaluation timing: Closed‑bar only (evaluates at timeframe boundaries). Intrabar/live evaluation is disabled to ensure RSI‑closed compliance.
+- Cooldown: None at pair-level for RSI Tracker; threshold re‑arm only.
+Notes:
+- Single alert per user from `rsi_tracker_alerts` table.
+- Backend enforces closed‑bar evaluation.
+- Pairs are fixed in code via `app/constants.py` (no per-alert selection, no env overrides).
+
+#### Email Template (RSI)
+- Compact, per‑pair card format.
+- Fields per card:
+  - **pair**: `symbol`
+  - **timeframe**: `timeframe`
+  - **zone**: derived from `trigger_condition` → `Overbought` or `Oversold`
+  - **rsi**: `rsi_value`
+  - **price**: `current_price`
+  - **ts_local**: local time string (IST by default)
+Notes:
+- Multiple triggers render multiple cards in a single email.
+
+### RSI Correlation Tracker — Threshold and Real Correlation
+
+The RSI Correlation Tracker is available as a single per-user alert. Users select exactly one timeframe and a mode (`rsi_threshold` or `real_correlation`).
+  - Startup warm‑up: On first observation per (pair_key, timeframe), baseline the last closed bar and current mismatch state; trigger only when a new bar produces a transition into mismatch.
+
+- Pair selection is not required; backend evaluates a fixed set of correlation pair keys from `app/constants.py`.
+- Triggers insert into `rsi_correlation_tracker_alert_triggers` and emails reuse a compact template.
+
+Closed‑bar evaluation & retriggering:
+- Evaluation runs once per new closed bar per correlation pair/timeframe by checking the last closed timestamps of both symbols; the service evaluates when a new bar is seen and avoids duplicate evaluations within the same closed bar.
+- Retrigger only after the pair returns to non‑mismatch and then transitions into mismatch again on a subsequent closed bar.
+
+### Global Limit: Max 3 Pairs/User
+
+- The backend now enforces a global cap of 3 unique symbols per user across all active alerts (Heatmap, RSI, and RSI Correlation).
+- Enforcement occurs on alert creation endpoints:
+  - `POST /api/heatmap-alerts`
+  - `POST /api/rsi-alerts`
+  - `POST /api/rsi-correlation-alerts` (both symbols in each correlation pair are counted)
+- If adding an alert would exceed the limit, the API returns `400` with a clear message indicating current tracked count and requested additions.
+- Tip for UIs: call `GET /api/alerts/user/{user_id}` or the specific per-type list endpoints and compute the union of symbols to show remaining slots.
+
+### RSI Alerts — Closed‑bar Crossing
+
+- Trigger policy: Alerts fire on RSI threshold crossings (Overbought ≥ OB, Oversold ≤ OS) on the current closed bar only (no live/intrabar evaluation).
+- Only‑NEW: Not required; detection uses previous vs current closed bar to identify a fresh crossing.
+- Startup warm‑up: First observation per key is baselined; no initial trigger for existing in‑zone conditions.
+- Rearm policy: Threshold‑level re‑arm. After a trigger at OB, re‑arm when RSI returns below OB; for OS, re‑arm when RSI returns above OS.
+- Evaluation timing: Closed‑bar only (evaluates at timeframe boundaries). Intrabar/live evaluation is disabled to ensure RSI‑closed compliance.
+- Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes). Override with `cooldown_minutes` on the alert (persisted to `rsi_alerts.cooldown_minutes`).
+Notes:
+- Use `alert_conditions` values `"overbought"`/`"oversold"` to request threshold crossing detection; confirmed triggers return `overbought_cross`/`oversold_cross` in results.
+- Current API does not expose `bar_policy` and the backend enforces closed‑bar evaluation.
+
+#### Email Template (RSI)
+- Compact, per‑pair card format.
+- Fields per card:
+  - **pair**: `symbol`
+  - **timeframe**: `timeframe`
+  - **zone**: derived from `trigger_condition` → `Overbought` or `Oversold`
+  - **rsi**: `rsi_value`
+  - **price**: `current_price`
+  - **ts_local**: local time string (IST by default)
+Notes:
+- Multiple triggers render multiple cards in a single email.
+
+### RSI Correlation Alerts — Threshold and Real Correlation
+
+- Modes:
+  - RSI Threshold: evaluate pairwise RSI combinations (e.g., positive/negative mismatches, neutral break) using per‑pair RSI settings.
+  - Real Correlation: compute Pearson correlation of returns over a configurable `correlation_window` (default 50) using historical OHLC closes for both symbols.
+- Outputs include RSI values (threshold mode) or `correlation_value` (real correlation mode), with per‑pair details in emails.
+  - Email uses a compact, mobile‑friendly HTML template titled “RSI Correlation Mismatch” with columns: Expected, RSI Corr Now, Trigger.
+
+#### Email Template (RSI Correlation — Threshold Mode)
+- Compact per‑pair card with RSI correlation summary.
+- Fields per card:
+  - **pair_a/pair_b**: `symbol1`/`symbol2`
+  - **rsi_len**: `rsi_period`
+  - **timeframe**: `timeframe`
+  - **expected_corr**: derived from `trigger_condition` using OB/OS thresholds:
+    - positive_mismatch: `one ≥ overbought` and `one ≤ oversold`
+    - negative_mismatch: `both ≥ overbought` or `both ≤ oversold`
+    - neutral_break: `both between oversold and overbought`
+  - **rsi_corr_now**: correlation between recent RSI series for the pair (if computed)
+  - **trigger_rule**: humanized `trigger_condition`
+Notes:
+- Multiple triggered pairs render as multiple cards in one email.
+
+#### Email Template (Real Correlation)
+- Uses a compact, mobile‑friendly HTML card per triggered pair.
+- Fields per card:
+  - **pair_a/pair_b**: Symbols (e.g., `EURUSD` vs `GBPUSD`)
+  - **lookback**: `correlation_window` from alert config
+  - **timeframe**: TF of the evaluation (e.g., `1H`)
+  - **expected_corr**: Threshold expression derived from the triggered rule:
+    - strong_positive: `≥ strong_correlation_threshold`
+    - strong_negative: `≤ -strong_correlation_threshold`
+    - weak_correlation: `|corr| ≤ weak_correlation_threshold`
+    - correlation_break: `moderate_threshold ≤ |corr| < strong_threshold`
+  - **actual_corr**: Calculated `correlation_value` (rounded)
+  - **trigger_rule**: Humanized `trigger_condition` (e.g., `Strong positive correlation`)
+
+Notes:
+- Multiple triggered pairs render as multiple cards within a single email.
+- Subject remains `Trading Alert: <alert_name>` and a text/plain alternative is included.
+
+### Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)
+
+- Per‑timeframe indicator strength is normalized to a score in [−100..+100].
+- Startup warm‑up: For the Tracker, armed state per (alert, symbol) is initialized from current Buy%/Sell% (sides already above thresholds start disarmed) and the first observation is skipped. For the Custom Indicator Tracker, the last signal per (alert, symbol, timeframe, indicator) is baselined and the first observation is skipped.
+- Style weighting aggregates across the alert’s selected timeframes:
+  - Scalper: 1M(0.2), 5M(0.4), 15M(0.3), 30M(0.1)
+  - Day: 15M(0.2), 30M(0.35), 1H(0.35), 4H(0.1)
+  - Swing: 1H(0.25), 4H(0.45), 1D(0.3)
+- Final Score = weighted average of per‑TF scores; Buy Now % = (Final Score + 100)/2.
+- Triggers:
+  - BUY if Buy Now % ≥ `buy_threshold_min` (and ≤ `buy_threshold_max` when provided)
+  - SELL if Buy Now % ≤ `sell_threshold_max` (and ≥ `sell_threshold_min`)
+ - Optional Minimum Alignment (N cells): require at least N timeframes to align with the chosen direction (TF strength ≥ buy_min for BUY, ≤ sell_max for SELL).
+ - Cooldown: Per (alert, symbol, direction) cooldown window (default 30 minutes). You can override via `cooldown_minutes` on the alert.
+- Indicator Flips (Type B): UTBOT, Ichimoku (Tenkan/Kijun), MACD, and EMA(21/50/200) flips supported with Only‑NEW K=3 and 1‑bar confirmation. Optional gate: require style‑weighted Buy Now % ≥ buy_min (BUY) or ≤ sell_max (SELL); defaults 60/40. Cooldown: per (pair, timeframe, indicator) using `cooldown_minutes` (default 30m).
+
+#### Email Template (Custom Indicator Tracker)
+- Compact per‑pair card with indicator flip summary.
+- Fields per card:
+  - **pair**: `symbol`
+  - **indicators_csv**: from `alert_config.selected_indicators`
+  - **signal**: `trigger_condition` uppercased (`BUY`/`SELL`)
+  - **probability**: `buy_percent` for BUY, `sell_percent` for SELL (if available)
+  - **timeframe**: `timeframe`
+  - **ts_local**: generated server-side in IST
+Notes:
+- Multiple triggers render multiple cards in one email.
+- Subject remains `Trading Alert: <alert_name>` and a text/plain alternative is included.
+
+### Alert Scheduling & Re‑triggering (Global)
+
+- End‑of‑timeframe evaluation only: scheduler runs every 5 minutes; alerts are evaluated on timeframe closes (5M/15M/30M/1H/4H/1D). Tick-driven checks are disabled by default.
+- Crossing/Flip triggers: fire when the metric crosses into the condition from the opposite side (or a regime flip occurs), not on every bar while in‑zone.
+
+See `ALERTS.md` for canonical Supabase table schemas and exact frontend implementation requirements (Type A/Type B/RSI/RSI‑Correlation), including field lists, endpoints, validation, and delivery channel setup.
+- Re‑arm on exit then re‑cross: once fired, do not re‑fire while the condition persists; re‑arm after leaving the zone and fire again only on a new cross‑in. Changing the configured threshold re‑arms immediately.
+- Cooldowns, concurrency, and alert frequency (once/hourly/daily) apply consistently across alert types. Per-user rate limits and digest have been removed.
+
+See `ALERTS.md` for the consolidated alerts product & tech spec.
 
 ### 📰 News API Usage (External Source + Internal Endpoints)
 
@@ -232,11 +397,11 @@ Cache policy (weekly merge & dedup):
 const ws = new WebSocket('ws://localhost:8000/ws/market');
 
 ws.onopen = () => {
-    // Subscribe to EURUSD 1-minute data
+    // Subscribe to EURUSD 5-minute data (minimum supported)
     ws.send(JSON.stringify({
         action: 'subscribe',
         symbol: 'EURUSD',
-        timeframe: '1M',
+        timeframe: '5M',
         data_types: ['ticks', 'ohlc']
     }));
 };
@@ -285,7 +450,6 @@ The system uses intelligent caching to optimize performance:
 # Global cache structure
 global_ohlc_cache = {
     "EURUSD": {
-        "1M": deque([100_OHLC_bars]),
         "5M": deque([100_OHLC_bars]),
         # Only caches subscribed timeframes
     }
@@ -387,6 +551,12 @@ Fxlabs.ai_Back_end/
 
 The modular structure isolates responsibilities while preserving all existing behavior and endpoints. Environment variable names and usage remain unchanged.
 
+### Console Logging Timestamps
+- All console prints now include an ISO‑8601 timestamp (local time with timezone), automatically applied via a top‑level `sitecustomize.py`.
+- No code changes are needed in modules: any `print(...)` will appear as `[2025-09-25T12:34:56+05:30] ...` in stdout/stderr.
+- Behavior is idempotent and safe: the patch avoids double‑wrapping `print`.
+- If you need to opt out for any reason (e.g., ad-hoc debugging), temporarily comment or remove `sitecustomize.py` from the project root in your working copy.
+
 ### Key Dependencies
 - **FastAPI**: Web framework with async support
 - **MetaTrader5**: MT5 Python API integration
@@ -400,13 +570,12 @@ The modular structure isolates responsibilities while preserving all existing be
 
 - `app/mt5_utils.py:get_current_tick(symbol: str) -> Optional[Tick]`
   - Ensures the symbol is selected and returns a `Tick` from `mt5.symbol_info_tick`.
-  - Used by RSI alert services to avoid ImportErrors and simulated fallbacks.
+  - Used by alert services; system now requires real MT5 data only (no simulation).
 
 ## 📊 Supported Data Types
 
 ### Timeframes
-- **1M** - 1 Minute
-- **5M** - 5 Minutes
+- **5M** - 5 Minutes (minimum supported)
 - **15M** - 15 Minutes
 - **30M** - 30 Minutes
 - **1H** - 1 Hour
@@ -476,6 +645,7 @@ Model behavior:
 - Medium severity:
   - External API keys (Perplexity/Jblanked) are expected via env; missing keys will limit news analysis. Behavior unchanged.
   - News analyzer uses simple keyword extraction to derive effect; this is heuristic, as before.
+  - Email per-user rate limiting and digest have been removed. Alerts are sent immediately when not blocked by the value-based cooldown.
 
 - Low severity:
   - Logging is console-based; consider structured logging for production observability.
@@ -498,11 +668,38 @@ Returns:
 ```
 
 ### Logging
+All logs include timestamps with timezone offset using the format:
+`YYYY-MM-DD HH:MM:SS±ZZZZ | LEVEL | module | message`.
+
+You can control verbosity via `LOG_LEVEL` (default `INFO`).
+
 The system provides comprehensive logging for:
 - Connection events
 - Data processing errors
 - API request/response cycles
 - Performance metrics
+
+#### Human‑Readable Emoji Logging (v2.2.0)
+Alert evaluations and actions are now logged in a clean, human‑readable format with emojis using `app/alert_logging.py`.
+
+Key events (examples):
+- `🎯 rsi_tracker_triggers | alert_id: abc123 | count: 3`
+- `📤 email_queue | alert_type: rsi | alert_id: abc123`
+- `⚠️ market_data_stale | symbol: EURUSD | age_minutes: 12`
+- `📝 db_trigger_logged | alert_id: abc123 | symbol: EURUSD`
+
+Notes:
+- Complex objects (lists/dicts) are not dumped; shown as `…` to avoid noisy logs and accidental payload leaks.
+- Logs are optimized for humans in terminals, not JSON processors.
+- Email send failures no longer log raw provider response bodies.
+- Third‑party verbose clients (e.g., SendGrid `python_http_client`) are set to WARNING to suppress payload dumps. To see them again, manually set `logging.getLogger("python_http_client").setLevel(logging.DEBUG)` in your session.
+
+Modules instrumented: `rsi_alert_service`, `rsi_tracker_alert_service`, `rsi_correlation_tracker_alert_service`, `heatmap_tracker_alert_service`, `heatmap_indicator_tracker_alert_service`, `alert_cache`, and `email_service` (queue/send summaries).
+
+To enable DEBUG‑level detailed evaluations, set:
+```bash
+export LOG_LEVEL=DEBUG
+```
 
 #### Logging Optimization (v2.0.1)
 **Problem Fixed**: Alert services were logging extensively on every tick, even when no alerts were triggered, causing massive log spam.
@@ -604,10 +801,75 @@ For support and questions:
 ---
 
 **Version**: 2.0.0  
-**Last Updated**: December 2024  
+**Last Updated**: September 2025  
 **Compatibility**: Python 3.8+, MT5 Python API, FastAPI 0.100+
 
 ## 🛠️ Troubleshooting
+
+### "RSI Tracker: triggers exist in DB but no emails/logs"
+- **What it means**: Records appear in `rsi_tracker_alert_triggers`, but you don’t see corresponding console logs or emails.
+- **Why it happened previously**: The tracker didn’t log info-level messages on successful triggers, and exceptions during email scheduling could be swallowed without a visible log.
+- **Fix in code**: The tracker now logs when triggers are detected and when emails are queued, and logs any exceptions during email scheduling.
+- **Quick checks**:
+  - **notification_methods**: Ensure your alert has `"notification_methods": ["email"]`. If it’s `"browser"` only, emails won’t send.
+    - Supabase check example: verify the `notification_methods` column for your alert row includes `"email"`.
+  - **Email service configured**: Set `SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME` in `.env`. The service logs diagnostics if not configured.
+  - **Log level**: Set `LOG_LEVEL=INFO` (or `DEBUG`) so you see tracker/email logs.
+  - **Cooldown only**: Emails are suppressed for 10 minutes for similar values via smart cooldown. No per-user rate limits or digest.
+  - **Scheduler running**: The minute scheduler runs inside `server.py` lifespan; confirm the server is started normally (not as a one-off script).
+  - **Supabase creds**: `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` must be set for cache/trigger logging to work.
+  
+Expected logs when working:
+  - `🚨 RSI Tracker triggers detected: ...`
+  - `📤 Queueing email send for RSI Tracker ...`
+  - Email service logs like `📧 RSI Alert Email Service - Starting email process` and `📊 SendGrid response: Status 202`.
+
+### "RSI Correlation Tracker: triggers exist in DB but no emails/logs"
+- **Symptom**: Rows appear in `rsi_correlation_tracker_alert_triggers` but you don’t see emails or logs.
+- **Fix in code**: The correlation tracker now logs when a trigger occurs and when an email is queued; errors are logged during send.
+- **Checklist**:
+  - **Pairs configured**: Set `RSI_CORR_TRACKER_DEFAULT_PAIRS` (e.g., `EURUSD_GBPUSD,USDJPY_GBPUSD`).
+  - **notification_methods**: Ensure includes `"email"`.
+  - **Email service configured** and **LOG_LEVEL** set appropriately.
+  - **Mode & thresholds**: `mode` is `rsi_threshold` or `real_correlation`; for real correlation, we treat `|corr| < 0.25` as mismatch by default.
+- **Expected logs**:
+  - `🚨 RSI Correlation Tracker trigger: ...`
+  - `📤 Queueing email send for RSI Correlation Tracker ...`
+
+### "SendGrid not configured, skipping RSI alert email"
+- Cause: `EmailService` didn't initialize a SendGrid client (`self.sg is None`). This happens when either the SendGrid library isn’t installed in your environment or `SENDGRID_API_KEY` isn’t present in the process environment.
+- Fix quickly:
+  - Install deps in your venv: `pip install -r requirements.txt` (includes `sendgrid`)
+  - Provide credentials via environment or `.env` (auto-loaded now):
+    - `SENDGRID_API_KEY=YOUR_REAL_SENDGRID_API_KEY`
+    - `FROM_EMAIL=verified_sender@yourdomain.com` (must be a verified single sender or a domain verified in SendGrid)
+    - `FROM_NAME=FX Labs Alerts` (optional)
+  - Ensure your process actually sees the variables:
+    - macOS/Linux: `.env` is auto-loaded; no manual `export` needed
+    - Windows: `start.ps1`/`start.bat` also load `.env`
+  - Verify your SendGrid sender: Single Sender verification or Domain Authentication, otherwise SendGrid returns 400/403 and emails won’t send.
+- Where to set: copy `config.env.example` to `.env` and fill values, or set env vars directly in your deployment.
+
+#### Email Configuration Diagnostics (enhanced logs)
+When email sending is disabled, the service now emits structured diagnostics showing what’s missing or invalid (without leaking secrets). Example:
+
+```
+⚠️ Email service not configured — RSI alert email
+   1) sendgrid library not installed (pip install sendgrid)
+   2) SENDGRID_API_KEY missing (set in environment or .env)
+   Values (masked): SENDGRID_API_KEY=SG.************abcd, FROM_EMAIL=alerts@fxlabs.ai, FROM_NAME=FX Labs
+   Hint: copy config.env.example to .env and fill SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME; python-dotenv auto-loads .env
+```
+
+Notes:
+- API key is masked (prefix + last 4 chars) for safety.
+- If the key doesn’t start with `SG.`, a hint is logged to double‑check the value.
+- `rsi_alert_service` will also surface a one‑line summary under “Email diagnostics:” when an email send fails.
+
+### "AttributeError: 'RSIAlertService' object has no attribute '_allow_by_pair_cooldown'"
+- Cause: Older builds missed the per (alert, symbol, timeframe, side) cooldown helper in `app/rsi_alert_service.py` while it was referenced during RSI checks.
+- Status: Fixed by adding `_allow_by_pair_cooldown(...)` and enforcing the documented RSI cooldown. Ensure your local tree includes this method.
+- What to check: Open `app/rsi_alert_service.py:1` and verify `_allow_by_pair_cooldown(self, alert, alert_id, symbol, timeframe, side)` exists and uses `cooldown_minutes` (default 30).
 
 ### "ModuleNotFoundError: No module named 'sendgrid'"
 - Ensure dependencies are installed inside your virtual environment:
@@ -639,3 +901,56 @@ $env:VIRTUAL_ENV
 python -c "import sys; print(sys.executable)"
 ```
 It should point to your project's `.venv` path. If not, re-run activation and reinstall requirements.
+
+### "Delivered in SendGrid, but no email in inbox"
+- Check Spam/Junk, Promotions/Updates/All Mail, and any mailbox filters that might skip the inbox or auto-archive.
+- Verify SendGrid Email Activity: ensure there is a "delivered" event (250 OK). Open the event to view the SMTP response and message identifiers.
+- Confirm the recipient mailbox actually exists: send a plain-text test from another account to the same address (e.g., `test@asoasis.tech`) and see if it bounces.
+- If using Google Workspace: in Admin Console, use Email Log Search for the recipient/time or Message-ID to see if it was quarantined, routed, or marked spam; release if needed.
+- If using Cloudflare Email Routing or any forwarder: verify the route exists, forwarding target is valid, and check routing logs for acceptance/drops.
+- Authenticate your From domain in SendGrid:
+  - Complete Domain Authentication (CNAMEs) and send from an aligned subdomain (e.g., `alerts@alerts.fxlabs.ai`).
+  - Ensure SPF includes `include:sendgrid.net`, DKIM passes, and set DMARC to `p=none` during testing; move to `quarantine`/`reject` after validation.
+- Reduce spam likelihood: include both `text/plain` and `text/html` parts, avoid URL shorteners, keep images minimal, and use a consistent `FROM_EMAIL` that matches your authenticated domain.
+- Check suppression lists anyway: make sure the recipient isn’t present under Bounces/Blocks/Spam Reports; remove if found, then resend.
+- Confirm SendGrid Sandbox Mode is OFF under Mail Settings. Sandbox disables actual delivery even if the API returns 2xx.
+- A/B test: send the same message to a known Gmail/Outlook inbox to isolate whether the issue is at the sender or recipient domain.
+- Optional (code): call `_add_transactional_headers(mail)` before sending to add transactional headers like `List-Unsubscribe` and a category, which can improve inboxing.
+
+What to collect for escalation: UTC timestamp, recipient, subject, SendGrid Message ID/X-Message-Id, SMTP 250 response line, and the receiving MTA hostname (e.g., `gmail-smtp-in.l.google.com`).
+
+### Code-Side Deliverability Hardening
+- Dual-part emails: The backend now sends both `text/plain` and `text/html` bodies for all alert emails. Many receivers score plain-text positively.
+- Transactional headers: Adds `List-Unsubscribe` and `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, a consistent `X-Mailer`, and a category header to help mailbox classification. When `PUBLIC_BASE_URL` and `UNSUBSCRIBE_SECRET` are set, a one-click HTTP List-Unsubscribe URL is added alongside the mailto link.
+- Disable tracking: Click- and open-tracking are disabled on alert emails to avoid link rewriting and tracking pixels that can push messages to Promotions/Spam.
+- Unsubscribe persistence: Users who click the one‑click unsubscribe are stored in `UNSUBSCRIBE_STORE_FILE`; all future sends to them are skipped.
+- Stable reference ID: Adds an `X-Entity-Ref-ID` derived from the alert to aid thread detection and support.
+- Consistent Reply-To: Sets `Reply-To` to the sender for consistent header presence.
+
+Operational notes:
+- Keep `FROM_EMAIL` on your authenticated domain/subdomain (e.g., alerts@alerts.fxlabs.ai).
+- Avoid URL shorteners and excessive links in alert content.
+- DMARC alignment: after verifying inboxing, move DMARC policy from `p=none` to `quarantine`/`reject` gradually.
+
+### Outlook/Office 365: "We can’t verify this email came from the sender"
+This is a DMARC alignment/authentication issue. Fix by authenticating the domain and aligning the From address.
+
+Checklist:
+- Domain Authentication in SendGrid: Settings → Sender Authentication → Domain Authentication. Choose a dedicated subdomain (e.g., `alerts.fxlabs.ai`).
+  - Add the DKIM CNAMEs SendGrid provides (typically `s1._domainkey.alerts.fxlabs.ai` and `s2._domainkey.alerts.fxlabs.ai`).
+  - Enable "Custom Return Path" (bounce domain), e.g., `em.alerts.fxlabs.ai` CNAME to SendGrid target. This makes SPF alignment pass.
+  - If using Cloudflare DNS: set these CNAMEs to DNS only (gray cloud). Proxying breaks DKIM/SPF validation.
+- SPF for the sending domain/subdomain: publish or update SPF to include SendGrid.
+  - Example for subdomain `alerts.fxlabs.ai`: `v=spf1 include:sendgrid.net -all`
+  - If the root domain already has an SPF for other services (e.g., Microsoft 365), include both as needed: `v=spf1 include:spf.protection.outlook.com include:sendgrid.net -all`
+- DMARC for the sending domain/subdomain: start permissive, then tighten.
+  - Example: `v=DMARC1; p=none; rua=mailto:dmarc@fxlabs.ai; adkim=s; aspf=s; pct=100`
+  - After validation, move to `p=quarantine` → `p=reject` to reduce spoofing.
+- From address must match the authenticated domain: send from `alerts@alerts.fxlabs.ai` if that’s the domain you authenticated (update `FROM_EMAIL`).
+- Optional: BIMI (brand logo) can help, but only after DMARC passes with enforcement and, ideally, a VMC.
+
+Why Outlook flagged it:
+- Without DKIM/SPF alignment for the From domain, DMARC fails or is unverifiable. Outlook/O365 then shows the warning and often places the message in Junk.
+
+Code defaults updated:
+- Defaults now prefer `FROM_EMAIL=alerts@alerts.fxlabs.ai` and add dual-part emails with transactional headers and one-click unsubscribe. Set your actual authenticated sender in `.env` and configure `PUBLIC_BASE_URL` and `UNSUBSCRIBE_SECRET`.

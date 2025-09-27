@@ -1,21 +1,36 @@
 import os
 import asyncio
 import hashlib
+import hmac
+import json
+import re
+from urllib.parse import quote as url_quote
+from threading import RLock
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 try:
     from sendgrid import SendGridAPIClient
-    from sendgrid.helpers.mail import Mail, Email, To, Content
+    from sendgrid.helpers.mail import (
+        Mail,
+        Email,
+        To,
+        Content,
+        TrackingSettings,
+        ClickTracking,
+        OpenTracking,
+    )
 except Exception:  # Module may be missing in some environments
     SendGridAPIClient = None
     Mail = Email = To = Content = None
+    TrackingSettings = ClickTracking = OpenTracking = None
 import logging
 
 # Configure logging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME
+from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL
+from .alert_logging import log_debug, log_info, log_warning, log_error
 
 
 class EmailService:
@@ -24,8 +39,10 @@ class EmailService:
     def __init__(self):
         # Load from environment-driven config
         self.sendgrid_api_key = (SENDGRID_API_KEY or os.environ.get("SENDGRID_API_KEY", "")).strip()
-        self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@fxlabs.ai")).strip()
-        self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs")).strip()
+        # Prefer authenticated subdomain sender for DMARC alignment (example: alerts@alerts.fxlabs.ai)
+        self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@alerts.fxlabs.ai")).strip()
+        self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs Alerts")).strip()
+        # Unsubscribe feature removed per spec
         
         # Smart cooldown mechanism - value-based cooldown for similar alerts
         self.cooldown_minutes = 10  # Reduced to 10 minutes for better responsiveness
@@ -41,12 +58,17 @@ class EmailService:
             except Exception as e:
                 self.sg = None
                 logger.warning(f"⚠️ Could not initialize SendGrid client: {e}")
+                # Log diagnostics to explain why it's effectively not configured
+                self._log_config_diagnostics(context="initialization")
         else:
             self.sg = None
             if not SendGridAPIClient:
                 logger.warning("⚠️ SendGrid library not installed. Email sending is disabled.")
             elif not self.sendgrid_api_key:
                 logger.warning("⚠️ SENDGRID_API_KEY not configured. Email sending is disabled.")
+            # Provide comprehensive diagnostics on what's missing/misaligned
+            self._log_config_diagnostics(context="startup")
+
     
     def _generate_alert_hash(self, user_email: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], calculation_mode: str = None) -> str:
         """Generate a unique hash for similar alerts to implement value-based cooldown (supports all alert types)"""
@@ -85,11 +107,42 @@ class EmailService:
                     rsi = round(float(indicators['rsi']), 1)
                     pairs_summary.append(f"{symbol}:rsi:{rsi}")
             
+            # Heatmap Tracker Alerts (Probability Signal): {symbol, trigger_condition: 'buy'|'sell', buy_percent, sell_percent, final_score}
+            elif ('buy_percent' in pair or 'sell_percent' in pair or 'final_score' in pair) and 'symbol' in pair:
+                symbol = pair['symbol']
+                condition = pair.get('trigger_condition', '')
+                buy_pct = pair.get('buy_percent')
+                sell_pct = pair.get('sell_percent')
+                final = pair.get('final_score')
+                parts: List[str] = []
+                try:
+                    if buy_pct is not None:
+                        parts.append(f"buy={round(float(buy_pct), 1)}")
+                except Exception:
+                    pass
+                try:
+                    if sell_pct is not None:
+                        parts.append(f"sell={round(float(sell_pct), 1)}")
+                except Exception:
+                    pass
+                try:
+                    if final is not None:
+                        parts.append(f"score={round(float(final), 1)}")
+                except Exception:
+                    pass
+                meta = ",".join(parts) if parts else ""
+                pairs_summary.append(f"{symbol}:{condition}:{meta}")
+            
             # Fallback for unknown structure
             else:
                 symbol = pair.get('symbol', pair.get('symbol1', 'unknown'))
                 # Support both field name variants
+                cond_parts: List[str] = []
                 condition = pair.get('condition', pair.get('trigger_condition', 'unknown'))
+                indicator_name = pair.get('indicator')
+                if indicator_name:
+                    cond_parts.append(f"ind={indicator_name}")
+                cond_meta = ",".join(cond_parts)
                 pairs_summary.append(f"{symbol}:{condition}")
         
         # Sort to ensure consistent hashing
@@ -102,6 +155,18 @@ class EmailService:
         
         # Generate hash using secure algorithm
         return hashlib.blake2b(alert_data.encode(), digest_size=32).hexdigest()
+
+    def _format_now_local(self, tz_name: str = "Asia/Kolkata") -> str:
+        """Return current time formatted with local timezone for display (default IST)."""
+        try:
+            from zoneinfo import ZoneInfo
+            dt = datetime.now(ZoneInfo(tz_name))
+            # IST label for Asia/Kolkata
+            label = "IST" if tz_name == "Asia/Kolkata" else tz_name
+            return dt.strftime(f"%Y-%m-%d %H:%M {label}")
+        except Exception:
+            # Fallback to UTC
+            return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     
     def _is_alert_in_cooldown(self, alert_hash: str, triggered_pairs: List[Dict[str, Any]] = None) -> bool:
         """Check if alert is still in cooldown period with value-based intelligence"""
@@ -145,14 +210,133 @@ class EmailService:
         # All values are similar, apply cooldown
         return True
     
-    def _add_transactional_headers(self, mail: Mail, category: str = "fx-labs-alerts"):
+    def _add_transactional_headers(self, mail: Mail, category: str = "fx-labs-alerts", to_email_addr: Optional[str] = None):
         """Add transactional email headers to avoid spam filters"""
-        # Use SendGrid's proper way to mark as transactional
-        mail.add_header("X-SMTPAPI", f'{{"category": ["{category}"]}}')
-        mail.add_header("X-Mailer", "FX Labs Alert System")
-        # Add unsubscribe header for transactional emails
-        mail.add_header("List-Unsubscribe", "<mailto:unsubscribe@fxlabs.ai>")
+        # Category header (older X-SMTPAPI style is acceptable and harmless when ignored)
+        try:
+            mail.add_header("X-SMTPAPI", f'{{"category": ["{category}"]}}')
+        except Exception:
+            pass
+        # Friendly mailer id
+        try:
+            mail.add_header("X-Mailer", "FX Labs Alert System")
+        except Exception:
+            pass
+        # List-Unsubscribe headers removed per spec
         return mail
+
+    def _disable_tracking(self, mail: Mail) -> None:
+        """Disable click/open tracking to avoid link rewriting and tracking pixel (can hurt inboxing)."""
+        try:
+            if TrackingSettings and ClickTracking and OpenTracking:
+                ts = TrackingSettings()
+                ts.click_tracking = ClickTracking(False, False)
+                ts.open_tracking = OpenTracking(False)
+                mail.tracking_settings = ts
+        except Exception:
+            # Best-effort only
+            pass
+
+    def _build_mail(
+        self,
+        subject: str,
+        to_email_addr: str,
+        html_body: str,
+        text_body: str,
+        category: str,
+        ref_id: Optional[str] = None,
+    ) -> Mail:
+        """Create a Mail with text+html, transactional headers, and tracking disabled."""
+        from_email = Email(self.from_email, self.from_name)
+        to_email = To(to_email_addr)
+        mail = Mail(from_email, to_email, subject)
+        # Add text first, then HTML per MIME best practices
+        try:
+            mail.add_content(Content("text/plain", text_body or ""))
+        except Exception:
+            pass
+        try:
+            mail.add_content(Content("text/html", html_body or ""))
+        except Exception:
+            pass
+        # Optional reply-to mirrors from address
+        try:
+            mail.reply_to = Email(self.from_email, self.from_name)
+        except Exception:
+            pass
+        # Add headers and tracking settings
+        self._add_transactional_headers(mail, category=category, to_email_addr=to_email_addr)
+        self._disable_tracking(mail)
+        # Add a stable reference id for threading/diagnostics
+        if ref_id:
+            try:
+                mail.add_header("X-Entity-Ref-ID", ref_id)
+            except Exception:
+                pass
+        return mail
+
+    # Unsubscribe management removed per spec
+
+    # Per-user rate limiting removed per product decision
+
+    def is_unsubscribed(self, email: str) -> bool:
+        # Unsubscribe support removed: always False
+        return False
+
+    def _build_plain_text_rsi(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
+        lines = [
+            f"RSI Alert - {alert_name}",
+            f"Pairs: {len(pairs)}",
+        ]
+        ob = cfg.get("rsi_overbought_threshold", 70)
+        os_ = cfg.get("rsi_oversold_threshold", 30)
+        lines.append(f"OB>={ob} OS<={os_}")
+        for p in pairs:
+            sym = p.get("symbol", "?")
+            rsi = p.get("rsi", p.get("rsi_value", "?"))
+            price = p.get("current_price", "?")
+            chg = p.get("price_change_percent", "?")
+            lines.append(f"- {sym}: RSI {rsi}, Px {price}, Chg {chg}%")
+        return "\n".join(lines)
+
+    def _build_plain_text_heatmap(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
+        lines = [
+            f"Heatmap Alert - {alert_name}",
+            f"Pairs: {len(pairs)}",
+        ]
+        for p in pairs:
+            sym = p.get("symbol", "?")
+            strength = p.get("strength", "?")
+            signal = p.get("signal", "?")
+            tf = p.get("timeframe", "?")
+            lines.append(f"- {sym} [{tf}]: {signal} {strength}%")
+        return "\n".join(lines)
+
+    def _build_plain_text_corr(
+        self,
+        alert_name: str,
+        mode: str,
+        pairs: List[Dict[str, Any]],
+        cfg: Dict[str, Any],
+    ) -> str:
+        lines = [
+            f"Correlation Alert - {alert_name}",
+            f"Mode: {mode}",
+            f"Pairs: {len(pairs)}",
+        ]
+        for p in pairs:
+            s1 = p.get("symbol1", "?")
+            s2 = p.get("symbol2", "?")
+            tf = p.get("timeframe", "?")
+            cond = p.get("trigger_condition", "?")
+            if mode == "rsi_threshold":
+                r1 = p.get("rsi1", p.get("rsi1_value", "?"))
+                r2 = p.get("rsi2", p.get("rsi2_value", "?"))
+                lines.append(f"- {s1}/{s2} [{tf}]: {cond} RSI1 {r1} RSI2 {r2}")
+            else:
+                corr = p.get("correlation_value", "?")
+                lines.append(f"- {s1}/{s2} [{tf}]: {cond} Corr {corr}")
+        return "\n".join(lines)
 
     def _safe_float_conversion(self, value: Any) -> Optional[float]:
         """Safely convert value to float with fallback for unparsable values"""
@@ -220,8 +404,119 @@ class EmailService:
                     rsi = self._get_rsi_value(indicators, 'rsi')
                     if rsi is not None:
                         values[f"{symbol}_rsi"] = rsi
+            
+            # Heatmap Tracker Alerts (Probability Signal)
+            elif ('buy_percent' in pair or 'sell_percent' in pair or 'final_score' in pair) and 'symbol' in pair:
+                symbol = pair['symbol']
+                buy_pct = self._safe_float_conversion(pair.get('buy_percent'))
+                sell_pct = self._safe_float_conversion(pair.get('sell_percent'))
+                final = self._safe_float_conversion(pair.get('final_score'))
+                if buy_pct is not None:
+                    values[f"{symbol}_buy_percent"] = buy_pct
+                if sell_pct is not None:
+                    values[f"{symbol}_sell_percent"] = sell_pct
+                if final is not None:
+                    values[f"{symbol}_final_score"] = final
         
         return values
+
+    # ------------------ Configuration diagnostics ------------------
+    def _mask(self, value: Optional[str], keep_tail: int = 4) -> str:
+        if not value:
+            return "MISSING"
+        v = str(value)
+        if len(v) <= keep_tail:
+            return "*" * len(v)
+        # Preserve common SendGrid prefix for clarity (e.g., SG.)
+        prefix = "SG." if v.startswith("SG.") else v[:2]
+        tail = v[-keep_tail:]
+        return f"{prefix}{'*' * max(len(v) - len(prefix) - keep_tail, 0)}{tail}"
+
+    def _looks_like_email(self, email: str) -> bool:
+        try:
+            return bool(re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", str(email)))
+        except Exception:
+            return False
+
+    def get_config_diagnostics(self) -> Dict[str, Any]:
+        """Return a diagnostics dict describing current email configuration state.
+
+        Does not leak secrets; values are masked where appropriate.
+        """
+        issues: List[str] = []
+        sg_lib = bool(SendGridAPIClient)
+        api_key = self.sendgrid_api_key or ""
+        from_email = self.from_email or ""
+        from_name = self.from_name or ""
+
+        # Library presence
+        if not sg_lib:
+            issues.append("sendgrid library not installed (pip install sendgrid)")
+
+        # API key checks
+        if not api_key:
+            issues.append("SENDGRID_API_KEY missing (set in environment or .env)")
+        elif not api_key.startswith("SG."):
+            issues.append('SENDGRID_API_KEY does not look like a SendGrid key (expected to start with "SG.")')
+
+        # From email checks
+        if not from_email:
+            issues.append("FROM_EMAIL missing")
+        elif not self._looks_like_email(from_email):
+            issues.append("FROM_EMAIL invalid format")
+
+        # From name checks
+        if not from_name:
+            issues.append("FROM_NAME missing (optional but recommended)")
+
+        configured = self.sg is not None
+        return {
+            "configured": configured,
+            "client_initialized": configured,
+            "issues": issues,
+            "values": {
+                "SENDGRID_API_KEY": self._mask(api_key),
+                "FROM_EMAIL": from_email or "",
+                "FROM_NAME": from_name or "",
+            },
+        }
+
+    def get_config_diagnostics_text(self) -> str:
+        """Return a one-line human readable diagnostics summary for logs."""
+        diag = self.get_config_diagnostics()
+        if diag.get("configured"):
+            return ""
+        issues = diag.get("issues", [])
+        vals = diag.get("values", {})
+        key_mask = vals.get("SENDGRID_API_KEY", "")
+        from_email = vals.get("FROM_EMAIL", "")
+        from_name = vals.get("FROM_NAME", "")
+        parts = []
+        if issues:
+            parts.append("; ".join(issues))
+        parts.append(f"key={key_mask}")
+        parts.append(f"from_email={from_email or 'MISSING'}")
+        parts.append(f"from_name={from_name or 'MISSING'}")
+        return ", ".join(parts)
+
+    def _log_config_diagnostics(self, context: str) -> None:
+        """Emit structured warnings about why email sending is not configured."""
+        diag = self.get_config_diagnostics()
+        if diag.get("configured"):
+            return
+        issues = diag.get("issues", [])
+        vals = diag.get("values", {})
+        logger.warning("⚠️ Email service not configured — %s", context)
+        if issues:
+            for idx, msg in enumerate(issues, 1):
+                logger.warning("   %d) %s", idx, msg)
+        logger.warning(
+            "   Values (masked): SENDGRID_API_KEY=%s, FROM_EMAIL=%s, FROM_NAME=%s",
+            vals.get("SENDGRID_API_KEY", ""), vals.get("FROM_EMAIL", ""), vals.get("FROM_NAME", ""),
+        )
+        logger.warning(
+            "   Hint: copy config.env.example to .env and fill SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME; python-dotenv auto-loads .env"
+        )
     
     def _update_alert_cooldown(self, alert_hash: str, triggered_pairs: List[Dict[str, Any]] = None):
         """Update the last sent timestamp and values for an alert"""
@@ -243,6 +538,8 @@ class EmailService:
             for alert_hash, values in self.alert_values.items()
             if alert_hash in self.alert_cooldowns
         }
+
+    # Digest helpers removed per product decision
     
     async def send_heatmap_alert(
         self, 
@@ -254,12 +551,11 @@ class EmailService:
         """Send heatmap alert email to user with cooldown protection"""
         
         if not self.sg:
-            logger.warning("SendGrid not configured, skipping email")
+            self._log_config_diagnostics(context="heatmap alert email")
             return False
-        
-        # Check smart cooldown before sending
+        # Unsubscribe support removed
+        # Check smart cooldown before rate limit so attempts don't consume quota
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
-        
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
             logger.info(f"🕐 Heatmap alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
@@ -276,19 +572,20 @@ class EmailService:
                 alert_name, triggered_pairs, alert_config
             )
             
-            # Create email
-            from_email = Email(self.from_email, self.from_name)
-            to_email = To(user_email)
-            content = Content("text/html", body)
-            
-            mail = Mail(from_email, to_email, subject, content)
+            # Create email with text alternative and transactional headers
+            text_body = self._build_plain_text_heatmap(alert_name, triggered_pairs, alert_config)
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text_body,
+                category="heatmap",
+                ref_id=alert_hash[:24]
+            )
             
             # Send email asynchronously
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: self.sg.send(mail)
-            )
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ Heatmap alert email sent to {user_email}")
@@ -296,11 +593,58 @@ class EmailService:
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
                 return True
             else:
-                logger.error(f"❌ Failed to send email: {response.status_code} - {response.body}")
+                logger.error(f"❌ Failed to send email: status={response.status_code}")
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Error sending heatmap alert email: {e}")
+            return False
+
+    async def send_heatmap_tracker_alert(
+        self,
+        user_email: str,
+        alert_name: str,
+        triggered_pairs: List[Dict[str, Any]],
+        alert_config: Dict[str, Any]
+    ) -> bool:
+        """Send Heatmap/Quantum Tracker (Probability Signal) email using simplified template."""
+
+        if not self.sg:
+            self._log_config_diagnostics(context="heatmap tracker alert email")
+            return False
+
+        # Smart cooldown/hash
+        alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
+        if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
+            logger.info(f"🕐 Heatmap tracker alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
+            return False
+
+        self._cleanup_old_cooldowns()
+
+        try:
+            subject = f"Trading Alert: {alert_name}"
+            body = self._build_heatmap_tracker_email_body(alert_name, triggered_pairs, alert_config)
+            text_body = self._build_plain_text_heatmap_tracker(alert_name, triggered_pairs, alert_config)
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text_body,
+                category="heatmap-tracker",
+                ref_id=alert_hash[:24]
+            )
+
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"✅ Heatmap tracker alert email sent to {user_email}")
+                self._update_alert_cooldown(alert_hash, triggered_pairs)
+                return True
+            else:
+                logger.error(f"❌ Failed to send heatmap tracker alert email: status={response.status_code}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error sending heatmap tracker alert email: {e}")
             return False
     
     def _build_heatmap_alert_email_body(
@@ -337,8 +681,8 @@ class EmailService:
             </tr>
             """
         
-        # Current timestamp
-        current_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        # Current timestamp (IST display)
+        current_time = self._format_now_local("Asia/Kolkata")
         
         html_body = f"""
         <!DOCTYPE html>
@@ -416,6 +760,86 @@ class EmailService:
         """
         
         return html_body
+
+    def _build_heatmap_tracker_email_body(
+        self,
+        alert_name: str,
+        triggered_pairs: List[Dict[str, Any]],
+        alert_config: Dict[str, Any]
+    ) -> str:
+        """Build HTML email body for Heatmap/Quantum Tracker using simplified per‑pair cards."""
+
+        cards: List[str] = []
+        for pair in triggered_pairs:
+            symbol = pair.get("symbol", "N/A")
+            timeframe = pair.get("timeframe", "style-weighted")
+            cond = str(pair.get("trigger_condition", "")).strip().upper()
+            if cond == "BUY":
+                probability = pair.get("buy_percent", 0)
+                threshold = alert_config.get("buy_threshold", 70)
+            else:
+                probability = pair.get("sell_percent", 0)
+                threshold = alert_config.get("sell_threshold", 30)
+            color = "#0CCC7C" if cond == "BUY" else "#E5494D"
+
+            # Contributors if known; otherwise "-"
+            top_inds: Optional[str] = None
+            try:
+                selected = alert_config.get("selected_indicators") or []
+                if isinstance(selected, list) and selected:
+                    top_inds = ", ".join(selected)
+            except Exception:
+                top_inds = None
+            if not top_inds:
+                top_inds = "-"
+
+            card = f"""
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">New Signal Above Threshold</td></tr>
+  <tr><td style=\"padding:20px;\">
+    <div style=\"font-size:16px;margin-bottom:8px;\"><strong>{symbol}</strong> ({timeframe})</div>
+    <div style=\"margin-bottom:12px;\">
+      <span style=\"display:inline-block;padding:6px 12px;border-radius:999px;background:{color};color:#fff;font-weight:700;text-transform:uppercase;\">
+        {cond} • {round(float(probability), 2)}%
+      </span>
+    </div>
+    <div style=\"font-size:13px;color:#374151;\">Contributors: {top_inds}</div>
+    <div style=\"margin-top:14px;padding:12px;background:#F9FAFB;border-radius:10px;font-size:13px;\">Your alert threshold: {threshold}%</div>
+  </td></tr>
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>
+</table>
+<div style=\"height:12px\"></div>
+            """
+            cards.append(card)
+
+        return f"""
+<!doctype html>
+<html lang=\"en\">
+<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Probability Signal</title></head>
+<body style=\"margin:0;background:#F5F7FB;\">
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
+{''.join(cards)}
+</td></tr></table>
+</body></html>
+        """
+
+    def _build_plain_text_heatmap_tracker(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
+        lines = [
+            f"Probability Signal - {alert_name}",
+            f"Pairs: {len(pairs)}",
+        ]
+        for p in pairs:
+            sym = p.get("symbol", "?")
+            tf = p.get("timeframe", "style-weighted")
+            cond = str(p.get("trigger_condition", "")).upper() or "N/A"
+            if cond == "BUY":
+                prob = p.get("buy_percent", "?")
+                thr = cfg.get("buy_threshold", "?")
+            else:
+                prob = p.get("sell_percent", "?")
+                thr = cfg.get("sell_threshold", "?")
+            lines.append(f"- {sym} [{tf}]: {cond} {prob}% (thr {thr}%)")
+        return "\n".join(lines)
     
     async def send_test_email(self, user_email: str) -> bool:
         """Send a test email to verify email service is working"""
@@ -423,6 +847,7 @@ class EmailService:
         if not self.sg:
             logger.warning("SendGrid not configured, cannot send test email")
             return False
+        # Unsubscribe support removed
         
         try:
             subject = "System Test - FX Labs"
@@ -440,7 +865,7 @@ class EmailService:
                     <div style="background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
                         <h2 style="color: #1a1a1a; font-size: 18px; font-weight: 600; margin: 0 0 16px 0;">System Test</h2>
                         <p style="color: #4a5568; line-height: 1.6; margin: 0 0 12px 0;">Email delivery system operational.</p>
-                        <p style="color: #718096; font-size: 14px; margin: 0;">{datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}</p>
+                        <p style="color: #718096; font-size: 14px; margin: 0;">{self._format_now_local("Asia/Kolkata")}</p>
                     </div>
                     
                     <div style="text-align: center; padding-top: 20px; border-top: 1px solid #e9ecef;">
@@ -451,17 +876,17 @@ class EmailService:
             </html>
             """
             
-            from_email = Email(self.from_email, self.from_name)
-            to_email = To(user_email)
-            content = Content("text/html", body)
-            
-            mail = Mail(from_email, to_email, subject, content)
+            text = "FX Labs System Test\nEmail delivery system operational."
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text,
+                category="test"
+            )
             
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: self.sg.send(mail)
-            )
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ Test email sent to {user_email}")
@@ -489,17 +914,16 @@ class EmailService:
         logger.info(f"   Triggered pairs: {len(triggered_pairs)}")
         
         if not self.sg:
-            logger.warning("⚠️ SendGrid not configured, skipping RSI alert email")
+            self._log_config_diagnostics(context="RSI alert email")
             return False
-        
-        # Check smart cooldown before sending
+        # Unsubscribe support removed
+        # Check smart cooldown before rate limit so attempts don't consume quota
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
         logger.info(f"🔍 Generated alert hash: {alert_hash[:16]}...")
-        
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
             logger.info(f"🕐 RSI alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
-        
+
         logger.info(f"✅ RSI alert passed cooldown check, proceeding with email")
         
         # Clean up old cooldowns periodically
@@ -517,21 +941,22 @@ class EmailService:
             )
             logger.info(f"✅ Email body built successfully ({len(body)} characters)")
             
-            # Create email
-            from_email = Email(self.from_email, self.from_name)
-            to_email = To(user_email)
-            content = Content("text/html", body)
-            
-            mail = Mail(from_email, to_email, subject, content)
+            # Create email with text alternative and transactional headers
+            text_body = self._build_plain_text_rsi(alert_name, triggered_pairs, alert_config)
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text_body,
+                category="rsi",
+                ref_id=alert_hash[:24]
+            )
             logger.info(f"📧 Email object created successfully")
             
             # Send email asynchronously
             logger.info(f"📤 Sending RSI alert email via SendGrid...")
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: self.sg.send(mail)
-            )
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
             
             logger.info(f"📊 SendGrid response: Status {response.status_code}")
             
@@ -546,7 +971,7 @@ class EmailService:
                 logger.info(f"⏰ Updated cooldown for alert hash: {alert_hash[:16]}...")
                 return True
             else:
-                logger.error(f"❌ Failed to send RSI alert email: {response.status_code} - {response.body}")
+                logger.error(f"❌ Failed to send RSI alert email: status={response.status_code}")
                 logger.error(f"   User: {user_email}")
                 logger.error(f"   Alert: {alert_name}")
                 return False
@@ -556,6 +981,52 @@ class EmailService:
             logger.error(f"   User: {user_email}")
             logger.error(f"   Alert: {alert_name}")
             return False
+
+    async def send_custom_indicator_alert(
+        self,
+        user_email: str,
+        alert_name: str,
+        triggered_pairs: List[Dict[str, Any]],
+        alert_config: Dict[str, Any]
+    ) -> bool:
+        """Send Custom Indicator alert email (flip to BUY/SELL) using compact template."""
+
+        if not self.sg:
+            self._log_config_diagnostics(context="custom indicator alert email")
+            return False
+
+        alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs)
+        if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
+            logger.info(f"🕐 Custom indicator alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
+            return False
+
+        self._cleanup_old_cooldowns()
+
+        try:
+            subject = f"Trading Alert: {alert_name}"
+            body = self._build_custom_indicator_email_body(alert_name, triggered_pairs, alert_config)
+            text_body = self._build_plain_text_custom_indicator(alert_name, triggered_pairs, alert_config)
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text_body,
+                category="custom-indicator",
+                ref_id=alert_hash[:24]
+            )
+
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"✅ Custom indicator alert email sent to {user_email}")
+                self._update_alert_cooldown(alert_hash, triggered_pairs)
+                return True
+            else:
+                logger.error(f"❌ Failed to send custom indicator alert email: status={response.status_code}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error sending custom indicator alert email: {e}")
+            return False
     
     def _build_rsi_alert_email_body(
         self, 
@@ -563,142 +1034,129 @@ class EmailService:
         triggered_pairs: List[Dict[str, Any]], 
         alert_config: Dict[str, Any]
     ) -> str:
-        """Build HTML email body for RSI alert"""
-        
-        # Build triggered pairs table
-        pairs_table = ""
+        """Build HTML email body for RSI alert using compact per‑pair cards"""
+
+        # Build one card (provided template) per triggered pair
+        cards: List[str] = []
+        ts_local = self._format_now_local("Asia/Kolkata")
         for pair in triggered_pairs:
             symbol = pair.get("symbol", "N/A")
+            timeframe = pair.get("timeframe", "N/A")
             rsi_value = pair.get("rsi_value", 0)
             price = pair.get("current_price", 0)
-            price_change = pair.get("price_change_percent", 0)
-            
-            # Color code RSI value
-            rsi_color = "#4a5568"  # Default gray
-            if rsi_value >= 70:
-                rsi_color = "#e74c3c"  # Red for overbought
-            elif rsi_value <= 30:
-                rsi_color = "#27ae60"  # Green for oversold
-            
-            pairs_table += f"""
-            <tr style="border-bottom: 1px solid #e9ecef;">
-                <td style="padding: 12px 8px; font-weight: 600; color: #1a1a1a;">{symbol}</td>
-                <td style="padding: 12px 8px; color: {rsi_color}; font-weight: 500;">{rsi_value:.2f}</td>
-                <td style="padding: 12px 8px; color: #4a5568;">{price:.5f}</td>
-                <td style="padding: 12px 8px; color: {'#059669' if price_change >= 0 else '#dc2626'}; font-weight: 500;">{price_change:+.2f}%</td>
-            </tr>
+            cond = str(pair.get("trigger_condition", "")).lower()
+            if "overbought" in cond:
+                zone = "Overbought"
+            elif "oversold" in cond:
+                zone = "Oversold"
+            else:
+                zone = "RSI signal"
+
+            card = f"""
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">RSI Alert • {symbol} ({timeframe})</td></tr>
+  <tr><td style=\"padding:20px;\">
+    <div style=\"margin-bottom:10px;\">RSI has entered <strong>{zone}</strong>.</div>
+    <div style=\"font-size:14px;line-height:1.6\">
+      <strong>Current RSI:</strong> {rsi_value}<br>
+      <strong>Price:</strong> {price}<br>
+      <strong>Time:</strong> {ts_local}
+    </div>
+    <div style=\"margin-top:16px;padding:12px;border-radius:10px;background:#F9FAFB;color:#374151;font-size:13px;\">
+      Heads-up: Oversold/Overbought readings can precede reversals or trend continuation. Combine with your plan.
+    </div>
+  </td></tr>
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>
+</table>
+<div style=\"height:12px\"></div>
             """
-        
-        # Get alert configuration details
-        rsi_period = alert_config.get("rsi_period", 14)
-        rsi_overbought = alert_config.get("rsi_overbought_threshold", 70)
-        rsi_oversold = alert_config.get("rsi_oversold_threshold", 30)
-        alert_conditions = alert_config.get("alert_conditions", [])
-        
+            cards.append(card)
+
+        cards_html = "".join(cards)
+
+        # Outer background wrapper (single body, multiple cards)
         return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>RSI Alert - {alert_name}</title>
-        </head>
-        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f8f9fa;">
-            <div style="max-width: 800px; margin: 0 auto; background-color: white; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-                
-                <!-- Header -->
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
-                    <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 300;">
-                        📊 RSI Alert Triggered
-                    </h1>
-                    <p style="color: rgba(255, 255, 255, 0.9); margin: 10px 0 0 0; font-size: 16px;">
-                        {alert_name}
-                    </p>
-                </div>
-                
-                <!-- Alert Summary -->
-                <div style="padding: 30px; background-color: #fff;">
-                    <div style="background-color: #e8f4fd; border-left: 4px solid #3498db; padding: 20px; margin-bottom: 25px; border-radius: 4px;">
-                        <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 18px;">🚨 Alert Summary</h3>
-                        <p style="margin: 0; color: #34495e; line-height: 1.6;">
-                            <strong>{len(triggered_pairs)} trading pair(s)</strong> have triggered your RSI alert conditions. 
-                            Review the details below and consider your trading strategy.
-                        </p>
-                    </div>
-                    
-                    <!-- Alert Configuration -->
-                    <div style="background-color: #f8f9fa; padding: 20px; margin-bottom: 25px; border-radius: 8px; border: 1px solid #e9ecef;">
-                        <h3 style="margin: 0 0 15px 0; color: #2c3e50; font-size: 16px;">⚙️ Alert Configuration</h3>
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">RSI Period</strong>
-                                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px;">{rsi_period}</p>
-                            </div>
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Overbought Threshold</strong>
-                                <p style="margin: 5px 0 0 0; color: #e74c3c; font-size: 14px;">{rsi_overbought}</p>
-                            </div>
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Oversold Threshold</strong>
-                                <p style="margin: 5px 0 0 0; color: #27ae60; font-size: 14px;">{rsi_oversold}</p>
-                            </div>
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Alert Conditions</strong>
-                                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px;">{', '.join([c.replace('_', ' ').title() for c in alert_conditions])}</p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <!-- Triggered Pairs Table -->
-                    <h3 style="margin: 0 0 20px 0; color: #2c3e50; font-size: 18px;">📈 Triggered Trading Pairs</h3>
-                    <div style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
-                            <thead>
-                                <tr style="background-color: #34495e; color: white;">
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Symbol</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">RSI Value</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Current Price</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Price Change</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {pairs_table}
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <!-- Trading Tips -->
-                    <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 20px; margin-top: 25px; border-radius: 8px;">
-                        <h3 style="margin: 0 0 15px 0; color: #856404; font-size: 16px;">💡 Trading Tips</h3>
-                        <ul style="margin: 0; padding-left: 20px; color: #856404; line-height: 1.6;">
-                            <li><strong>Overbought (RSI ≥ {rsi_overbought}):</strong> Consider potential selling opportunities or short positions</li>
-                            <li><strong>Oversold (RSI ≤ {rsi_oversold}):</strong> Look for potential buying opportunities or long positions</li>
-                            <li><strong>RFI Strong:</strong> High volume and price movement - strong signal reliability</li>
-                            <li><strong>RFI Moderate:</strong> Moderate volume activity - use with other indicators</li>
-                            <li>Always combine RSI signals with other technical analysis tools</li>
-                            <li>Consider market context and overall trend before making trading decisions</li>
-                        </ul>
-                    </div>
-                </div>
-                
-                <!-- Footer -->
-                <div style="background-color: #2c3e50; padding: 25px; text-align: center;">
-                    <p style="color: #bdc3c7; margin: 0 0 10px 0; font-size: 14px;">
-                        This alert was generated by <strong style="color: #ecf0f1;">FX Labs</strong>
-                    </p>
-                    <p style="color: #95a5a6; margin: 0; font-size: 12px;">
-                        {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}
-                    </p>
-                    <div style="margin-top: 15px;">
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Manage Alerts</a>
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Trading Dashboard</a>
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Support</a>
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>
+<!doctype html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<title>FxLabs • RSI Alert</title>
+</head>
+<body style=\"margin:0;background:#F5F7FB;\">
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">
+<tr><td align=\"center\" style=\"padding:24px 12px;\">
+{cards_html}
+</td></tr></table>
+</body></html>
         """
+
+    def _build_custom_indicator_email_body(
+        self,
+        alert_name: str,
+        triggered_pairs: List[Dict[str, Any]],
+        alert_config: Dict[str, Any]
+    ) -> str:
+        """Build HTML for Custom Indicator signal using provided compact template."""
+
+        cards: List[str] = []
+        ts_local = self._format_now_local("Asia/Kolkata")
+        indicators_csv = ", ".join((alert_config.get("selected_indicators") or [])) or "-"
+        for pair in triggered_pairs:
+            symbol = pair.get("symbol", "N/A")
+            timeframe = pair.get("timeframe", "N/A")
+            cond = str(pair.get("trigger_condition", "")).strip().upper()
+            color = "#0CCC7C" if cond == "BUY" else "#E5494D"
+            if cond == "BUY":
+                probability = pair.get("buy_percent", pair.get("probability", 0))
+            else:
+                probability = pair.get("sell_percent", pair.get("probability", 0))
+
+            card = f"""
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Custom Indicator Alert</td></tr>
+  <tr><td style=\"padding:20px;\">
+    <div style=\"font-size:16px;margin-bottom:4px;\"><strong>{symbol}</strong></div>
+    <div style=\"font-size:13px;color:#374151;margin-bottom:10px;\">Indicators selected: {indicators_csv}</div>
+    <div style=\"margin-bottom:12px;\">
+      <span style=\"display:inline-block;padding:6px 12px;border-radius:999px;background:{color};color:#fff;font-weight:700;text-transform:uppercase;\">
+        {cond} • {round(float(probability), 2)}%
+      </span>
+    </div>
+    <div style=\"font-size:13px;color:#374151;\">Generated at {ts_local} (TF: {timeframe})</div>
+  </td></tr>
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>
+</table>
+<div style=\"height:12px\"></div>
+            """
+            cards.append(card)
+
+        return f"""
+<!doctype html>
+<html lang=\"en\">
+<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Custom Indicator Signal</title></head>
+<body style=\"margin:0;background:#F5F7FB;\">
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
+{''.join(cards)}
+</td></tr></table>
+</body></html>
+        """
+
+    def _build_plain_text_custom_indicator(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
+        lines = [
+            f"Custom Indicator - {alert_name}",
+            f"Pairs: {len(pairs)}",
+        ]
+        inds = ", ".join((cfg.get("selected_indicators") or [])) or "-"
+        for p in pairs:
+            sym = p.get("symbol", "?")
+            tf = p.get("timeframe", "?")
+            cond = str(p.get("trigger_condition", "")).upper() or "N/A"
+            if cond == "BUY":
+                prob = p.get("buy_percent", p.get("probability", "?"))
+            else:
+                prob = p.get("sell_percent", p.get("probability", "?"))
+            lines.append(f"- {sym} [{tf}]: {cond} {prob}% | Indicators: {inds}")
+        return "\n".join(lines)
     
     async def send_rsi_correlation_alert(
         self, 
@@ -711,16 +1169,15 @@ class EmailService:
         """Send RSI correlation alert email to user with cooldown protection"""
         
         if not self.sg:
-            logger.warning("SendGrid not configured, skipping RSI correlation alert email")
+            self._log_config_diagnostics(context="RSI correlation alert email")
             return False
-        
-        # Check smart cooldown before sending
+        # Unsubscribe support removed
+        # Check smart cooldown before rate limit so attempts don't consume quota
         alert_hash = self._generate_alert_hash(user_email, alert_name, triggered_pairs, calculation_mode)
-        
         if self._is_alert_in_cooldown(alert_hash, triggered_pairs):
             logger.info(f"🕐 RSI correlation alert for {user_email} ({alert_name}) is in cooldown period. Skipping email.")
             return False
-        
+
         # Clean up old cooldowns periodically
         self._cleanup_old_cooldowns()
         
@@ -733,19 +1190,20 @@ class EmailService:
                 alert_name, calculation_mode, triggered_pairs, alert_config
             )
             
-            # Create email
-            from_email = Email(self.from_email, self.from_name)
-            to_email = To(user_email)
-            content = Content("text/html", body)
-            
-            mail = Mail(from_email, to_email, subject, content)
+            # Create email with text alternative and transactional headers
+            text_body = self._build_plain_text_corr(alert_name, calculation_mode, triggered_pairs, alert_config)
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=body,
+                text_body=text_body,
+                category="correlation",
+                ref_id=alert_hash[:24]
+            )
             
             # Send email asynchronously
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, 
-                lambda: self.sg.send(mail)
-            )
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ RSI correlation alert email sent to {user_email}")
@@ -753,7 +1211,7 @@ class EmailService:
                 self._update_alert_cooldown(alert_hash, triggered_pairs)
                 return True
             else:
-                logger.error(f"❌ Failed to send RSI correlation alert email: {response.status_code} - {response.body}")
+                logger.error(f"❌ Failed to send RSI correlation alert email: status={response.status_code}")
                 return False
                 
         except Exception as e:
@@ -768,213 +1226,463 @@ class EmailService:
         alert_config: Dict[str, Any]
     ) -> str:
         """Build HTML email body for RSI correlation alert"""
-        
-        # Build triggered pairs table
-        pairs_table = ""
-        for pair in triggered_pairs:
-            symbol1 = pair.get("symbol1", "N/A")
-            symbol2 = pair.get("symbol2", "N/A")
-            timeframe = pair.get("timeframe", "N/A")
-            condition = pair.get("trigger_condition", "N/A")
-            price1 = pair.get("current_price1", 0)
-            price2 = pair.get("current_price2", 0)
-            price_change1 = pair.get("price_change1", 0)
-            price_change2 = pair.get("price_change2", 0)
-            
-            # Color code based on condition
-            condition_color = "#3498db"  # Blue for default
-            if "positive" in condition:
-                condition_color = "#27ae60"  # Green for positive
-            elif "negative" in condition:
-                condition_color = "#e74c3c"  # Red for negative
-            elif "weak" in condition:
-                condition_color = "#f39c12"  # Orange for weak
-            elif "break" in condition:
-                condition_color = "#9b59b6"  # Purple for break
-            
-            # Add mode-specific data
-            if calculation_mode == "rsi_threshold":
-                rsi1 = pair.get("rsi1", 0)
-                rsi2 = pair.get("rsi2", 0)
-                rsi_data = f"""
-                <td style="padding: 12px; color: #2c3e50;">{rsi1}</td>
-                <td style="padding: 12px; color: #2c3e50;">{rsi2}</td>
-                <td style="padding: 12px; color: #7f8c8d;">-</td>
+
+        # Use the provided compact template for REAL correlation mode (actual price correlation)
+        if calculation_mode == "real_correlation":
+            def format_expected_and_rule(pair: Dict[str, Any]) -> Tuple[str, str]:
+                condition = str(pair.get("trigger_condition", "")).strip()
+                strong_threshold = alert_config.get("strong_correlation_threshold", 0.70)
+                moderate_threshold = alert_config.get("moderate_correlation_threshold", 0.30)
+                weak_threshold = alert_config.get("weak_correlation_threshold", 0.15)
+
+                # expected_corr shown based on rule triggered
+                if condition == "strong_positive":
+                    expected = f"≥ {strong_threshold:.2f}"
+                    rule = "Strong positive correlation"
+                elif condition == "strong_negative":
+                    expected = f"≤ {-strong_threshold:.2f}"
+                    rule = "Strong negative correlation"
+                elif condition == "weak_correlation":
+                    expected = f"|corr| ≤ {weak_threshold:.2f}"
+                    rule = "Weak correlation"
+                elif condition == "correlation_break":
+                    expected = f"{moderate_threshold:.2f} ≤ |corr| < {strong_threshold:.2f}"
+                    rule = "Correlation break from strong"
+                else:
+                    expected = "Configured threshold"
+                    rule = condition.replace("_", " ").title() if condition else "Correlation signal"
+                return expected, rule
+
+            lookback = alert_config.get("correlation_window", 50)
+            # Build one content block per triggered pair inside the container
+            pair_blocks: List[str] = []
+            for pair in triggered_pairs:
+                pair_a = pair.get("symbol1", "N/A")
+                pair_b = pair.get("symbol2", "N/A")
+                timeframe = pair.get("timeframe", "N/A")
+                actual_corr = pair.get("correlation_value", 0)
+                expected_corr, trigger_rule = format_expected_and_rule(pair)
+
+                block = f"""
+    <tr><td style=\"padding:20px;\">
+      <div style=\"margin-bottom:12px;\"><strong>{pair_a}</strong> vs <strong>{pair_b}</strong> • Window: {lookback} • TF: {timeframe}</div>
+      <table role=\"presentation\" width=\"100%\" style=\"border:1px solid #E5E7EB;border-radius:10px\">
+        <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">
+          <td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">Actual Now</td><td style=\"padding:10px\">Trigger</td>
+        </tr>
+        <tr>
+          <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{expected_corr}</td>
+          <td style=\"padding:10px;border-top:1px solid #E5E7EB;\"><strong>{actual_corr}</strong></td>
+          <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{trigger_rule}</td>
+        </tr>
+      </table>
+      <div style=\"margin-top:14px;padding:12px;background:#FFF7ED;border:1px solid #FED7AA;border-radius:10px;font-size:13px;\">
+        Signal: <strong>Mismatch detected</strong>. Consider hedge/arbitrage per your strategy.
+      </div>
+    </td></tr>
                 """
-            else:  # real_correlation
-                correlation = pair.get("correlation_value", 0)
-                rsi_data = f"""
-                <td style="padding: 12px; color: #7f8c8d;">-</td>
-                <td style="padding: 12px; color: #7f8c8d;">-</td>
-                <td style="padding: 12px; color: #2c3e50; font-weight: bold;">{correlation}</td>
-                """
-            
-            pairs_table += f"""
-            <tr style="border-bottom: 1px solid #eee;">
-                <td style="padding: 12px; font-weight: bold; color: #2c3e50;">{symbol1}</td>
-                <td style="padding: 12px; font-weight: bold; color: #2c3e50;">{symbol2}</td>
-                <td style="padding: 12px; color: #7f8c8d;">{timeframe}</td>
-                <td style="padding: 12px; font-weight: bold; color: {condition_color};">{condition.replace('_', ' ').title()}</td>
-                {rsi_data}
-                <td style="padding: 12px; color: #2c3e50;">{price1}</td>
-                <td style="padding: 12px; color: #2c3e50;">{price2}</td>
-                <td style="padding: 12px; color: {'#27ae60' if price_change1 >= 0 else '#e74c3c'};">{price_change1:+.2f}%</td>
-                <td style="padding: 12px; color: {'#27ae60' if price_change2 >= 0 else '#e74c3c'};">{price_change2:+.2f}%</td>
-            </tr>
+                pair_blocks.append(block)
+
+            blocks_html = "".join(pair_blocks)
+
+            # Wrap with the outer container from the provided template
+            return f"""
+<!doctype html>
+<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Correlation Alert</title></head>
+<body style=\"margin:0;background:#F5F7FB;\">
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Actual Correlation Mismatch</td></tr>
+  {blocks_html}
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>
+</table>
+</td></tr></table>
+</body></html>
             """
-        
-        # Get alert configuration details
-        mode_display = "RSI Threshold" if calculation_mode == "rsi_threshold" else "Real Correlation"
-        
-        if calculation_mode == "rsi_threshold":
-            rsi_period = alert_config.get("rsi_period", 14)
-            rsi_overbought = alert_config.get("rsi_overbought_threshold", 70)
-            rsi_oversold = alert_config.get("rsi_oversold_threshold", 30)
-            config_details = f"""
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">RSI Period</strong>
-                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px;">{rsi_period}</p>
-            </div>
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Overbought Threshold</strong>
-                <p style="margin: 5px 0 0 0; color: #e74c3c; font-size: 14px;">{rsi_overbought}</p>
-            </div>
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Oversold Threshold</strong>
-                <p style="margin: 5px 0 0 0; color: #27ae60; font-size: 14px;">{rsi_oversold}</p>
-            </div>
-            """
-        else:  # real_correlation
-            correlation_window = alert_config.get("correlation_window", 50)
-            strong_threshold = alert_config.get("strong_correlation_threshold", 0.70)
-            moderate_threshold = alert_config.get("moderate_correlation_threshold", 0.30)
-            weak_threshold = alert_config.get("weak_correlation_threshold", 0.15)
-            config_details = f"""
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Correlation Window</strong>
-                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px;">{correlation_window}</p>
-            </div>
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Strong Threshold</strong>
-                <p style="margin: 5px 0 0 0; color: #e74c3c; font-size: 14px;">{strong_threshold}</p>
-            </div>
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Moderate Threshold</strong>
-                <p style="margin: 5px 0 0 0; color: #f39c12; font-size: 14px;">{moderate_threshold}</p>
-            </div>
-            <div>
-                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Weak Threshold</strong>
-                <p style="margin: 5px 0 0 0; color: #3498db; font-size: 14px;">{weak_threshold}</p>
-            </div>
-            """
-        
-        alert_conditions = alert_config.get("alert_conditions", [])
-        
+
+    def _build_news_reminder_html(
+        self,
+        event_title: str,
+        event_time_local: str,
+        impact: str,
+        previous: str,
+        forecast: str,
+        expected: str,
+        bias: str,
+    ) -> str:
         return f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>RSI Correlation Alert - {alert_name}</title>
-        </head>
-        <body style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: #f8f9fa;">
-            <div style="max-width: 900px; margin: 0 auto; background-color: white; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);">
-                
-                <!-- Header -->
-                <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center;">
-                    <h1 style="color: white; margin: 0; font-size: 28px; font-weight: 300;">
-                        🔗 RSI Correlation Alert Triggered
-                    </h1>
-                    <p style="color: rgba(255, 255, 255, 0.9); margin: 10px 0 0 0; font-size: 16px;">
-                        {alert_name} - {mode_display} Mode
-                    </p>
-                </div>
-                
-                <!-- Alert Summary -->
-                <div style="padding: 30px; background-color: #fff;">
-                    <div style="background-color: #e8f4fd; border-left: 4px solid #3498db; padding: 20px; margin-bottom: 25px; border-radius: 4px;">
-                        <h3 style="margin: 0 0 10px 0; color: #2c3e50; font-size: 18px;">🚨 Correlation Alert Summary</h3>
-                        <p style="margin: 0; color: #34495e; line-height: 1.6;">
-                            <strong>{len(triggered_pairs)} correlation pair(s)</strong> have triggered your RSI correlation alert conditions. 
-                            Review the correlation analysis below and consider your trading strategy.
-                        </p>
-                    </div>
-                    
-                    <!-- Alert Configuration -->
-                    <div style="background-color: #f8f9fa; padding: 20px; margin-bottom: 25px; border-radius: 8px; border: 1px solid #e9ecef;">
-                        <h3 style="margin: 0 0 15px 0; color: #2c3e50; font-size: 16px;">⚙️ Alert Configuration</h3>
-                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Calculation Mode</strong>
-                                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px; font-weight: bold;">{mode_display}</p>
-                            </div>
-                            <div>
-                                <strong style="color: #7f8c8d; font-size: 12px; text-transform: uppercase;">Alert Conditions</strong>
-                                <p style="margin: 5px 0 0 0; color: #2c3e50; font-size: 14px;">{', '.join([c.replace('_', ' ').title() for c in alert_conditions])}</p>
-                            </div>
-                            {config_details}
-                        </div>
-                    </div>
-                    
-                    <!-- Triggered Pairs Table -->
-                    <h3 style="margin: 0 0 20px 0; color: #2c3e50; font-size: 18px;">📈 Triggered Correlation Pairs</h3>
-                    <div style="overflow-x: auto;">
-                        <table style="width: 100%; border-collapse: collapse; background-color: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);">
-                            <thead>
-                                <tr style="background-color: #34495e; color: white;">
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Symbol 1</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Symbol 2</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Timeframe</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Condition</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">RSI 1</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">RSI 2</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Correlation</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Price 1</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Price 2</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Change 1</th>
-                                    <th style="padding: 15px; text-align: left; font-weight: 600; font-size: 14px;">Change 2</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {pairs_table}
-                            </tbody>
-                        </table>
-                    </div>
-                    
-                    <!-- Trading Tips -->
-                    <div style="background-color: #fff3cd; border: 1px solid #ffeaa7; padding: 20px; margin-top: 25px; border-radius: 8px;">
-                        <h3 style="margin: 0 0 15px 0; color: #856404; font-size: 16px;">💡 Correlation Trading Tips</h3>
-                        <ul style="margin: 0; padding-left: 20px; color: #856404; line-height: 1.6;">
-                            <li><strong>Positive Mismatch:</strong> One pair overbought, one oversold - potential divergence opportunity</li>
-                            <li><strong>Negative Mismatch:</strong> Both pairs in same extreme zone - trend continuation signal</li>
-                            <li><strong>Strong Positive Correlation:</strong> Pairs moving together - hedge or pair trading opportunities</li>
-                            <li><strong>Strong Negative Correlation:</strong> Pairs moving opposite - diversification benefits</li>
-                            <li><strong>Weak Correlation:</strong> Pairs moving independently - individual analysis needed</li>
-                            <li><strong>Correlation Break:</strong> Relationship changing - monitor for trend shifts</li>
-                            <li>Always consider market context and overall trend before making trading decisions</li>
-                        </ul>
-                    </div>
-                </div>
-                
-                <!-- Footer -->
-                <div style="background-color: #2c3e50; padding: 25px; text-align: center;">
-                    <p style="color: #bdc3c7; margin: 0 0 10px 0; font-size: 14px;">
-                        This alert was generated by <strong style="color: #ecf0f1;">FX Labs</strong>
-                    </p>
-                    <p style="color: #95a5a6; margin: 0; font-size: 12px;">
-                        {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")}
-                    </p>
-                    <div style="margin-top: 15px;">
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Manage Alerts</a>
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Trading Dashboard</a>
-                        <a href="#" style="color: #3498db; text-decoration: none; font-size: 12px; margin: 0 10px;">Support</a>
-                    </div>
-                </div>
-            </div>
-        </body>
-        </html>
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FxLabs • News Reminder</title></head>
+<body style="margin:0;background:#F5F7FB;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FB;"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+  <tr><td style="padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;">Starts in 5 Minutes</td></tr>
+  <tr><td style="padding:20px;">
+    <div style="font-size:16px;margin-bottom:6px;"><strong>{event_title}</strong></div>
+    <div style="font-size:13px;color:#374151;margin-bottom:12px;">
+      Time: {event_time_local} • Impact: <strong>{impact}</strong>
+    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;width:100%;">
+      <tr style="background:#F9FAFB;color:#6B7280;font-size:12px;">
+        <td style="padding:10px">Previous</td><td style="padding:10px">Forecast</td><td style="padding:10px">Expected</td><td style="padding:10px">Bias</td>
+      </tr>
+      <tr>
+        <td style="padding:10px;border-top:1px solid #E5E7EB;">{previous}</td>
+        <td style="padding:10px;border-top:1px solid #E5E7EB;">{forecast}</td>
+        <td style="padding:10px;border-top:1px solid #E5E7EB;">{expected}</td>
+        <td style="padding:10px;border-top:1px solid #E5E7EB;"><strong>{bias}</strong></td>
+      </tr>
+    </table>
+    <div style="margin-top:14px;padding:12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:10px;font-size:13px;">
+      Volatility risk. Consider spreads, slippage and cooldown windows.
+    </div>
+  </td></tr>
+  <tr><td style="padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;">Not financial advice. © FxLabs AI</td></tr>
+</table>
+</td></tr></table>
+</body></html>
         """
+
+    def _build_news_reminder_text(
+        self,
+        event_title: str,
+        event_time_local: str,
+        impact: str,
+        previous: str,
+        forecast: str,
+        expected: str,
+        bias: str,
+    ) -> str:
+        return (
+            f"Starts in 5 Minutes\n"
+            f"{event_title}\n"
+            f"Time: {event_time_local} • Impact: {impact}\n"
+            f"Previous: {previous} | Forecast: {forecast} | Expected: {expected} | Bias: {bias}\n"
+            f"Volatility risk. Consider spreads, slippage and cooldown windows.\n"
+            f"Not financial advice. © FxLabs AI"
+        )
+
+    async def send_news_reminder(
+        self,
+        user_email: str,
+        event_title: str,
+        event_time_local: str,
+        impact: Optional[str],
+        previous: Optional[str],
+        forecast: Optional[str],
+        expected: Optional[str],
+        bias: Optional[str],
+    ) -> bool:
+        """Send the 5-minute news reminder email to a user.
+
+        No cooldown/rate-limit applies: this is a scheduled one-off per event.
+        """
+        if not self.sg:
+            self._log_config_diagnostics(context="news reminder email")
+            return False
+
+        # Normalize display values
+        def _fmt(v: Optional[str], default: str = "-") -> str:
+            try:
+                s = (v or "").strip()
+                return s if s else default
+            except Exception:
+                return default
+
+        html = self._build_news_reminder_html(
+            event_title=_fmt(event_title, "News Event"),
+            event_time_local=_fmt(event_time_local, ""),
+            impact=_fmt(impact, "-"),
+            previous=_fmt(previous, "-"),
+            forecast=_fmt(forecast, "-"),
+            expected=_fmt(expected, "-"),
+            bias=_fmt(bias, "-"),
+        )
+        text = self._build_news_reminder_text(
+            event_title=_fmt(event_title, "News Event"),
+            event_time_local=_fmt(event_time_local, ""),
+            impact=_fmt(impact, "-"),
+            previous=_fmt(previous, "-"),
+            forecast=_fmt(forecast, "-"),
+            expected=_fmt(expected, "-"),
+            bias=_fmt(bias, "-"),
+        )
+
+        subject = "News reminder"
+        mail = self._build_mail(
+            subject=subject,
+            to_email_addr=user_email,
+            html_body=html,
+            text_body=text,
+            category="news-reminder",
+            ref_id=None,
+        )
+
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"✅ News reminder sent to {user_email}")
+                return True
+            else:
+                logger.error(f"❌ Failed to send news reminder: status={response.status_code}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error sending news reminder: {e}")
+            return False
+
+        # RSI threshold mode: use provided compact RSI correlation mismatch template with RSI correlation
+        # One card per triggered pair
+        if calculation_mode == "rsi_threshold":
+            rsi_len = alert_config.get("rsi_period", 14)
+            def expected_and_rule(pair: Dict[str, Any]) -> Tuple[str, str]:
+                condition = str(pair.get("trigger_condition", "")).strip()
+                ob = alert_config.get("rsi_overbought_threshold", 70)
+                os_ = alert_config.get("rsi_oversold_threshold", 30)
+                if condition == "positive_mismatch":
+                    exp = f"One ≥ {ob}, one ≤ {os_}"
+                    rule = "Positive mismatch"
+                elif condition == "negative_mismatch":
+                    exp = f"Both ≥ {ob} or both ≤ {os_}"
+                    rule = "Negative mismatch"
+                elif condition == "neutral_break":
+                    exp = f"Both between {os_} and {ob}"
+                    rule = "Neutral break"
+                else:
+                    exp = "Configured RSI condition"
+                    rule = condition.replace("_", " ").title() if condition else "RSI condition"
+                return exp, rule
+
+            cards: List[str] = []
+            for pair in triggered_pairs:
+                pair_a = pair.get("symbol1", "N/A")
+                pair_b = pair.get("symbol2", "N/A")
+                timeframe = pair.get("timeframe", "N/A")
+                rsi_corr_now = pair.get("rsi_corr_now")
+                expected_corr, trigger_rule = expected_and_rule(pair)
+
+                card = f"""
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">RSI Correlation Mismatch</td></tr>
+  <tr><td style=\"padding:20px;\">
+    <div style=\"margin-bottom:12px;\"><strong>{pair_a}</strong> vs <strong>{pair_b}</strong> • RSI({rsi_len}) • TF: {timeframe}</div>
+    <table role=\"presentation\" width=\"100%\" style=\"border:1px solid #E5E7EB;border-radius:10px\">
+      <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">
+        <td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">RSI Corr Now</td><td style=\"padding:10px\">Trigger</td>
+      </tr>
+      <tr>
+        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{expected_corr}</td>
+        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\"><strong>{rsi_corr_now if rsi_corr_now is not None else '-'}</strong></td>
+        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{trigger_rule}</td>
+      </tr>
+    </table>
+    <div style=\"margin-top:14px;padding:12px;background:#ECFEF3;border:1px solid #A7F3D0;border-radius:10px;font-size:13px;\">
+      Note: RSI-based divergences can revert faster than price-corr; size risk accordingly.
+    </div>
+  </td></tr>
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>
+</table>
+<div style=\"height:12px\"></div>
+                """
+                cards.append(card)
+
+            return f"""
+<!doctype html>
+<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • RSI Correlation Alert</title></head>
+<body style=\"margin:0;background:#F5F7FB;\">
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
+{''.join(cards)}
+</td></tr></table>
+</body></html>
+            """
+
+    def _build_daily_html(self, payload: Dict[str, Any]) -> str:
+        def esc(v: Any) -> str:
+            try:
+                s = str(v)
+                return s
+            except Exception:
+                return ""
+        date_local = esc(payload.get("date_local_IST", ""))
+        # Core signals rows
+        rows = []
+        for s in payload.get("core_signals", []) or []:
+            pair = esc(s.get("pair", ""))
+            signal = esc(s.get("signal", ""))
+            probability = esc(s.get("probability", ""))
+            tf = esc(s.get("tf", ""))
+            badge_bg = esc(s.get("badge_bg", "#6B7280"))
+            rows.append(f"""
+                <tr>
+                  <td style=\"padding:10px 8px;border-top:1px solid #F1F5F9;\">{pair}</td>
+                  <td style=\"padding:10px 8px;border-top:1px solid #F1F5F9;\">
+                    <span style=\"display:inline-block;padding:4px 10px;border-radius:999px;background:{badge_bg};color:#ffffff;font-size:12px;font-weight:700;text-transform:uppercase;\">{signal}</span>
+                  </td>
+                  <td style=\"padding:10px 8px;border-top:1px solid #F1F5F9;\">{probability}%</td>
+                  <td style=\"padding:10px 8px;border-top:1px solid #F1F5F9;\">{tf}</td>
+                </tr>
+            """)
+        core_html = "\n".join(rows)
+
+        # H4 lists
+        os_list = "\n".join([
+            f"<div style=\"padding:6px 0;border-top:1px dashed #E5E7EB;\"><strong>{esc(x.get('pair',''))}</strong> • RSI {esc(x.get('rsi',''))}</div>"
+            for x in (payload.get("rsi_oversold") or [])
+        ])
+        ob_list = "\n".join([
+            f"<div style=\"padding:6px 0;border-top:1px dashed #E5E7EB;\"><strong>{esc(x.get('pair',''))}</strong> • RSI {esc(x.get('rsi',''))}</div>"
+            for x in (payload.get("rsi_overbought") or [])
+        ])
+
+        # News rows
+        news_rows = []
+        for n in payload.get("news", []) or []:
+            title = esc(n.get("title", ""))
+            time_local = esc(n.get("time_local", ""))
+            expected = esc(n.get("expected", "-"))
+            forecast = esc(n.get("forecast", "-"))
+            bias = esc(n.get("bias", "-"))
+            news_rows.append(f"""
+                <tr>
+                  <td style=\"padding:10px;border-bottom:1px solid #E5E7EB;\">
+                    <div style=\"font-size:14px;font-weight:700;\">{title} <span style=\"font-weight:400;color:#6B7280\">• {time_local}</span></div>
+                    <div style=\"font-size:13px;margin-top:4px;\">
+                      Exp: <strong>{expected}</strong> | Fcast: <strong>{forecast}</strong> | Bias: <strong>{bias}</strong>
+                    </div>
+                  </td>
+                </tr>
+            """)
+        news_html = "\n".join(news_rows)
+
+        return f"""
+<!doctype html>
+<html lang=\"en\">
+<head>
+<meta charset=\"utf-8\">
+<title>FxLabs • Daily Morning Brief</title>
+<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<style>
+@media screen and (max-width:600px){{ .container{{width:100%!important}} .stack{{display:block!important;width:100%!important}}}}
+</style>
+</head>
+<body style=\"margin:0;background:#F5F7FB;\">
+  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">
+    <tr>
+      <td align=\"center\" style=\"padding:24px 12px;\">
+        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
+          <tr>
+            <td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;\">
+              <table role=\"presentation\" width=\"100%\"><tr>
+                <td align=\"left\" style=\"font-weight:700;font-size:18px;\">FxLabs Daily • {date_local}</td>
+                <td align=\"right\" style=\"font-size:12px;color:#6B7280;\">IST 09:00</td>
+              </tr></table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style=\"padding:20px;\">
+              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>
+              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">
+                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">
+                  <td style=\"padding:10px 8px;\">Pair</td>
+                  <td style=\"padding:10px 8px;\">Signal</td>
+                  <td style=\"padding:10px 8px;\">Probability</td>
+                  <td style=\"padding:10px 8px;\">Timeframe</td>
+                </tr>
+                {core_html}
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style=\"padding:0 20px 20px;\">
+              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>
+              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">                
+                <tr class=\"stack\">
+                  <td class=\"stack\" valign=\"top\" style=\"width:50%;padding:12px;background:#F9FAFB;border-radius:10px;\">
+                    <div style=\"font-size:12px;color:#6B7280;margin-bottom:6px;\">Oversold</div>
+                    {os_list}
+                  </td>
+                  <td class=\"stack\" valign=\"top\" style=\"width:20px;\">&nbsp;</td>
+                  <td class=\"stack\" valign=\"top\" style=\"width:50%;padding:12px;background:#F9FAFB;border-radius:10px;\">
+                    <div style=\"font-size:12px;color:#6B7280;margin-bottom:6px;\">Overbought</div>
+                    {ob_list}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style=\"padding:0 20px 20px;\">
+              <div style=\"font-weight:700;margin-bottom:8px;\">Today's High/Medium-Impact News</div>
+              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">
+                {news_html}
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">
+              This information is for education only and not financial advice. © FxLabs AI
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+        """
+
+    def _build_daily_text(self, payload: Dict[str, Any]) -> str:
+        lines: List[str] = []
+        lines.append(f"FxLabs Daily • {payload.get('date_local_IST','')}")
+        lines.append("")
+        lines.append("Signal Summary (Core Pairs):")
+        for s in payload.get("core_signals", []) or []:
+            lines.append(f"- {s.get('pair','')}: {s.get('signal','')} {s.get('probability','')}% [{s.get('tf','')}]")
+        lines.append("")
+        lines.append("H4 Oversold:")
+        for x in payload.get("rsi_oversold", []) or []:
+            lines.append(f"- {x.get('pair','')}: RSI {x.get('rsi','')}")
+        lines.append("H4 Overbought:")
+        for x in payload.get("rsi_overbought", []) or []:
+            lines.append(f"- {x.get('pair','')}: RSI {x.get('rsi','')}")
+        lines.append("")
+        lines.append("Today's High/Medium-Impact News:")
+        for n in payload.get("news", []) or []:
+            lines.append(f"- {n.get('time_local','')} • {n.get('title','')} (Exp {n.get('expected','-')}, Fcast {n.get('forecast','-')}, Bias {n.get('bias','-')})")
+        lines.append("")
+        lines.append("Education only. © FxLabs AI")
+        return "\n".join(lines)
+
+    async def send_daily_brief(self, user_email: str, payload: Dict[str, Any]) -> bool:
+        if not self.sg:
+            self._log_config_diagnostics(context="daily brief email")
+            return False
+        subject = "FxLabs • Daily Morning Brief"
+        html = self._build_daily_html(payload)
+        text = self._build_daily_text(payload)
+        mail = self._build_mail(
+            subject=subject,
+            to_email_addr=user_email,
+            html_body=html,
+            text_body=text,
+            category="daily-brief",
+            ref_id=None,
+        )
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"✅ Daily brief sent to {user_email}")
+                return True
+            logger.error(f"❌ Failed to send daily brief: status={response.status_code}")
+            return False
+        except Exception as e:
+            logger.error(f"❌ Error sending daily brief: {e}")
+            return False
 
 # Global email service instance
 email_service = EmailService()

@@ -9,7 +9,6 @@ from .models import Timeframe, OHLC, Tick
 
 
 MT5_TIMEFRAMES = {
-    Timeframe.M1: mt5.TIMEFRAME_M1,
     Timeframe.M5: mt5.TIMEFRAME_M5,
     Timeframe.M15: mt5.TIMEFRAME_M15,
     Timeframe.M30: mt5.TIMEFRAME_M30,
@@ -126,9 +125,7 @@ def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
 
 
 def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe) -> datetime:
-    if timeframe == Timeframe.M1:
-        next_update = subscription_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
-    elif timeframe == Timeframe.M5:
+    if timeframe == Timeframe.M5:
         current_minute = subscription_time.minute
         next_minute = ((current_minute // 5) + 1) * 5
         if next_minute >= 60:
@@ -166,7 +163,13 @@ def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe
             days_ahead = 7
         next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
     else:
-        next_update = subscription_time + timedelta(minutes=1)
+        # Default to 5 minutes
+        current_minute = subscription_time.minute
+        next_minute = ((current_minute // 5) + 1) * 5
+        if next_minute >= 60:
+            next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_update = subscription_time.replace(minute=next_minute, second=0, microsecond=0)
     return next_update
 
 

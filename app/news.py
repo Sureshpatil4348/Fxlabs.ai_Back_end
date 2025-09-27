@@ -3,9 +3,10 @@ import json
 import os
 import re
 from datetime import datetime, timezone, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 import aiohttp
+import logging
 
 from .config import (
     JBLANKED_API_KEY,
@@ -16,6 +17,8 @@ from .config import (
     NEWS_CACHE_FILE,
 )
 from .models import NewsAnalysis, NewsItem
+from .email_service import email_service
+from .alert_logging import log_debug, log_info, log_error
 
 
 def _get_field(item: dict, keys: List[str]):
@@ -106,6 +109,9 @@ news_cache_metadata: Dict[str, any] = {
     "next_update_time": None,
     "is_updating": False,
 }
+
+# Local logger for this module
+logger = logging.getLogger(__name__)
 
 
 def _ensure_parent_dir(file_path: str) -> None:
@@ -797,5 +803,193 @@ async def news_scheduler():
         except Exception as e:
             print(f"❌ [scheduler] Error in news scheduler: {e}")
             await asyncio.sleep(3600)
+
+
+# ----------------------- News Reminder (5-minute) -----------------------
+
+async def _fetch_all_user_emails() -> List[str]:
+    """Return a deduplicated list of user emails by union of alert tables.
+
+    We use the existing alert tables that already include `user_email` to
+    collect active users across products. This avoids needing a separate
+    profiles table.
+    """
+    try:
+        # Mirror configuration from alert_cache to avoid imports
+        supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
+        supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+        if not supabase_url or not supabase_key:
+            log_error(logger, "news_users_fetch_skipped", reason="missing_supabase_credentials")
+            return []
+
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Content-Type": "application/json",
+        }
+
+        timeout = aiohttp.ClientTimeout(connect=3, sock_read=7, total=10)
+        tables = [
+            "rsi_tracker_alerts",
+            "rsi_correlation_tracker_alerts",
+            "heatmap_tracker_alerts",
+            "heatmap_indicator_tracker_alerts",
+        ]
+        emails: Set[str] = set()
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            for tbl in tables:
+                try:
+                    url = f"{supabase_url}/rest/v1/{tbl}"
+                    params = {"select": "user_email", "is_active": "eq.true"}
+                    async with session.get(url, headers=headers, params=params) as resp:
+                        if resp.status == 200:
+                            rows = await resp.json()
+                            for r in rows:
+                                em = (r.get("user_email") or "").strip()
+                                if em:
+                                    emails.add(em)
+                        else:
+                            txt = await resp.text()
+                            log_error(
+                                logger,
+                                "news_users_fetch_table_failed",
+                                table=tbl,
+                                status=resp.status,
+                                body=(txt[:200] if isinstance(txt, str) else ""),
+                            )
+                except Exception as e:
+                    log_error(logger, "news_users_fetch_table_error", table=tbl, error=str(e))
+        return sorted(emails)
+    except Exception as e:
+        log_error(logger, "news_users_fetch_error", error=str(e))
+        return []
+
+
+def _format_event_time_local(time_iso: Optional[str], tz_name: str = "Asia/Kolkata") -> str:
+    try:
+        if not time_iso:
+            return ""
+        from zoneinfo import ZoneInfo
+        dt_utc = datetime.fromisoformat(time_iso.replace("Z", "+00:00")).astimezone(timezone.utc)
+        dt_local = dt_utc.astimezone(ZoneInfo(tz_name))
+        label = "IST" if tz_name == "Asia/Kolkata" else tz_name
+        return dt_local.strftime(f"%Y-%m-%d %H:%M {label}")
+    except Exception:
+        try:
+            dt = _iso_to_dt(time_iso)
+            return dt.strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            return ""
+
+
+def _derive_bias(effect: Optional[str]) -> str:
+    t = (effect or "").strip().lower()
+    if t == "bullish":
+        return "Bullish"
+    if t == "bearish":
+        return "Bearish"
+    if t:
+        return t.title()
+    return "-"
+
+
+async def check_and_send_news_reminders() -> None:
+    """Check news within next 5 minutes and email all users once per event.
+
+    - Scans in-memory `global_news_cache` for events with UTC time within (now, now+5m].
+    - Skips items already marked `reminder_sent`.
+    - Fetches all user emails from Supabase alert tables (union) and sends reminder.
+    - Marks the news item `reminder_sent=True` and persists cache to disk.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        window_end = now + timedelta(minutes=5)
+        due_items: List[NewsAnalysis] = []
+        for item in list(global_news_cache):
+            try:
+                if getattr(item, "reminder_sent", False):
+                    continue
+                event_dt = _iso_to_dt(item.time)
+                if now < event_dt <= window_end:
+                    due_items.append(item)
+            except Exception:
+                continue
+
+        if not due_items:
+            return
+
+        log_info(logger, "news_reminder_due_items", count=len(due_items))
+
+        # Fetch all target users
+        emails = await _fetch_all_user_emails()
+        if not emails:
+            log_error(logger, "news_reminder_no_users")
+            # Still mark as sent to avoid spinning forever
+            for it in due_items:
+                try:
+                    setattr(it, "reminder_sent", True)
+                except Exception:
+                    pass
+            _save_news_cache_to_disk()
+            return
+
+        # Send reminders per item to all users
+        for item in due_items:
+            title = (item.headline or "News Event").strip()
+            event_time_local = _format_event_time_local(item.time)
+            impact = (item.analysis.get("impact") if item.analysis else None) or "medium"
+            previous = item.previous or "-"
+            forecast = item.forecast or "-"
+            expected = "-"  # Not available pre-release
+            bias = _derive_bias(item.analysis.get("effect") if item.analysis else None)
+
+            # Fire-and-forget per-user to avoid blocking; await join for this batch
+            tasks = []
+            for em in emails:
+                tasks.append(
+                    email_service.send_news_reminder(
+                        user_email=em,
+                        event_title=title,
+                        event_time_local=event_time_local,
+                        impact=str(impact).title(),
+                        previous=str(previous),
+                        forecast=str(forecast),
+                        expected=str(expected),
+                        bias=str(bias),
+                    )
+                )
+            try:
+                await asyncio.gather(*tasks, return_exceptions=True)
+            except Exception as e:
+                log_error(logger, "news_reminder_send_batch_error", error=str(e))
+
+            # Mark this item as reminded regardless of individual send failures
+            try:
+                setattr(item, "reminder_sent", True)
+            except Exception:
+                pass
+
+        # Persist to disk after flag updates
+        _save_news_cache_to_disk()
+
+        log_info(logger, "news_reminder_completed", items=len(due_items), users=len(emails))
+    except Exception as e:
+        log_error(logger, "news_reminder_error", error=str(e))
+
+
+async def news_reminder_scheduler():
+    """Run every minute to dispatch 5-minute news reminders."""
+    # Ensure cache is loaded at least once (no-op if file missing)
+    try:
+        if not global_news_cache:
+            load_news_cache_from_disk()
+    except Exception:
+        pass
+    while True:
+        try:
+            await check_and_send_news_reminders()
+        except Exception as e:
+            log_error(logger, "news_reminder_scheduler_error", error=str(e))
+        await asyncio.sleep(60)
 
 

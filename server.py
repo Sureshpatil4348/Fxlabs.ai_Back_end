@@ -16,7 +16,10 @@ except ImportError:
     mt5 = None
     MT5_AVAILABLE = False
 import orjson
+import logging
+from app.logging_config import configure_logging
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import (
@@ -26,11 +29,13 @@ from app.config import (
 )
 import app.news as news
 from app.alert_cache import alert_cache
-from app.heatmap_alert_service import heatmap_alert_service
-from app.rsi_alert_service import rsi_alert_service
-from app.rsi_correlation_alert_service import rsi_correlation_alert_service
+from app.rsi_tracker_alert_service import rsi_tracker_alert_service
+from app.rsi_correlation_tracker_alert_service import rsi_correlation_tracker_alert_service
+from app.heatmap_tracker_alert_service import heatmap_tracker_alert_service
+from app.heatmap_indicator_tracker_alert_service import heatmap_indicator_tracker_alert_service
 from app.email_service import email_service
-from app.models import Timeframe, Tick, OHLC, SubscriptionInfo, NewsItem, NewsAnalysis, HeatmapAlertRequest, HeatmapAlertResponse, RSIAlertRequest, RSIAlertResponse, RSICorrelationAlertRequest, RSICorrelationAlertResponse
+from app.daily_mail_service import daily_mail_scheduler
+from app.models import Timeframe, Tick, OHLC, SubscriptionInfo, NewsItem, NewsAnalysis
 from app.mt5_utils import (
     MT5_TIMEFRAMES,
     ensure_symbol_selected,
@@ -41,6 +46,9 @@ from app.mt5_utils import (
     update_ohlc_cache,
     get_cached_ohlc,
 )
+
+# Ensure logging has timestamps across the app
+configure_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -57,23 +65,41 @@ async def lifespan(app: FastAPI):
     
     # Initialize news cache and start scheduler (loads FS cache on start)
     news_task = asyncio.create_task(news.news_scheduler())
-    
-    # Initialize alert cache and start scheduler
-    alert_cache_task = asyncio.create_task(alert_cache.start_refresh_scheduler())
+    # Start news reminder 1-minute scheduler
+    news_reminder_task = asyncio.create_task(news.news_reminder_scheduler())
+    # Start daily morning brief scheduler (09:00 IST)
+    daily_task = asyncio.create_task(daily_mail_scheduler())
+
+    # Start minute alerts scheduler (fetch + evaluate RSI Tracker)
+    global _minute_scheduler_task, _minute_scheduler_running
+    _minute_scheduler_running = True
+    _minute_scheduler_task = asyncio.create_task(_minute_alerts_scheduler())
     
     yield
     
     # Shutdown
     news_task.cancel()
-    alert_cache_task.cancel()
+    news_reminder_task.cancel()
+    daily_task.cancel()
+    if _minute_scheduler_task:
+        _minute_scheduler_task.cancel()
     try:
         await news_task
     except asyncio.CancelledError:
         pass
     try:
-        await alert_cache_task
+        await news_reminder_task
     except asyncio.CancelledError:
         pass
+    try:
+        await daily_task
+    except asyncio.CancelledError:
+        pass
+    if _minute_scheduler_task:
+        try:
+            await _minute_scheduler_task
+        except asyncio.CancelledError:
+            pass
     mt5.shutdown()
 
 app = FastAPI(title="MT5 Market Data Stream", version="2.0.0", lifespan=lifespan)
@@ -107,6 +133,11 @@ news_cache_metadata: Dict[str, any] = {
     "is_updating": False
 }
 
+# Minute-based alert scheduler
+ENABLE_TICK_TRIGGERED_ALERTS = False  # Tick-driven checks disabled
+_minute_scheduler_task: Optional[asyncio.Task] = None
+_minute_scheduler_running: bool = False
+
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
 TEST_EMAIL_RATE_LIMIT = 5  # Max 5 test emails per hour per API key
@@ -120,6 +151,8 @@ def require_api_token_header(x_api_key: Optional[str] = None):
     # For REST: expect header "X-API-Key"
     if API_TOKEN and x_api_key != API_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+"""Unsubscribe feature removed per spec: no unsubscribe token validation."""
 
 def check_test_email_rate_limit(api_key: str) -> bool:
     """Check if API key has exceeded test email rate limit"""
@@ -219,10 +252,7 @@ def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
 
 def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe) -> datetime:
     """Calculate when the next OHLC update should be sent"""
-    if timeframe == Timeframe.M1:
-        # Next minute boundary
-        next_update = subscription_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
-    elif timeframe == Timeframe.M5:
+    if timeframe == Timeframe.M5:
         # Next 5-minute boundary
         current_minute = subscription_time.minute
         next_minute = ((current_minute // 5) + 1) * 5
@@ -267,8 +297,13 @@ def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe
             days_ahead = 7
         next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
     else:
-        # Default to 1 minute
-        next_update = subscription_time + timedelta(minutes=1)
+        # Default to 5 minutes
+        current_minute = subscription_time.minute
+        next_minute = ((current_minute // 5) + 1) * 5
+        if next_minute >= 60:
+            next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        else:
+            next_update = subscription_time.replace(minute=next_minute, second=0, microsecond=0)
     
     return next_update
 
@@ -318,17 +353,91 @@ def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 100) -> List
     return cached_data
 
 
+async def _get_user_tracked_symbols(user_email: str) -> Set[str]:
+    """Return the set of unique symbols tracked by a user across all active alerts.
+
+    This inspects the in-memory alert_cache and supports both simple pair lists
+    (e.g., ["EURUSD", "GBPUSD"]) and correlation-style lists of lists
+    (e.g., [["EURUSD", "GBPUSD"], ["USDJPY", "GBPUSD"]]). It also tolerates
+    legacy cache objects where correlation pairs might be stored under
+    "correlation_pairs".
+    """
+    symbols: Set[str] = set()
+    try:
+        all_alerts = await alert_cache.get_all_alerts()
+    except Exception:
+        all_alerts = {}
+
+    for _uid, alerts in all_alerts.items():
+        for alert in alerts:
+            if alert.get("user_email") != user_email:
+                continue
+            if not alert.get("is_active", True):
+                continue
+
+            pairs = alert.get("pairs", [])
+            if isinstance(pairs, list):
+                if all(isinstance(p, str) for p in pairs):
+                    symbols.update(pairs)
+                elif all(isinstance(p, list) for p in pairs):
+                    for combo in pairs:
+                        for sym in combo:
+                            if isinstance(sym, str):
+                                symbols.add(sym)
+
+            corr_pairs = alert.get("correlation_pairs")
+            if isinstance(corr_pairs, list) and all(isinstance(cp, list) for cp in corr_pairs):
+                for combo in corr_pairs:
+                    for sym in combo:
+                        if isinstance(sym, str):
+                            symbols.add(sym)
+
+    return symbols
+
+
+async def _minute_alerts_scheduler():
+    """Every 5 minutes: refresh alerts and evaluate all alert types."""
+    try:
+        while _minute_scheduler_running:
+            try:
+                await alert_cache._refresh_cache()
+            except Exception:
+                pass
+            try:
+                await rsi_tracker_alert_service.check_rsi_tracker_alerts()
+            except Exception as e:
+                print(f"❌ RSI Tracker evaluation error: {e}")
+            try:
+                await rsi_correlation_tracker_alert_service.check_rsi_correlation_tracker_alerts()
+            except Exception as e:
+                print(f"❌ RSI Correlation Tracker evaluation error: {e}")
+            try:
+                await heatmap_tracker_alert_service.check_heatmap_tracker_alerts()
+            except Exception as e:
+                print(f"❌ Heatmap Tracker evaluation error: {e}")
+            try:
+                await heatmap_indicator_tracker_alert_service.check_heatmap_indicator_tracker_alerts()
+            except Exception as e:
+                print(f"❌ Indicator Tracker evaluation error: {e}")
+            await asyncio.sleep(300)
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        print(f"❌ Minute scheduler error: {e}")
+
 @app.get("/health")
 def health():
     v = mt5.version()
     return {"status": "ok", "mt5_version": v}
+
+# Unsubscribe endpoints removed per spec
 
 @app.get("/test-ws")
 def test_websocket():
     return {"message": "WebSocket endpoint available at /ws/market"}
 
 @app.get("/api/ohlc/{symbol}")
-def get_ohlc(symbol: str, timeframe: str = Query("1M"), count: int = Query(250, le=500), x_api_key: Optional[str] = Depends(require_api_token_header)):
+def get_ohlc(symbol: str, timeframe: str = Query("5M"), count: int = Query(250, le=500), x_api_key: Optional[str] = Depends(require_api_token_header)):
     """Get OHLC data for a symbol and timeframe"""
     try:
         tf = Timeframe(timeframe)
@@ -420,363 +529,7 @@ async def refresh_alerts_manual(x_api_key: Optional[str] = Depends(require_api_t
     await alert_cache._refresh_cache()
     return {"message": "Alert cache refresh triggered", "status": "success"}
 
-# Heatmap Alert Endpoints
-@app.post("/api/heatmap-alerts", response_model=HeatmapAlertResponse)
-async def create_heatmap_alert(
-    alert_request: HeatmapAlertRequest,
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Create a new heatmap alert"""
-    try:
-        alert_data = alert_request.model_dump()
-        result = await heatmap_alert_service.create_heatmap_alert(alert_data)
-        
-        if result:
-            return HeatmapAlertResponse(**result)
-        else:
-            raise HTTPException(status_code=500, detail="Failed to create heatmap alert")
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/heatmap-alerts/user/{user_email}")
-async def get_user_heatmap_alerts(
-    user_email: str,
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Get all heatmap alerts for a specific user"""
-    try:
-        alerts = await heatmap_alert_service.get_user_heatmap_alerts(user_email)
-        return {
-            "user_email": user_email,
-            "alert_count": len(alerts),
-            "alerts": alerts
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.delete("/api/heatmap-alerts/{alert_id}")
-async def delete_heatmap_alert(
-    alert_id: str,
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Delete a heatmap alert"""
-    try:
-        success = await heatmap_alert_service.delete_heatmap_alert(alert_id)
-        
-        if success:
-            return {"message": "Heatmap alert deleted successfully", "status": "success"}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to delete heatmap alert")
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/heatmap-alerts/test-email")
-async def test_heatmap_alert_email(
-    user_email: str = Query(..., description="Email address to send test email to"),
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Send a test email to verify email service is working"""
-    try:
-        # Check rate limit
-        if not check_test_email_rate_limit(x_api_key or "anonymous"):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Maximum 5 test emails per hour.")
-        
-        # Validate recipient email
-        if not validate_test_email_recipient(user_email):
-            raise HTTPException(status_code=403, detail="Forbidden recipient. Only allowed domains are permitted.")
-        
-        success = await email_service.send_test_email(user_email)
-        
-        if success:
-            return {"message": "Test email sent successfully", "status": "success"}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to send test email")
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/heatmap-alerts/check")
-async def check_heatmap_alerts_manual(
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Manually trigger heatmap alert checking (for testing)"""
-    try:
-        # Use real MT5 data for testing
-        test_tick_data = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "symbols": ["EURUSDm", "GBPUSDm", "USDJPYm"],
-            "tick_data": {}
-        }
-        
-        # Get real tick data from MT5
-        if MT5_AVAILABLE:
-            for symbol in test_tick_data["symbols"]:
-                try:
-                    tick = mt5.symbol_info_tick(symbol)
-                    if tick:
-                        test_tick_data["tick_data"][symbol] = {
-                            "bid": tick.bid,
-                            "ask": tick.ask,
-                            "time": tick.time
-                        }
-                except Exception as e:
-                    # Only log at debug level to reduce noise
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.debug(f"⚠️ Could not get real data for {symbol}: {e}")
-        
-        triggered_alerts = await heatmap_alert_service.check_heatmap_alerts(test_tick_data)
-        
-        return {
-            "message": "Heatmap alert check completed",
-            "triggered_count": len(triggered_alerts),
-            "triggered_alerts": triggered_alerts
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# RSI Alert Endpoints
-@app.post("/api/rsi-alerts", response_model=RSIAlertResponse)
-async def create_rsi_alert(
-    alert_request: RSIAlertRequest,
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Create a new RSI alert"""
-    try:
-        # Convert request to dict
-        alert_data = alert_request.dict()
-        
-        # Create alert in Supabase
-        result = await rsi_alert_service.create_rsi_alert(alert_data)
-        
-        if result:
-            # Refresh alert cache
-            await alert_cache._refresh_cache()
-            
-            return RSIAlertResponse(**result)
-        else:
-            raise HTTPException(status_code=500, detail="Failed to create RSI alert")
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/rsi-alerts/user/{user_email}")
-async def get_rsi_alerts_by_user(
-    user_email: str,
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Get all RSI alerts for a specific user"""
-    try:
-        all_alerts = await alert_cache.get_all_alerts()
-        
-        user_rsi_alerts = []
-        for user_id, user_alerts in all_alerts.items():
-            for alert in user_alerts:
-                if (alert.get("type") == "rsi" and 
-                    alert.get("user_email") == user_email):
-                    user_rsi_alerts.append(alert)
-        
-        return {
-            "user_email": user_email,
-            "alerts": user_rsi_alerts,
-            "count": len(user_rsi_alerts)
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/rsi-alerts/test-email")
-async def test_rsi_alert_email(
-    user_email: str = Query(..., description="Email address to send test email to"),
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Send a test RSI alert email to verify email service is working"""
-    try:
-        # Check rate limit
-        if not check_test_email_rate_limit(x_api_key or "anonymous"):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Maximum 5 test emails per hour.")
-        
-        # Validate recipient email
-        if not validate_test_email_recipient(user_email):
-            raise HTTPException(status_code=403, detail="Forbidden recipient. Only allowed domains are permitted.")
-        
-        success = await email_service.send_test_email(user_email)
-        
-        if success:
-            return {"message": f"Test RSI alert email sent successfully to {user_email}"}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to send test email")
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/rsi-alerts/check")
-async def check_rsi_alerts_manual(
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Manually trigger RSI alert checking (for testing)"""
-    try:
-        # Use real MT5 data for testing
-        test_tick_data = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "symbols": ["EURUSDm", "GBPUSDm", "USDJPYm"],
-            "tick_data": {}
-        }
-        
-        # Get real tick data from MT5
-        if MT5_AVAILABLE:
-            for symbol in test_tick_data["symbols"]:
-                try:
-                    tick = mt5.symbol_info_tick(symbol)
-                    if tick:
-                        test_tick_data["tick_data"][symbol] = {
-                            "bid": tick.bid,
-                            "ask": tick.ask,
-                            "time": tick.time,
-                            "volume": 1000  # Default volume
-                        }
-                except Exception as e:
-                    # Only log at debug level to reduce noise
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.debug(f"⚠️ Could not get real data for {symbol}: {e}")
-        
-        triggered_alerts = await rsi_alert_service.check_rsi_alerts(test_tick_data)
-        
-        return {
-            "message": "RSI alert check completed",
-            "triggered_count": len(triggered_alerts),
-            "triggered_alerts": triggered_alerts
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-# RSI Correlation Alert Endpoints
-@app.post("/api/rsi-correlation-alerts", response_model=RSICorrelationAlertResponse)
-async def create_rsi_correlation_alert(
-    alert_request: RSICorrelationAlertRequest,
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Create a new RSI correlation alert"""
-    try:
-        # Convert request to dict
-        alert_data = alert_request.dict()
-        
-        # Create alert in Supabase
-        result = await rsi_correlation_alert_service.create_rsi_correlation_alert(alert_data)
-        
-        if result:
-            # Refresh alert cache
-            await alert_cache._refresh_cache()
-            
-            return RSICorrelationAlertResponse(**result)
-        else:
-            raise HTTPException(status_code=500, detail="Failed to create RSI correlation alert")
-            
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/rsi-correlation-alerts/user/{user_email}")
-async def get_rsi_correlation_alerts_by_user(
-    user_email: str,
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Get all RSI correlation alerts for a specific user"""
-    try:
-        all_alerts = await alert_cache.get_all_alerts()
-        
-        user_rsi_correlation_alerts = []
-        for user_id, user_alerts in all_alerts.items():
-            for alert in user_alerts:
-                if (alert.get("type") == "rsi_correlation" and 
-                    alert.get("user_email") == user_email):
-                    user_rsi_correlation_alerts.append(alert)
-        
-        return {
-            "user_email": user_email,
-            "alerts": user_rsi_correlation_alerts,
-            "count": len(user_rsi_correlation_alerts)
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/rsi-correlation-alerts/test-email")
-async def test_rsi_correlation_alert_email(
-    user_email: str = Query(..., description="Email address to send test email to"),
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Send a test RSI correlation alert email to verify email service is working"""
-    try:
-        # Check rate limit
-        if not check_test_email_rate_limit(x_api_key or "anonymous"):
-            raise HTTPException(status_code=429, detail="Rate limit exceeded. Maximum 5 test emails per hour.")
-        
-        # Validate recipient email
-        if not validate_test_email_recipient(user_email):
-            raise HTTPException(status_code=403, detail="Forbidden recipient. Only allowed domains are permitted.")
-        
-        success = await email_service.send_test_email(user_email)
-        
-        if success:
-            return {"message": f"Test RSI correlation alert email sent successfully to {user_email}"}
-        else:
-            raise HTTPException(status_code=500, detail="Failed to send test email")
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/api/rsi-correlation-alerts/check")
-async def check_rsi_correlation_alerts_manual(
-    x_api_key: Optional[str] = Depends(require_api_token_header)
-):
-    """Manually trigger RSI correlation alert checking (for testing)"""
-    try:
-        # Use real MT5 data for testing
-        test_tick_data = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "symbols": ["EURUSDm", "GBPUSDm", "USDJPYm"],
-            "tick_data": {}
-        }
-        
-        # Get real tick data from MT5
-        if MT5_AVAILABLE:
-            for symbol in test_tick_data["symbols"]:
-                try:
-                    tick = mt5.symbol_info_tick(symbol)
-                    if tick:
-                        test_tick_data["tick_data"][symbol] = {
-                            "bid": tick.bid,
-                            "ask": tick.ask,
-                            "time": tick.time,
-                            "volume": 1000  # Default volume
-                        }
-                except Exception as e:
-                    # Only log at debug level to reduce noise
-                    import logging
-                    logger = logging.getLogger(__name__)
-                    logger.debug(f"⚠️ Could not get real data for {symbol}: {e}")
-        
-        triggered_alerts = await rsi_correlation_alert_service.check_rsi_correlation_alerts(test_tick_data)
-        
-        return {
-            "message": "RSI correlation alert check completed",
-            "triggered_count": len(triggered_alerts),
-            "triggered_alerts": triggered_alerts
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+"""Heatmap/RSI/Correlation endpoints removed: using single RSI Tracker alert path."""
 
 async def _check_alerts_safely(tick_data: Dict[str, Any]) -> None:
     """Safely check all alert types without blocking the main loop"""
@@ -900,7 +653,7 @@ class WSClient:
                 all_alerts = await alert_cache.get_all_alerts()
                 total_alerts = sum(len(alerts) for alerts in all_alerts.values())
                 
-                if total_alerts > 0:
+                if ENABLE_TICK_TRIGGERED_ALERTS and total_alerts > 0:
                     # Provide tick_data in a dict keyed by symbol as expected by alert services
                     tick_data_map = {}
                     for td in updates:
@@ -933,12 +686,13 @@ class WSClient:
                         "time": td.get("time"),
                         "volume": td.get("volume"),
                     }
-                tick_data = {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "symbols": list(tick_symbols),
-                    "tick_data": tick_data_map
-                }
-                asyncio.create_task(_check_alerts_safely(tick_data))
+                if ENABLE_TICK_TRIGGERED_ALERTS:
+                    tick_data = {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "symbols": list(tick_symbols),
+                        "tick_data": tick_data_map
+                    }
+                    asyncio.create_task(_check_alerts_safely(tick_data))
     
     async def _send_scheduled_ohlc_updates(self):
         """Send OHLC updates when timeframe periods complete"""
@@ -977,7 +731,7 @@ class WSClient:
         if action == "subscribe":
             # New subscription format
             symbol = message.get("symbol", "")
-            timeframe = message.get("timeframe", "1M")
+            timeframe = message.get("timeframe", "5M")
             data_types = message.get("data_types", ["ticks", "ohlc"])
             
             if not symbol:
@@ -1172,17 +926,14 @@ if __name__ == "__main__":
     print("📊 Available endpoints:")
     print("   - WebSocket (new): ws://localhost:8000/ws/market")
     print("   - WebSocket (legacy): ws://localhost:8000/ws/ticks")
-    print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=1M&count=100")
+    print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=5M&count=100")
     print("   - News Analysis: GET /api/news/analysis")
     print("   - News Refresh: POST /api/news/refresh")
     print("   - Alert Cache: GET /api/alerts/cache")
     print("   - User Alerts: GET /api/alerts/user/{user_id}")
     print("   - Alert Refresh: POST /api/alerts/refresh")
-    print("   - Heatmap Alerts: POST /api/heatmap-alerts")
-    print("   - User Heatmap Alerts: GET /api/heatmap-alerts/user/{user_email}")
-    print("   - Delete Heatmap Alert: DELETE /api/heatmap-alerts/{alert_id}")
-    print("   - Test Email: POST /api/heatmap-alerts/test-email")
-    print("   - Check Alerts: POST /api/heatmap-alerts/check")
+    print("   - Alerts Cache: GET /api/alerts/cache")
+    print("   - Refresh Alerts: POST /api/alerts/refresh")
     print("   - Health check: GET /health")
     
     _install_sigterm_handler(asyncio.get_event_loop())

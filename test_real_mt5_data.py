@@ -16,7 +16,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
 from app.email_service import EmailService
 from app.models import Timeframe
 
-# Try to import MT5 - if it fails, we'll use a fallback
+# Try to import MT5 - required for this test
 try:
     import MetaTrader5 as mt5
     from app.mt5_utils import get_ohlc_data
@@ -24,7 +24,7 @@ try:
     print("✅ MT5 module available - using real market data")
 except ImportError:
     MT5_AVAILABLE = False
-    print("⚠️ MT5 module not available - using simulated data")
+    print("❌ MT5 module not available - cannot run real data test")
 
 class RealMT5DataTester:
     """Test suite using real MT5 data from existing project integration"""
@@ -79,15 +79,15 @@ class RealMT5DataTester:
         """Get real market data from MT5 using existing project integration"""
         
         if not MT5_AVAILABLE or not self.mt5_connected:
-            print(f"⚠️ Using simulated data for {symbol} (MT5 not available)")
-            return self._get_simulated_data(symbol, timeframe)
+            print(f"❌ MT5 not available/connected - cannot fetch real data for {symbol}")
+            return None
         
         try:
             # Use existing MT5 integration from the project
             ohlc_data = get_ohlc_data(symbol, timeframe, 50)
             if not ohlc_data:
                 print(f"⚠️ No OHLC data from MT5 for {symbol}")
-                return self._get_simulated_data(symbol, timeframe)
+                return None
             
             # Get current tick
             tick_data = mt5.symbol_info_tick(symbol)
@@ -100,7 +100,7 @@ class RealMT5DataTester:
             
             if rsi_value is None:
                 print(f"⚠️ Could not calculate RSI for {symbol}")
-                return self._get_simulated_data(symbol, timeframe)
+                return None
             
             # Get latest bar
             latest_bar = ohlc_data[-1]
@@ -134,44 +134,9 @@ class RealMT5DataTester:
             
         except Exception as e:
             print(f"❌ Error getting real MT5 data for {symbol}: {e}")
-            return self._get_simulated_data(symbol, timeframe)
+            return None
     
-    def _get_simulated_data(self, symbol: str, timeframe: Timeframe) -> Dict[str, Any]:
-        """Fallback simulated data when MT5 is not available"""
-        import random
-        
-        # Simulate realistic market data (using broker-specific names)
-        base_prices = {
-            "EURUSDm": 1.0856,
-            "GBPUSDm": 1.2634,
-            "USDJPYm": 149.23,
-            "USDCHFm": 0.8756,
-            "AUDUSDm": 0.6523
-        }
-        
-        base_price = base_prices.get(symbol, 1.1000)
-        price_variation = random.uniform(-0.01, 0.01)
-        current_price = base_price + price_variation
-        
-        # Simulate RSI based on price movement
-        rsi_base = 50 + (price_variation * 1000)
-        rsi_value = max(10, min(90, rsi_base))
-        
-        return {
-            "symbol": symbol,
-            "timeframe": timeframe.value,
-            "rsi_value": round(rsi_value, 2),
-            "current_price": round(current_price, 4),
-            "price_change_percent": round(price_variation * 100, 2),
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "rsi_period": 14,
-            "volume": random.randint(1000, 10000),
-            "high": round(current_price + 0.001, 4),
-            "low": round(current_price - 0.001, 4),
-            "open": round(current_price - price_variation/2, 4),
-            "close": round(current_price, 4),
-            "data_source": "SIMULATED"
-        }
+    # Simulation removed: this test only operates with real MT5 data
     
     def create_real_rsi_alert_data(self) -> List[Dict[str, Any]]:
         """Create RSI alert data using real MT5 market data"""
@@ -207,7 +172,7 @@ class RealMT5DataTester:
         triggered_pairs = self.create_real_rsi_alert_data()
         
         if not triggered_pairs:
-            print("❌ No market data available")
+            print("❌ No market data available (MT5 required)")
             return False
         
         alert_config = {

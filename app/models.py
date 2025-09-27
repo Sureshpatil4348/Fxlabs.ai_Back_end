@@ -6,7 +6,6 @@ from pydantic import BaseModel, Field
 
 
 class Timeframe(str, Enum):
-    M1 = "1M"
     M5 = "5M"
     M15 = "15M"
     M30 = "30M"
@@ -65,6 +64,8 @@ class NewsAnalysis(BaseModel):
     time: Optional[str] = None
     analysis: Dict[str, str]
     analyzed_at: datetime
+    # Internal flag to avoid re-sending the 5-minute reminder email for this event
+    reminder_sent: bool = False
 
 
 class HeatmapAlertRequest(BaseModel):
@@ -115,8 +116,7 @@ class RSIAlertRequest(BaseModel):
     rsi_overbought_threshold: int = 70
     rsi_oversold_threshold: int = 30
     alert_conditions: List[str]
-    rfi_strong_threshold: float = 0.80
-    rfi_moderate_threshold: float = 0.60
+    cooldown_minutes: Optional[int] = 30
     notification_methods: List[str] = ["email"]
     alert_frequency: str = "once"
 
@@ -132,8 +132,7 @@ class RSIAlertResponse(BaseModel):
     rsi_overbought_threshold: int
     rsi_oversold_threshold: int
     alert_conditions: List[str]
-    rfi_strong_threshold: float
-    rfi_moderate_threshold: float
+    cooldown_minutes: int
     notification_methods: List[str]
     alert_frequency: str
     is_active: bool
