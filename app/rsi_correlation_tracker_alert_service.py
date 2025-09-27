@@ -32,6 +32,8 @@ class RSICorrelationTrackerAlertService:
         self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
         # Remember last mismatch state per (alert, pair_key, timeframe, mode)
         self._last_state: Dict[str, bool] = {}
+        # Track last evaluated closed bar per (pair_key, timeframe) to enforce closed-bar evaluation
+        self._last_closed_bar_ts: Dict[str, int] = {}
 
     def _discover_pair_keys(self) -> List[str]:
         """Return fixed, documented correlation pair keys."""
@@ -39,6 +41,22 @@ class RSICorrelationTrackerAlertService:
 
     def _state_key(self, alert_id: str, pair_key: str, timeframe: str, mode: str) -> str:
         return f"{alert_id}:{pair_key}:{timeframe}:{mode}"
+
+    async def _get_last_closed_bar_ts(self, symbol: str, timeframe: str) -> Optional[int]:
+        """Return timestamp (ms) of the last closed bar using MT5 OHLC data; None if unavailable."""
+        try:
+            from .mt5_utils import get_ohlc_data
+            from .models import Timeframe as TF
+            tf_map = {"1M": TF.M1, "5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+            mtf = tf_map.get( timeframe )
+            if not mtf:
+                return None
+            bars = get_ohlc_data(symbol, mtf, 2)
+            if not bars:
+                return None
+            return int(bars[-1].time)
+        except Exception:
+            return None
 
     async def check_rsi_correlation_tracker_alerts(self) -> List[Dict[str, Any]]:
         try:
@@ -98,6 +116,26 @@ class RSICorrelationTrackerAlertService:
 
                         async with pair_locks.acquire(f"{s1}:{timeframe}"):
                             async with pair_locks.acquire(f"{s2}:{timeframe}"):
+                                # Enforce closed-bar policy: evaluate once per closed bar per pair/timeframe
+                                pair_tf_key = f"{pair_key}:{timeframe}"
+                                ts1 = await self._get_last_closed_bar_ts(s1, timeframe)
+                                ts2 = await self._get_last_closed_bar_ts(s2, timeframe)
+                                if ts1 is None or ts2 is None:
+                                    log_debug(
+                                        logger,
+                                        "closed_bar_unknown",
+                                        alert_id=alert_id,
+                                        pair_key=pair_key,
+                                        timeframe=timeframe,
+                                    )
+                                    continue
+                                last_pair_ts = min(ts1, ts2)
+                                prev_pair_ts = self._last_closed_bar_ts.get(pair_tf_key)
+                                if prev_pair_ts is not None and prev_pair_ts == last_pair_ts:
+                                    # Already evaluated for current closed bar
+                                    continue
+                                self._last_closed_bar_ts[pair_tf_key] = last_pair_ts
+
                                 if mode == "rsi_threshold":
                                     mismatch, val, cond_label = await self._evaluate_rsi_threshold_mismatch(
                                         s1, s2, timeframe, rsi_period, rsi_ob, rsi_os

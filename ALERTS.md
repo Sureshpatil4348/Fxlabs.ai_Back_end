@@ -6,6 +6,8 @@
 **Global Rules**
 - Max tracked pairs per user: up to 3.
 - Trigger style: crossing into overbought/oversold; not on every bar while in‑zone.
+- Closed‑bar evaluation for RSI family: evaluate RSI on the last closed candlestick only (no intrabar/tick evaluation).
+- Retrigger policy: once triggered, re‑arm only after leaving the triggerable zone and trigger again only on a fresh crossing back in.
 - Timezone for display: Asia/Kolkata.
 - System safeguards: rate limit 5 emails/user/hour (overflow → digest), per‑pair concurrency cap, warm‑up for RSI, skip stale TFs (last candle age > 2× TF length).
 
@@ -40,7 +42,7 @@
 4) RSI Calculation
   - Wilder’s method using broker OHLC; closed‑bar only; warm‑up enforced.
 5) Trigger Logic
-  - Crossing policy: Overbought (prev < OB and curr ≥ OB), Oversold (prev > OS and curr ≤ OS).
+  - Crossing policy: Overbought (prev < OB and curr ≥ OB), Oversold (prev > OS and curr ≤ OS), evaluated on closed bars only.
   - Threshold‑level re‑arm per side. No additional per-pair cooldown applied for RSI Tracker.
 6) Alert Content
   - Email Subject: `RSI Alert - <alert_name>`; includes per‑pair summary (zone, RSI value, price, IST time).
@@ -71,6 +73,7 @@ Single per-user alert for the RSI Correlation dashboard. User selects `mode` and
 - **RSI Threshold**: `rsi_period` (5–50), `rsi_overbought` (60–90), `rsi_oversold` (10–40)
 - **Real Correlation**: `correlation_window` (20, 50, 90, 120)
 - **Behavior**: Insert a trigger when a correlation pair transitions into a mismatch per rules below.
+  - Closed‑bar evaluation: evaluation runs once per closed bar for each pair/timeframe using last‑closed timestamps for both symbols; re‑triggers only after the pair leaves mismatch and then re‑enters on a subsequent closed bar.
   
 Fixed correlation pair_keys evaluated:
 

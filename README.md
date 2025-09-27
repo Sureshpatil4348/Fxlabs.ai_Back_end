@@ -231,6 +231,10 @@ The RSI Correlation Tracker is available as a single per-user alert. Users selec
 - Pair selection is not required; backend evaluates a fixed set of correlation pair keys from `app/constants.py`.
 - Triggers insert into `rsi_correlation_tracker_alert_triggers` and emails reuse a compact template.
 
+Closed‑bar evaluation & retriggering:
+- Evaluation runs once per new closed bar per correlation pair/timeframe by checking the last closed timestamps of both symbols; the service evaluates when a new bar is seen and avoids duplicate evaluations within the same closed bar.
+- Retrigger only after the pair returns to non‑mismatch and then transitions into mismatch again on a subsequent closed bar.
+
 ### Global Limit: Max 3 Pairs/User
 
 - The backend now enforces a global cap of 3 unique symbols per user across all active alerts (Heatmap, RSI, and RSI Correlation).
