@@ -109,10 +109,24 @@ async def _collect_rsi_h4(period: int = 14) -> Tuple[List[Dict[str, Any]], List[
     return oversold, overbought
 
 
+def _get_ist_tz():
+    """Return a tzinfo for IST. Prefer ZoneInfo, fallback to fixed +05:30 offset.
+
+    Avoids crashing when tz database is unavailable in the runtime.
+    """
+    try:
+        if ZoneInfo is not None:
+            return ZoneInfo("Asia/Kolkata")
+    except Exception:
+        pass
+    try:
+        return timezone(timedelta(hours=5, minutes=30), name="IST")
+    except Exception:
+        return timezone.utc
+
+
 def _ist_now() -> datetime:
-    if ZoneInfo is None:
-        return datetime.now(timezone.utc)
-    return datetime.now(ZoneInfo("Asia/Kolkata"))
+    return datetime.now(_get_ist_tz())
 
 
 def _format_date_ist(d: Optional[datetime] = None) -> str:
@@ -184,14 +198,8 @@ async def _build_daily_payload() -> Dict[str, Any]:
 
 def _next_9am_ist_utc(now_utc: Optional[datetime] = None) -> datetime:
     now_utc = now_utc or datetime.now(timezone.utc)
-    if ZoneInfo is None:
-        # Fallback: treat UTC as IST (approx) → schedule in 24h cycles
-        base = now_utc
-        target = base.replace(hour=3, minute=30, second=0, microsecond=0)  # 9:00 IST is 03:30 UTC (fixed, no DST)
-        if base >= target:
-            target = target + timedelta(days=1)
-        return target
-    ist = now_utc.astimezone(ZoneInfo("Asia/Kolkata"))
+    ist_tz = _get_ist_tz()
+    ist = now_utc.astimezone(ist_tz)
     target_ist = ist.replace(hour=9, minute=0, second=0, microsecond=0)
     if ist >= target_ist:
         target_ist = target_ist + timedelta(days=1)
