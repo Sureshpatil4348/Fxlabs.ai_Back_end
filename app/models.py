@@ -64,6 +64,8 @@ class NewsAnalysis(BaseModel):
     time: Optional[str] = None
     analysis: Dict[str, str]
     analyzed_at: datetime
+    # Internal flag to avoid re-sending the 5-minute reminder email for this event
+    reminder_sent: bool = False
 
 
 class HeatmapAlertRequest(BaseModel):

@@ -64,6 +64,8 @@ async def lifespan(app: FastAPI):
     
     # Initialize news cache and start scheduler (loads FS cache on start)
     news_task = asyncio.create_task(news.news_scheduler())
+    # Start news reminder 1-minute scheduler
+    news_reminder_task = asyncio.create_task(news.news_reminder_scheduler())
 
     # Start minute alerts scheduler (fetch + evaluate RSI Tracker)
     global _minute_scheduler_task, _minute_scheduler_running
@@ -74,10 +76,15 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     news_task.cancel()
+    news_reminder_task.cancel()
     if _minute_scheduler_task:
         _minute_scheduler_task.cancel()
     try:
         await news_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await news_reminder_task
     except asyncio.CancelledError:
         pass
     if _minute_scheduler_task:

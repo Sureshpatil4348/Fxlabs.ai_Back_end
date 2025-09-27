@@ -1300,6 +1300,137 @@ class EmailService:
 </body></html>
             """
 
+    def _build_news_reminder_html(
+        self,
+        event_title: str,
+        event_time_local: str,
+        impact: str,
+        previous: str,
+        forecast: str,
+        expected: str,
+        bias: str,
+    ) -> str:
+        return f"""
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FxLabs • News Reminder</title></head>
+<body style="margin:0;background:#F5F7FB;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FB;"><tr><td align="center" style="padding:24px 12px;">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+  <tr><td style="padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;">Starts in 5 Minutes</td></tr>
+  <tr><td style="padding:20px;">
+    <div style="font-size:16px;margin-bottom:6px;"><strong>{event_title}</strong></div>
+    <div style="font-size:13px;color:#374151;margin-bottom:12px;">
+      Time: {event_time_local} • Impact: <strong>{impact}</strong>
+    </div>
+    <table role="presentation" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;width:100%;">
+      <tr style="background:#F9FAFB;color:#6B7280;font-size:12px;">
+        <td style="padding:10px">Previous</td><td style="padding:10px">Forecast</td><td style="padding:10px">Expected</td><td style="padding:10px">Bias</td>
+      </tr>
+      <tr>
+        <td style="padding:10px;border-top:1px solid #E5E7EB;">{previous}</td>
+        <td style="padding:10px;border-top:1px solid #E5E7EB;">{forecast}</td>
+        <td style="padding:10px;border-top:1px solid #E5E7EB;">{expected}</td>
+        <td style="padding:10px;border-top:1px solid #E5E7EB;"><strong>{bias}</strong></td>
+      </tr>
+    </table>
+    <div style="margin-top:14px;padding:12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:10px;font-size:13px;">
+      Volatility risk. Consider spreads, slippage and cooldown windows.
+    </div>
+  </td></tr>
+  <tr><td style="padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;">Not financial advice. © FxLabs AI</td></tr>
+</table>
+</td></tr></table>
+</body></html>
+        """
+
+    def _build_news_reminder_text(
+        self,
+        event_title: str,
+        event_time_local: str,
+        impact: str,
+        previous: str,
+        forecast: str,
+        expected: str,
+        bias: str,
+    ) -> str:
+        return (
+            f"Starts in 5 Minutes\n"
+            f"{event_title}\n"
+            f"Time: {event_time_local} • Impact: {impact}\n"
+            f"Previous: {previous} | Forecast: {forecast} | Expected: {expected} | Bias: {bias}\n"
+            f"Volatility risk. Consider spreads, slippage and cooldown windows.\n"
+            f"Not financial advice. © FxLabs AI"
+        )
+
+    async def send_news_reminder(
+        self,
+        user_email: str,
+        event_title: str,
+        event_time_local: str,
+        impact: Optional[str],
+        previous: Optional[str],
+        forecast: Optional[str],
+        expected: Optional[str],
+        bias: Optional[str],
+    ) -> bool:
+        """Send the 5-minute news reminder email to a user.
+
+        No cooldown/rate-limit applies: this is a scheduled one-off per event.
+        """
+        if not self.sg:
+            self._log_config_diagnostics(context="news reminder email")
+            return False
+
+        # Normalize display values
+        def _fmt(v: Optional[str], default: str = "-") -> str:
+            try:
+                s = (v or "").strip()
+                return s if s else default
+            except Exception:
+                return default
+
+        html = self._build_news_reminder_html(
+            event_title=_fmt(event_title, "News Event"),
+            event_time_local=_fmt(event_time_local, ""),
+            impact=_fmt(impact, "-"),
+            previous=_fmt(previous, "-"),
+            forecast=_fmt(forecast, "-"),
+            expected=_fmt(expected, "-"),
+            bias=_fmt(bias, "-"),
+        )
+        text = self._build_news_reminder_text(
+            event_title=_fmt(event_title, "News Event"),
+            event_time_local=_fmt(event_time_local, ""),
+            impact=_fmt(impact, "-"),
+            previous=_fmt(previous, "-"),
+            forecast=_fmt(forecast, "-"),
+            expected=_fmt(expected, "-"),
+            bias=_fmt(bias, "-"),
+        )
+
+        subject = "News reminder"
+        mail = self._build_mail(
+            subject=subject,
+            to_email_addr=user_email,
+            html_body=html,
+            text_body=text,
+            category="news-reminder",
+            ref_id=None,
+        )
+
+        try:
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"✅ News reminder sent to {user_email}")
+                return True
+            else:
+                logger.error(f"❌ Failed to send news reminder: status={response.status_code}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error sending news reminder: {e}")
+            return False
+
         # RSI threshold mode: use provided compact RSI correlation mismatch template with RSI correlation
         # One card per triggered pair
         if calculation_mode == "rsi_threshold":

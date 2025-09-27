@@ -127,3 +127,25 @@ Supabase Schema: `supabase_heatmap_indicator_tracker_alerts_schema.sql`
 - `heatmap_indicator_tracker_alerts` and `heatmap_indicator_tracker_alert_triggers` with owner RLS
 
  
+
+## News Reminder Alerts
+Automatic email 5 minutes before each scheduled news item
+
+
+### ⏰ News Reminder (5 Minutes Before)
+
+- What: Sends an email with subject "News reminder" to all active users 5 minutes before each upcoming news event found in the local news cache.
+- Who: All user emails discovered by unioning `user_email` across active alert tables (`rsi_tracker_alerts`, `rsi_correlation_tracker_alerts`, `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`). No per-user config needed.
+- When: A dedicated 1-minute scheduler runs in `server.py` and calls `app.news.check_and_send_news_reminders()`.
+- How it avoids duplicates: Each `NewsAnalysis` item has a boolean `reminder_sent`. Once sent, the item is flagged and the cache is persisted to disk, preventing repeats across restarts.
+- Template: Minimal, mobile-friendly HTML with fields: `event_title`, `event_time_local` (IST by default), `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
+- Logging: Uses human-readable logs via `app/alert_logging.py` with events `news_reminder_due_items`, `news_users_fetch_*`, and `news_reminder_completed`.
+- Requirements: SendGrid configured (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`) and Supabase (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`). If either is missing, the scheduler logs and skips sending.
+
+Email HTML structure example (simplified):
+
+```html
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FxLabs • News Reminder</title></head>
+<body style="margin:0;background:#F5F7FB;"> ... </body></html>
+```
