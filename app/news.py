@@ -15,6 +15,8 @@ from .config import (
     NEWS_UPDATE_INTERVAL_HOURS,
     PERPLEXITY_API_KEY,
     NEWS_CACHE_FILE,
+    SUPABASE_URL,
+    SUPABASE_SERVICE_KEY,
 )
 from .models import NewsAnalysis, NewsItem
 from .email_service import email_service
@@ -815,9 +817,9 @@ async def _fetch_all_user_emails() -> List[str]:
     profiles table.
     """
     try:
-        # Mirror configuration from alert_cache to avoid imports
-        supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
-        supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+        # Use centralized configuration
+        supabase_url = SUPABASE_URL
+        supabase_key = SUPABASE_SERVICE_KEY
         if not supabase_url or not supabase_key:
             log_error(logger, "news_users_fetch_skipped", reason="missing_supabase_credentials")
             return []

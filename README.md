@@ -150,6 +150,10 @@ FROM_NAME=FX Labs Alerts
 PUBLIC_BASE_URL=https://api.fxlabs.ai
 UNSUBSCRIBE_SECRET=change_me_to_a_random_secret
 UNSUBSCRIBE_STORE_FILE=/var/fxlabs/unsubscribes.json
+
+# Supabase (required for alerts and news reminders)
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your_supabase_service_key
 ```
 
 #### Environment Loading (.env)

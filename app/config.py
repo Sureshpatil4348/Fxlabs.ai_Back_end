@@ -21,6 +21,10 @@ JBLANKED_API_KEY = os.environ.get("JBLANKED_API_KEY", "OZaABMUo")
 NEWS_UPDATE_INTERVAL_HOURS = int(os.environ.get("NEWS_UPDATE_INTERVAL_HOURS", "1"))
 NEWS_CACHE_MAX_ITEMS = int(os.environ.get("NEWS_CACHE_MAX_ITEMS", "500"))
 
+# Supabase configuration
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5YWp3aHRrd2xkcm1saGZpdXdnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjI5NjUzNCwiZXhwIjoyMDcxODcyNTM0fQ.UDqYHY5Io0o-fQTswCYQmMdC6UCPQI2gf3aTb9o09SE")
+
 # Filesystem-backed news cache
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 NEWS_CACHE_FILE = os.environ.get("NEWS_CACHE_FILE", os.path.join(BASE_DIR, "news_cache.json"))
