@@ -30,3 +30,17 @@ def configure_logging(level: str | int = None) -> None:
         handler.setFormatter(formatter)
         root.addHandler(handler)
 
+    # Suppress noisy third-party debug logs (e.g., SendGrid client payloads)
+    noisy_loggers = [
+        "python_http_client",
+        "python_http_client.client",
+        "sendgrid",
+        "urllib3",
+        "requests",
+    ]
+    for name in noisy_loggers:
+        try:
+            logging.getLogger(name).setLevel(logging.WARNING)
+        except Exception:
+            pass
+
