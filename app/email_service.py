@@ -156,6 +156,28 @@ class EmailService:
         # Generate hash using secure algorithm
         return hashlib.blake2b(alert_data.encode(), digest_size=32).hexdigest()
 
+    def _unsuffix_symbol(self, symbol: str) -> str:
+        try:
+            s = str(symbol).strip()
+            return s[:-1] if s.endswith("m") else s
+        except Exception:
+            return str(symbol)
+
+    def _pair_display(self, symbol: str) -> str:
+        """Return user-facing display for a trading symbol as ABC/DEF.
+
+        Non-breaking: only affects presentation; does not alter underlying symbols.
+        """
+        raw = self._unsuffix_symbol(symbol)
+        try:
+            if len(raw) >= 6:
+                base = raw[:3]
+                quote = raw[3:6]
+                return f"{base}/{quote}"
+            return raw
+        except Exception:
+            return raw
+
     def _format_now_local(self, tz_name: str = "Asia/Kolkata") -> str:
         """Return current time formatted with local timezone for display (default IST)."""
         try:
@@ -292,7 +314,7 @@ class EmailService:
         os_ = cfg.get("rsi_oversold_threshold", 30)
         lines.append(f"OB>={ob} OS<={os_}")
         for p in pairs:
-            sym = p.get("symbol", "?")
+            sym = self._pair_display(p.get("symbol", "?"))
             rsi = p.get("rsi", p.get("rsi_value", "?"))
             price = p.get("current_price", "?")
             chg = p.get("price_change_percent", "?")
@@ -305,7 +327,7 @@ class EmailService:
             f"Pairs: {len(pairs)}",
         ]
         for p in pairs:
-            sym = p.get("symbol", "?")
+            sym = self._pair_display(p.get("symbol", "?"))
             strength = p.get("strength", "?")
             signal = p.get("signal", "?")
             tf = p.get("timeframe", "?")
@@ -325,17 +347,17 @@ class EmailService:
             f"Pairs: {len(pairs)}",
         ]
         for p in pairs:
-            s1 = p.get("symbol1", "?")
-            s2 = p.get("symbol2", "?")
+            s1 = self._pair_display(p.get("symbol1", "?"))
+            s2 = self._pair_display(p.get("symbol2", "?"))
             tf = p.get("timeframe", "?")
             cond = p.get("trigger_condition", "?")
             if mode == "rsi_threshold":
                 r1 = p.get("rsi1", p.get("rsi1_value", "?"))
                 r2 = p.get("rsi2", p.get("rsi2_value", "?"))
-                lines.append(f"- {s1}/{s2} [{tf}]: {cond} RSI1 {r1} RSI2 {r2}")
+                lines.append(f"- {s1} vs {s2} [{tf}]: {cond} RSI1 {r1} RSI2 {r2}")
             else:
                 corr = p.get("correlation_value", "?")
-                lines.append(f"- {s1}/{s2} [{tf}]: {cond} Corr {corr}")
+                lines.append(f"- {s1} vs {s2} [{tf}]: {cond} Corr {corr}")
         return "\n".join(lines)
 
     def _safe_float_conversion(self, value: Any) -> Optional[float]:
@@ -664,7 +686,7 @@ class EmailService:
         # Build triggered pairs table
         pairs_table = ""
         for pair in triggered_pairs:
-            symbol = pair.get("symbol", "N/A")
+            symbol = self._pair_display(pair.get("symbol", "N/A"))
             strength = pair.get("strength", 0)
             signal = pair.get("signal", "N/A")
             timeframe = pair.get("timeframe", "N/A")
@@ -771,7 +793,7 @@ class EmailService:
 
         cards: List[str] = []
         for pair in triggered_pairs:
-            symbol = pair.get("symbol", "N/A")
+            symbol = self._pair_display(pair.get("symbol", "N/A"))
             timeframe = pair.get("timeframe", "style-weighted")
             cond = str(pair.get("trigger_condition", "")).strip().upper()
             if cond == "BUY":
@@ -829,7 +851,7 @@ class EmailService:
             f"Pairs: {len(pairs)}",
         ]
         for p in pairs:
-            sym = p.get("symbol", "?")
+            sym = self._pair_display(p.get("symbol", "?"))
             tf = p.get("timeframe", "style-weighted")
             cond = str(p.get("trigger_condition", "")).upper() or "N/A"
             if cond == "BUY":
@@ -1040,7 +1062,7 @@ class EmailService:
         cards: List[str] = []
         ts_local = self._format_now_local("Asia/Kolkata")
         for pair in triggered_pairs:
-            symbol = pair.get("symbol", "N/A")
+            symbol = self._pair_display(pair.get("symbol", "N/A"))
             timeframe = pair.get("timeframe", "N/A")
             rsi_value = pair.get("rsi_value", 0)
             price = pair.get("current_price", 0)
@@ -1102,7 +1124,7 @@ class EmailService:
         ts_local = self._format_now_local("Asia/Kolkata")
         indicators_csv = ", ".join((alert_config.get("selected_indicators") or [])) or "-"
         for pair in triggered_pairs:
-            symbol = pair.get("symbol", "N/A")
+            symbol = self._pair_display(pair.get("symbol", "N/A"))
             timeframe = pair.get("timeframe", "N/A")
             cond = str(pair.get("trigger_condition", "")).strip().upper()
             color = "#0CCC7C" if cond == "BUY" else "#E5494D"
@@ -1257,8 +1279,8 @@ class EmailService:
             # Build one content block per triggered pair inside the container
             pair_blocks: List[str] = []
             for pair in triggered_pairs:
-                pair_a = pair.get("symbol1", "N/A")
-                pair_b = pair.get("symbol2", "N/A")
+                pair_a = self._pair_display(pair.get("symbol1", "N/A"))
+                pair_b = self._pair_display(pair.get("symbol2", "N/A"))
                 timeframe = pair.get("timeframe", "N/A")
                 actual_corr = pair.get("correlation_value", 0)
                 expected_corr, trigger_rule = format_expected_and_rule(pair)
@@ -1455,8 +1477,8 @@ class EmailService:
 
             cards: List[str] = []
             for pair in triggered_pairs:
-                pair_a = pair.get("symbol1", "N/A")
-                pair_b = pair.get("symbol2", "N/A")
+                pair_a = self._pair_display(pair.get("symbol1", "N/A"))
+                pair_b = self._pair_display(pair.get("symbol2", "N/A"))
                 timeframe = pair.get("timeframe", "N/A")
                 rsi_corr_now = pair.get("rsi_corr_now")
                 expected_corr, trigger_rule = expected_and_rule(pair)

@@ -297,7 +297,7 @@ Notes:
 #### Email Template (Real Correlation)
 - Uses a compact, mobile‑friendly HTML card per triggered pair.
 - Fields per card:
-  - **pair_a/pair_b**: Symbols (e.g., `EURUSD` vs `GBPUSD`)
+- **pair_a/pair_b**: Symbols displayed as `ABC/DEF` (e.g., `EUR/USD` vs `GBP/USD`)
   - **lookback**: `correlation_window` from alert config
   - **timeframe**: TF of the evaluation (e.g., `1H`)
   - **expected_corr**: Threshold expression derived from the triggered rule:
