@@ -54,6 +54,29 @@ class RSITrackerAlertService:
         }
         return mapping.get(timeframe, 60)
 
+    def _discover_symbols(self) -> List[str]:
+        """Discover symbols to evaluate for RSI tracker.
+
+        Priority order:
+        1) FX_PAIRS_WHITELIST (comma-separated)
+        2) Built-in majors list
+        """
+        # 1) Explicit whitelist for all trackers
+        env_fx_list = os.environ.get("FX_PAIRS_WHITELIST", "")
+        if env_fx_list.strip():
+            return [s.strip().upper() for s in env_fx_list.split(",") if s.strip()]
+
+        # 2) Built-in safe default majors
+        return [
+            "EURUSD",
+            "GBPUSD",
+            "USDJPY",
+            "USDCHF",
+            "USDCAD",
+            "AUDUSD",
+            "NZDUSD",
+        ]
+
     def _is_stale_market(self, market_data: Dict[str, Any], timeframe: str) -> bool:
         try:
             ts_iso = market_data.get("timestamp")
@@ -420,12 +443,8 @@ class RSITrackerAlertService:
                         rsi_oversold=rsi_oversold,
                         cooldown_minutes=cooldown_minutes,
                     )
-                    # Pairs: use record if present; else fallback to env default list
-                    pairs: List[str] = alert.get("pairs", []) or []
-                    if not pairs:
-                        env_pairs = os.environ.get("RSI_TRACKER_DEFAULT_PAIRS", "")
-                        if env_pairs:
-                            pairs = [p.strip() for p in env_pairs.split(",") if p.strip()]
+                    # Pairs: auto-discover from env/global list. Ignore per-alert pairs.
+                    pairs: List[str] = self._discover_symbols()
 
                     # Enforce closed-bar policy: evaluate once per closed bar per symbol/timeframe
                     triggered_pairs: List[Dict[str, Any]] = []

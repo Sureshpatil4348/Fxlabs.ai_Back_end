@@ -32,6 +32,35 @@ class RSICorrelationTrackerAlertService:
         # Remember last mismatch state per (alert, pair_key, timeframe, mode)
         self._last_state: Dict[str, bool] = {}
 
+    def _discover_pair_keys(self) -> List[str]:
+        """Discover correlation pair keys to evaluate.
+
+        Priority order:
+        1) FX_PAIRS_WHITELIST (build all unique A_B combinations for A!=B)
+        2) Built-in majors combinations
+        """
+        whitelist = os.environ.get("FX_PAIRS_WHITELIST", "")
+        if whitelist.strip():
+            symbols = [s.strip().upper() for s in whitelist.split(",") if s.strip()]
+            pair_keys: List[str] = []
+            for i, a in enumerate(symbols):
+                for j, b in enumerate(symbols):
+                    if i == j:
+                        continue
+                    pair_keys.append(f"{a}_{b}")
+            return pair_keys
+
+        majors = [
+            "EURUSD","GBPUSD","USDJPY","USDCHF","USDCAD","AUDUSD","NZDUSD"
+        ]
+        pair_keys: List[str] = []
+        for i, a in enumerate(majors):
+            for j, b in enumerate(majors):
+                if i == j:
+                    continue
+                pair_keys.append(f"{a}_{b}")
+        return pair_keys
+
     def _state_key(self, alert_id: str, pair_key: str, timeframe: str, mode: str) -> str:
         return f"{alert_id}:{pair_key}:{timeframe}:{mode}"
 
@@ -71,9 +100,8 @@ class RSICorrelationTrackerAlertService:
                         pairs=len(pair_keys_snapshot),
                     )
 
-                    # Pairs for correlation come from env or alert (future). Expect comma pairs like "EURUSD_GBPUSD,USDJPY_GBPUSD"
-                    pairs_env = os.environ.get("RSI_CORR_TRACKER_DEFAULT_PAIRS", "")
-                    pair_keys: List[str] = [p.strip() for p in pairs_env.split(",") if p.strip()]
+                    # Pairs for correlation: auto-discover from env/global list. Ignore per-alert pairs.
+                    pair_keys: List[str] = self._discover_pair_keys()
                     if not pair_keys:
                         log_debug(
                             logger,

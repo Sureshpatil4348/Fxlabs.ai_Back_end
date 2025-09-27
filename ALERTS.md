@@ -1,5 +1,5 @@
 **Overview**
-- Single alert: RSI Tracker Alert (closed-bar only). Heatmap and RSI Correlation alerts have been removed.
+- Supported alerts: RSI Tracker and RSI Correlation Tracker (closed-bar only). Heatmap alerts also available.
 - Delivery channel: Email (IST timestamps). Telegram is out of scope.
 - Trigger philosophy: fire on threshold crossings; use per-side cooldown and threshold‑level re‑arm.
 
@@ -13,12 +13,15 @@
 - RSI Tracker Alert (single per user)
   - Timeframe: choose exactly one (e.g., `1M`, `5M`, `15M`, `30M`, `1H`, `4H`, `1D`, `1W`).
   - RSI settings: `rsi_period` (5–50), `rsi_overbought` (60–90), `rsi_oversold` (10–40).
-  - Behavior: If any subscribed pair crosses into overbought/oversold on the closed candle, a trigger is recorded and emailed.
+  - Pairs: no selection needed; backend auto-checks all configured pairs.
+  - Behavior: If any pair crosses into overbought/oversold on the closed candle, a trigger is recorded and emailed.
+  - Default pairs evaluated (when not configured via env): `EURUSD`, `GBPUSD`, `USDJPY`, `USDCHF`, `USDCAD`, `AUDUSD`, `NZDUSD`.
+  - Environment override: `FX_PAIRS_WHITELIST` (comma-separated) → global pairs for all trackers
 
 **Minimal UI**
 - Open from the bell icon in `src/components/RSIOverboughtOversoldTracker.js`.
 - Config component: `src/components/RSITrackerAlertConfig.jsx`.
-- Fields: `timeframe` (single), `rsiPeriod` (5–50), `rsiOverbought` (60–90), `rsiOversold` (10–40). Delete removes; save upserts the single alert.
+- Fields: `timeframe` (single), `rsiPeriod` (5–50), `rsiOverbought` (60–90), `rsiOversold` (10–40). Pair selection removed. Delete removes; save upserts the single alert.
 
 **System Safeguards**
 - Rate limit: max 5 emails/user/hour (overflow → digest).
@@ -65,10 +68,24 @@
 Single per-user alert for the RSI Correlation dashboard. User selects `mode` and timeframe.
 
 - **Mode**: `rsi_threshold` or `real_correlation`
-- **Timeframe**: one of `1M,5M,15M,30M,1H,4H,1D,1W`
+- **Timeframe**: one of `1M,5M,15M,30M,1H,4H,1D,1W` (choose only one)
+- **Pairs**: no selection needed; backend auto-checks configured correlation pairs.
 - **RSI Threshold**: `rsi_period` (5–50), `rsi_overbought` (60–90), `rsi_oversold` (10–40)
 - **Real Correlation**: `correlation_window` (20, 50, 90, 120)
 - **Behavior**: Insert a trigger when a correlation pair transitions into a mismatch per rules below.
+  
+Default correlation pair_keys evaluated (when not configured via env):
+
+- `EURUSD_GBPUSD`, `EURUSD_USDJPY`, `EURUSD_USDCHF`, `EURUSD_USDCAD`, `EURUSD_AUDUSD`, `EURUSD_NZDUSD`
+- `GBPUSD_EURUSD`, `GBPUSD_USDJPY`, `GBPUSD_USDCHF`, `GBPUSD_USDCAD`, `GBPUSD_AUDUSD`, `GBPUSD_NZDUSD`
+- `USDJPY_EURUSD`, `USDJPY_GBPUSD`, `USDJPY_USDCHF`, `USDJPY_USDCAD`, `USDJPY_AUDUSD`, `USDJPY_NZDUSD`
+- `USDCHF_EURUSD`, `USDCHF_GBPUSD`, `USDCHF_USDJPY`, `USDCHF_USDCAD`, `USDCHF_AUDUSD`, `USDCHF_NZDUSD`
+- `USDCAD_EURUSD`, `USDCAD_GBPUSD`, `USDCAD_USDJPY`, `USDCAD_USDCHF`, `USDCAD_AUDUSD`, `USDCAD_NZDUSD`
+- `AUDUSD_EURUSD`, `AUDUSD_GBPUSD`, `AUDUSD_USDJPY`, `AUDUSD_USDCHF`, `AUDUSD_USDCAD`, `AUDUSD_NZDUSD`
+- `NZDUSD_EURUSD`, `NZDUSD_GBPUSD`, `NZDUSD_USDJPY`, `NZDUSD_USDCHF`, `NZDUSD_USDCAD`, `NZDUSD_AUDUSD`
+
+Environment override:
+- `FX_PAIRS_WHITELIST` (comma-separated) → build all `A_B` pair_keys for A≠B
 
 UI: `src/components/RSICorrelationTrackerAlertConfig.jsx` (opened from `src/components/RSICorrelationDashboard.js`).
 

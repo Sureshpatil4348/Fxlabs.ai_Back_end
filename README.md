@@ -210,6 +210,7 @@ Internal alert tick_data shape:
 Notes:
 - Single alert per user from `rsi_tracker_alerts` table.
 - Backend enforces closed‑bar evaluation.
+- Pairs are auto-selected by backend via `FX_PAIRS_WHITELIST` or built-in majors (no pair selection in UI).
 
 #### Email Template (RSI)
 - Compact, per‑pair card format.
@@ -223,8 +224,12 @@ Notes:
 Notes:
 - Multiple triggers render multiple cards in a single email.
 
-### Removed Alert Types
-- Heatmap alerts and RSI Correlation alerts have been removed in favor of a single, simplified RSI Tracker alert.
+### RSI Correlation Tracker — Threshold and Real Correlation
+
+The RSI Correlation Tracker is available as a single per-user alert. Users select exactly one timeframe and a mode (`rsi_threshold` or `real_correlation`).
+
+- Pair selection is not required; backend evaluates correlation pairs from `FX_PAIRS_WHITELIST` (all A_B combos) or built-in majors.
+- Triggers insert into `rsi_correlation_tracker_alert_triggers` and emails reuse a compact template.
 
 ### Global Limit: Max 3 Pairs/User
 
