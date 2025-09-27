@@ -165,6 +165,13 @@ SUPABASE_SERVICE_KEY=your_supabase_service_key
   - The code automatically paginates and deduplicates emails.
 - For observability, the batch log includes a CSV of recipient emails and count.
 
+#### Auth Fetch Logging (Verbose)
+- Start: `daily_auth_fetch_start | page: 1 | per_page: 1000`
+- Per page: `daily_auth_fetch_page | page: <n> | users: <count>`
+- Per page emails (debug): `daily_auth_fetch_page_emails | page: <n> | count: <m> | emails_csv: a@x,b@y`
+- Final list: `daily_auth_fetch_done | users_total: <k> | emails_csv: ...`
+- Daily send mirrors the final list: `daily_auth_emails | users: <k> | emails_csv: ...`
+
 #### Environment Loading (.env)
 - The app now auto-loads `.env` via `python-dotenv` in `app/config.py`.
 - Place your `.env` at the project root (same folder as `server.py`).
