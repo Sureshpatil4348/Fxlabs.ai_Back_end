@@ -673,34 +673,23 @@ The system provides comprehensive logging for:
 - API request/response cycles
 - Performance metrics
 
-#### Structured Alert Logging (v2.1.0)
-Alert evaluations and actions are now logged in a structured, JSON-style format using `app/alert_logging.py`. Key events:
+#### Human‑Readable Emoji Logging (v2.2.0)
+Alert evaluations and actions are now logged in a clean, human‑readable format with emojis using `app/alert_logging.py`.
 
-- `evaluation_start`: per pair/timeframe evaluation start (DEBUG)
-- `market_data_loaded`: market data source and metadata (DEBUG)
-- `market_data_stale`: stale-bar skip with age metadata (DEBUG)
-- `warmup_insufficient`: RSI series not warm yet (DEBUG)
-- `rsi_calculated`: calculated RSI value (DEBUG)
-- `rsi_cross_event` / `rsi_cross_overbought` / `rsi_cross_oversold`: detected crossings (INFO)
-- `pair_cooldown_block`: cooldown prevented re-trigger (DEBUG)
-- `rsi_tracker_triggers` / `rsi_alert_triggers` / `heatmap_tracker_trigger` / `indicator_tracker_trigger` / `rsi_correlation_trigger` (INFO)
-- `email_queue` / `email_disabled`: email scheduling state (INFO)
-- `db_trigger_logged` / `db_trigger_log_failed` / `db_trigger_log_error`: DB logging outcomes (INFO/ERROR)
-- `alert_eval_start` / `alert_eval_end`: per-alert start/end with configuration snapshot and trigger counts (DEBUG)
+Key events (examples):
+- `🎯 rsi_tracker_triggers | alert_id: abc123 | count: 3`
+- `📤 email_queue | alert_type: rsi | alert_id: abc123`
+- `⚠️ market_data_stale | symbol: EURUSD | age_minutes: 12`
+- `📝 db_trigger_logged | alert_id: abc123 | symbol: EURUSD`
 
-These appear as compact one-line JSON objects after the timestamped prefix, e.g.:
-```
-2025-09-26 10:30:12+0000 | INFO | app.rsi_tracker_alert_service | {"event":"rsi_tracker_triggers","ts":"2025-09-26T10:30:12+00:00","alert_id":"...","count":3}
-```
-
-Benefits:
-- Lower parsing overhead for log processors
-- Easier filtering and correlation across services
-- Noise control: detailed steps at DEBUG, important outcomes at INFO
+Notes:
+- Complex objects (lists/dicts) are not dumped; shown as `…` to avoid noisy logs and accidental payload leaks.
+- Logs are optimized for humans in terminals, not JSON processors.
+- Email send failures no longer log raw provider response bodies.
 
 Modules instrumented: `rsi_alert_service`, `rsi_tracker_alert_service`, `rsi_correlation_tracker_alert_service`, `heatmap_tracker_alert_service`, `heatmap_indicator_tracker_alert_service`, `alert_cache`, and `email_service` (queue/send summaries).
 
-To enable DEBUG-level detailed evaluations, set:
+To enable DEBUG‑level detailed evaluations, set:
 ```bash
 export LOG_LEVEL=DEBUG
 ```

@@ -717,7 +717,7 @@ class EmailService:
                 self._record_user_send(user_email)
                 return True
             else:
-                logger.error(f"❌ Failed to send email: {response.status_code} - {response.body}")
+                logger.error(f"❌ Failed to send email: status={response.status_code}")
                 return False
                 
         except Exception as e:
@@ -772,7 +772,7 @@ class EmailService:
                 self._record_user_send(user_email)
                 return True
             else:
-                logger.error(f"❌ Failed to send heatmap tracker alert email: {response.status_code} - {response.body}")
+                logger.error(f"❌ Failed to send heatmap tracker alert email: status={response.status_code}")
                 return False
         except Exception as e:
             logger.error(f"❌ Error sending heatmap tracker alert email: {e}")
@@ -1111,7 +1111,7 @@ class EmailService:
                 self._record_user_send(user_email)
                 return True
             else:
-                logger.error(f"❌ Failed to send RSI alert email: {response.status_code} - {response.body}")
+                logger.error(f"❌ Failed to send RSI alert email: status={response.status_code}")
                 logger.error(f"   User: {user_email}")
                 logger.error(f"   Alert: {alert_name}")
                 return False
@@ -1169,7 +1169,7 @@ class EmailService:
                 self._record_user_send(user_email)
                 return True
             else:
-                logger.error(f"❌ Failed to send custom indicator alert email: {response.status_code} - {response.body}")
+                logger.error(f"❌ Failed to send custom indicator alert email: status={response.status_code}")
                 return False
         except Exception as e:
             logger.error(f"❌ Error sending custom indicator alert email: {e}")
@@ -1367,7 +1367,7 @@ class EmailService:
                 self._record_user_send(user_email)
                 return True
             else:
-                logger.error(f"❌ Failed to send RSI correlation alert email: {response.status_code} - {response.body}")
+                logger.error(f"❌ Failed to send RSI correlation alert email: status={response.status_code}")
                 return False
                 
         except Exception as e:
