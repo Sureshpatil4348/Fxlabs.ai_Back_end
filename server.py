@@ -252,7 +252,10 @@ def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
 
 def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe) -> datetime:
     """Calculate when the next OHLC update should be sent"""
-    if timeframe == Timeframe.M5:
+    if timeframe == Timeframe.M1:
+        # Next minute boundary
+        next_update = subscription_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    elif timeframe == Timeframe.M5:
         # Next 5-minute boundary
         current_minute = subscription_time.minute
         next_minute = ((current_minute // 5) + 1) * 5
@@ -297,13 +300,8 @@ def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe
             days_ahead = 7
         next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
     else:
-        # Default to 5 minutes
-        current_minute = subscription_time.minute
-        next_minute = ((current_minute // 5) + 1) * 5
-        if next_minute >= 60:
-            next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        else:
-            next_update = subscription_time.replace(minute=next_minute, second=0, microsecond=0)
+        # Default to 1 minute
+        next_update = subscription_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
     
     return next_update
 
@@ -926,7 +924,7 @@ if __name__ == "__main__":
     print("📊 Available endpoints:")
     print("   - WebSocket (new): ws://localhost:8000/ws/market")
     print("   - WebSocket (legacy): ws://localhost:8000/ws/ticks")
-    print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=5M&count=100")
+    print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=1M&count=100")
     print("   - News Analysis: GET /api/news/analysis")
     print("   - News Refresh: POST /api/news/refresh")
     print("   - Alert Cache: GET /api/alerts/cache")

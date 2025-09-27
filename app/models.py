@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 
 class Timeframe(str, Enum):
+    M1 = "1M"
     M5 = "5M"
     M15 = "15M"
     M30 = "30M"

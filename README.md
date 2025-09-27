@@ -343,7 +343,7 @@ Notes:
 
 ### Alert Scheduling & Re‑triggering (Global)
 
-- End‑of‑timeframe evaluation only: scheduler runs every 5 minutes; alerts are evaluated on timeframe closes (5M/15M/30M/1H/4H/1D). Tick-driven checks are disabled by default.
+- End‑of‑timeframe evaluation only: scheduler runs every 5 minutes; alerts are evaluated on timeframe closes (5M/15M/30M/1H/4H/1D). Tick-driven checks are disabled by default. Note: 1M is supported for market data streaming but alerts are restricted to 5M and higher.
 - Crossing/Flip triggers: fire when the metric crosses into the condition from the opposite side (or a regime flip occurs), not on every bar while in‑zone.
 
 See `ALERTS.md` for canonical Supabase table schemas and exact frontend implementation requirements (Type A/Type B/RSI/RSI‑Correlation), including field lists, endpoints, validation, and delivery channel setup.
@@ -397,11 +397,11 @@ Cache policy (weekly merge & dedup):
 const ws = new WebSocket('ws://localhost:8000/ws/market');
 
 ws.onopen = () => {
-    // Subscribe to EURUSD 5-minute data (minimum supported)
+    // Subscribe to EURUSD 1-minute data (alerts enforce 5M+ only)
     ws.send(JSON.stringify({
         action: 'subscribe',
         symbol: 'EURUSD',
-        timeframe: '5M',
+        timeframe: '1M',
         data_types: ['ticks', 'ohlc']
     }));
 };
@@ -575,7 +575,8 @@ The modular structure isolates responsibilities while preserving all existing be
 ## 📊 Supported Data Types
 
 ### Timeframes
-- **5M** - 5 Minutes (minimum supported)
+- **1M** - 1 Minute (streaming/data only; alerts enforce 5M minimum)
+- **5M** - 5 Minutes
 - **15M** - 15 Minutes
 - **30M** - 30 Minutes
 - **1H** - 1 Hour
