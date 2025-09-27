@@ -10,6 +10,11 @@
 - Retrigger policy: once triggered, re‑arm only after leaving the triggerable zone and trigger again only on a fresh crossing back in.
 - Timezone for display: Asia/Kolkata.
 - System safeguards: rate limit 5 emails/user/hour (overflow → digest), per‑pair concurrency cap, warm‑up for RSI, skip stale TFs (last candle age > 2× TF length).
+  - Startup warm‑up: On server start or first evaluation per key, alerts baseline current state and skip initial triggers for existing in‑zone conditions. Specifically:
+    - RSI Tracker: baseline last closed bar per (symbol, timeframe) and require the next new bar for triggers.
+    - RSI Correlation Tracker: baseline last closed bar per (pair_key, timeframe) and current mismatch state; trigger only on a transition after baseline.
+    - Heatmap Tracker: initialize armed state per (alert, symbol) from current Buy%/Sell% (disarm sides already above thresholds) and skip the first observation.
+    - Indicator Tracker: baseline last signal per (alert, symbol, timeframe, indicator) and skip the first observation.
 
 **Simplified Scope (Current Support)**
 - RSI Tracker Alert (single per user)

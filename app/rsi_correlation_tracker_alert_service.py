@@ -137,6 +137,21 @@ class RSICorrelationTrackerAlertService:
                                     continue
                                 last_pair_ts = min(ts1, ts2)
                                 prev_pair_ts = self._last_closed_bar_ts.get(pair_tf_key)
+                                # Startup warm-up: if first time seeing this pair/timeframe,
+                                # store baseline and skip triggering on this initial observation.
+                                if prev_pair_ts is None:
+                                    self._last_closed_bar_ts[pair_tf_key] = last_pair_ts
+                                    # Also baseline mismatch state without firing
+                                    if mode == "rsi_threshold":
+                                        mismatch, _, _ = await self._evaluate_rsi_threshold_mismatch(
+                                            s1, s2, timeframe, rsi_period, rsi_ob, rsi_os
+                                        )
+                                    else:
+                                        mismatch, _, _ = await self._evaluate_real_correlation_mismatch(
+                                            s1, s2, timeframe, corr_window
+                                        )
+                                    self._last_state[k] = bool(mismatch)
+                                    continue
                                 if prev_pair_ts is not None and prev_pair_ts == last_pair_ts:
                                     # Already evaluated for current closed bar
                                     continue

@@ -204,6 +204,7 @@ Internal alert tick_data shape:
 
 - Trigger policy: Alerts fire on RSI threshold crossings (Overbought ≥ OB, Oversold ≤ OS) on the current closed bar only (no live/intrabar evaluation).
 - Only‑NEW: Not required; detection uses previous vs current closed bar to identify a fresh crossing.
+- Startup warm‑up: On first observation per (symbol, timeframe) after server start, the last closed bar is baselined and no email is sent for existing in‑zone conditions; triggers begin from the next new closed bar.
 - Rearm policy: Threshold‑level re‑arm. After a trigger at OB, re‑arm when RSI returns below OB; for OS, re‑arm when RSI returns above OS.
 - Evaluation timing: Closed‑bar only (evaluates at timeframe boundaries). Intrabar/live evaluation is disabled to ensure RSI‑closed compliance.
 - Cooldown: None at pair-level for RSI Tracker; threshold re‑arm only.
@@ -227,6 +228,7 @@ Notes:
 ### RSI Correlation Tracker — Threshold and Real Correlation
 
 The RSI Correlation Tracker is available as a single per-user alert. Users select exactly one timeframe and a mode (`rsi_threshold` or `real_correlation`).
+  - Startup warm‑up: On first observation per (pair_key, timeframe), baseline the last closed bar and current mismatch state; trigger only when a new bar produces a transition into mismatch.
 
 - Pair selection is not required; backend evaluates a fixed set of correlation pair keys from `app/constants.py`.
 - Triggers insert into `rsi_correlation_tracker_alert_triggers` and emails reuse a compact template.
@@ -249,6 +251,7 @@ Closed‑bar evaluation & retriggering:
 
 - Trigger policy: Alerts fire on RSI threshold crossings (Overbought ≥ OB, Oversold ≤ OS) on the current closed bar only (no live/intrabar evaluation).
 - Only‑NEW: Not required; detection uses previous vs current closed bar to identify a fresh crossing.
+- Startup warm‑up: First observation per key is baselined; no initial trigger for existing in‑zone conditions.
 - Rearm policy: Threshold‑level re‑arm. After a trigger at OB, re‑arm when RSI returns below OB; for OS, re‑arm when RSI returns above OS.
 - Evaluation timing: Closed‑bar only (evaluates at timeframe boundaries). Intrabar/live evaluation is disabled to ensure RSI‑closed compliance.
 - Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes). Override with `cooldown_minutes` on the alert (persisted to `rsi_alerts.cooldown_minutes`).
@@ -312,6 +315,7 @@ Notes:
 ### Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)
 
 - Per‑timeframe indicator strength is normalized to a score in [−100..+100].
+- Startup warm‑up: For the Tracker, armed state per (alert, symbol) is initialized from current Buy%/Sell% (sides already above thresholds start disarmed) and the first observation is skipped. For the Custom Indicator Tracker, the last signal per (alert, symbol, timeframe, indicator) is baselined and the first observation is skipped.
 - Style weighting aggregates across the alert’s selected timeframes:
   - Scalper: 1M(0.2), 5M(0.4), 15M(0.3), 30M(0.1)
   - Day: 15M(0.2), 30M(0.35), 1H(0.35), 4H(0.1)

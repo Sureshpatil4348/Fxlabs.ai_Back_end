@@ -74,7 +74,20 @@ class HeatmapIndicatorTrackerAlertService:
                             if signal not in ("buy", "sell", "neutral"):
                                 continue
                             k = self._key(alert_id, symbol, timeframe, indicator)
-                            prev = self._last_signal.get(k, "neutral")
+                            prev = self._last_signal.get(k)
+                            if prev is None:
+                                # Startup warm-up: baseline last signal and skip first observation
+                                self._last_signal[k] = signal
+                                log_debug(
+                                    logger,
+                                    "indicator_baseline",
+                                    alert_id=alert_id,
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                    indicator=indicator,
+                                    baseline_signal=signal,
+                                )
+                                continue
                             self._last_signal[k] = signal
                             log_debug(
                                 logger,

@@ -79,7 +79,18 @@ class HeatmapTrackerAlertService:
                                 final_score=round(final_score, 2),
                             )
                             k = self._key(alert_id, symbol)
-                            st = self._armed.setdefault(k, {"buy": True, "sell": True})
+                            st = self._armed.get(k)
+                            if st is None:
+                                # Startup warm-up: baseline armed-state from current values.
+                                # If currently above threshold, mark that side disarmed to avoid immediate trigger.
+                                st = {"buy": True, "sell": True}
+                                if buy_pct >= buy_t:
+                                    st["buy"] = False
+                                if sell_pct >= sell_t:
+                                    st["sell"] = False
+                                self._armed[k] = st
+                                # Skip triggering on this first observation after baselining
+                                continue
 
                             # Re-arm checks
                             if not st["buy"] and buy_pct < max(0.0, buy_t - 5):

@@ -408,6 +408,11 @@ class RSITrackerAlertService:
                                 )
                                 continue
                             prev_ts = self._last_closed_bar_ts.get(key)
+                            # Startup warm-up: if we've never seen this (symbol,timeframe) key,
+                            # baseline the last closed bar and skip triggering on this first observation.
+                            if prev_ts is None:
+                                self._last_closed_bar_ts[key] = last_ts
+                                continue
                             if prev_ts is not None and prev_ts == last_ts:
                                 continue
                             self._last_closed_bar_ts[key] = last_ts
