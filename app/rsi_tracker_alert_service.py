@@ -11,6 +11,7 @@ from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
+from .constants import RSI_SUPPORTED_SYMBOLS
 
 
 configure_logging()
@@ -33,9 +34,7 @@ class RSITrackerAlertService:
     def __init__(self) -> None:
         self.supabase_url = os.environ.get("SUPABASE_URL", "")
         self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
-        # Pair-level cooldowns per side
-        self.pair_cooldown_minutes_default: int = int(os.environ.get("RSI_TRACKER_COOLDOWN_MINUTES", "30"))
-        self._pair_cooldowns: Dict[str, datetime] = {}
+        # Pair-level cooldowns were removed per product decision; rely on threshold re-arm only
         # Hysteresis arm/disarm state per (alert, symbol, timeframe)
         self._hysteresis_map: Dict[str, Dict[str, bool]] = {}
         # Track last evaluated closed bar per (symbol, timeframe)
@@ -55,27 +54,8 @@ class RSITrackerAlertService:
         return mapping.get(timeframe, 60)
 
     def _discover_symbols(self) -> List[str]:
-        """Discover symbols to evaluate for RSI tracker.
-
-        Priority order:
-        1) FX_PAIRS_WHITELIST (comma-separated)
-        2) Built-in majors list
-        """
-        # 1) Explicit whitelist for all trackers
-        env_fx_list = os.environ.get("FX_PAIRS_WHITELIST", "")
-        if env_fx_list.strip():
-            return [s.strip().upper() for s in env_fx_list.split(",") if s.strip()]
-
-        # 2) Built-in safe default majors
-        return [
-            "EURUSD",
-            "GBPUSD",
-            "USDJPY",
-            "USDCHF",
-            "USDCAD",
-            "AUDUSD",
-            "NZDUSD",
-        ]
+        """Return fixed, supported symbols for RSI tracking (broker-suffixed)."""
+        return RSI_SUPPORTED_SYMBOLS
 
     def _is_stale_market(self, market_data: Dict[str, Any], timeframe: str) -> bool:
         try:
@@ -245,28 +225,7 @@ class RSITrackerAlertService:
             )
             return None
 
-    def _allow_by_pair_cooldown(self, alert_id: str, symbol: str, timeframe: str, side: str, cooldown_minutes: Optional[int]) -> bool:
-        try:
-            minutes = int(cooldown_minutes) if cooldown_minutes is not None else self.pair_cooldown_minutes_default
-        except Exception:
-            minutes = self.pair_cooldown_minutes_default
-        key = f"{alert_id}:{symbol}:{timeframe}:{side}"
-        now = datetime.now(timezone.utc)
-        last = self._pair_cooldowns.get(key)
-        if last is not None and (now - last) < timedelta(minutes=minutes):
-            log_debug(
-                logger,
-                "pair_cooldown_block",
-                alert_id=alert_id,
-                symbol=symbol,
-                timeframe=timeframe,
-                side=side,
-                cooldown_minutes=minutes,
-                last_trigger_iso=last.isoformat(),
-            )
-            return False
-        self._pair_cooldowns[key] = now
-        return True
+    # Pair-level cooldown removed
 
     async def _get_market_data_for_symbol(self, symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
         try:
@@ -405,9 +364,7 @@ class RSITrackerAlertService:
                     rsi_period = int(alert.get("rsi_period", 14))
                     rsi_overbought = int(alert.get("rsi_overbought", alert.get("rsi_overbought_threshold", 70)))
                     rsi_oversold = int(alert.get("rsi_oversold", alert.get("rsi_oversold_threshold", 30)))
-                    cooldown_minutes = alert.get("cooldown_minutes")  # optional, default inside service
-                    # Start-of-alert evaluation log
-                    pairs_cfg = alert.get("pairs", []) or []
+                    # Start-of-alert evaluation log (no per-alert pairs, fixed set used)
                     log_debug(
                         logger,
                         "alert_eval_start",
@@ -415,12 +372,10 @@ class RSITrackerAlertService:
                         alert_id=alert_id,
                         alert_name=alert_name,
                         user_email=user_email,
-                        pairs=len(pairs_cfg),
                         timeframe=timeframe,
                         rsi_period=rsi_period,
                         rsi_overbought=rsi_overbought,
                         rsi_oversold=rsi_oversold,
-                        cooldown_minutes=cooldown_minutes,
                     )
                     # Pairs: auto-discover from env/global list. Ignore per-alert pairs.
                     pairs: List[str] = self._discover_symbols()
@@ -467,10 +422,7 @@ class RSITrackerAlertService:
                             if not cond:
                                 continue
 
-                            # Per-side cooldown
-                            side = "overbought" if cond == "overbought" else "oversold"
-                            if not self._allow_by_pair_cooldown(alert_id, symbol, timeframe, side, cooldown_minutes):
-                                continue
+                            # No pair-level cooldown; rely on threshold re-arm only
 
                             # Compute RSI value again for payload (last of series)
                             series = await self._get_recent_rsi_series(symbol, timeframe, rsi_period, bars_needed=1)

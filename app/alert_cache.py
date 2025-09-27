@@ -109,8 +109,6 @@ class AlertCache:
                         "user_id": alert.get("user_id"),
                         "user_email": alert.get("user_email"),
                         "is_active": alert.get("is_active", True),
-                        # Optional pairs array; UI may manage subscriptions; fallback handled in service via env
-                        "pairs": alert.get("pairs", []),
                         "timeframe": alert.get("timeframe", "1H"),
                         "rsi_period": alert.get("rsi_period", 14),
                         "rsi_overbought": alert.get("rsi_overbought", alert.get("rsi_overbought_threshold", 70)),

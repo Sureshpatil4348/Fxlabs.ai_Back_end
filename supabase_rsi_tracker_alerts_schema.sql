@@ -10,7 +10,6 @@ create table if not exists public.rsi_tracker_alerts (
   rsi_overbought int2 not null check (rsi_overbought between 60 and 90) default 70,
   rsi_oversold int2 not null check (rsi_oversold between 10 and 40) default 30,
   is_active boolean not null default true,
-  pairs text[] null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint rsi_ob_gt_os check (rsi_overbought > rsi_oversold),

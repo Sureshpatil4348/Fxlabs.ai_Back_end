@@ -11,6 +11,7 @@ from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
+from .constants import RSI_CORRELATION_PAIR_KEYS
 
 
 configure_logging()
@@ -33,33 +34,8 @@ class RSICorrelationTrackerAlertService:
         self._last_state: Dict[str, bool] = {}
 
     def _discover_pair_keys(self) -> List[str]:
-        """Discover correlation pair keys to evaluate.
-
-        Priority order:
-        1) FX_PAIRS_WHITELIST (build all unique A_B combinations for A!=B)
-        2) Built-in majors combinations
-        """
-        whitelist = os.environ.get("FX_PAIRS_WHITELIST", "")
-        if whitelist.strip():
-            symbols = [s.strip().upper() for s in whitelist.split(",") if s.strip()]
-            pair_keys: List[str] = []
-            for i, a in enumerate(symbols):
-                for j, b in enumerate(symbols):
-                    if i == j:
-                        continue
-                    pair_keys.append(f"{a}_{b}")
-            return pair_keys
-
-        majors = [
-            "EURUSD","GBPUSD","USDJPY","USDCHF","USDCAD","AUDUSD","NZDUSD"
-        ]
-        pair_keys: List[str] = []
-        for i, a in enumerate(majors):
-            for j, b in enumerate(majors):
-                if i == j:
-                    continue
-                pair_keys.append(f"{a}_{b}")
-        return pair_keys
+        """Return fixed, documented correlation pair keys."""
+        return RSI_CORRELATION_PAIR_KEYS
 
     def _state_key(self, alert_id: str, pair_key: str, timeframe: str, mode: str) -> str:
         return f"{alert_id}:{pair_key}:{timeframe}:{mode}"
@@ -83,8 +59,6 @@ class RSICorrelationTrackerAlertService:
                     rsi_os = int(alert.get("rsi_oversold", 30))
                     corr_window = int(alert.get("correlation_window", 50))
                     # Start-of-alert evaluation log
-                    pairs_env = os.environ.get("RSI_CORR_TRACKER_DEFAULT_PAIRS", "")
-                    pair_keys_snapshot: List[str] = [p.strip() for p in pairs_env.split(",") if p.strip()]
                     log_debug(
                         logger,
                         "alert_eval_start",
@@ -97,7 +71,6 @@ class RSICorrelationTrackerAlertService:
                         rsi_overbought=rsi_ob,
                         rsi_oversold=rsi_os,
                         correlation_window=corr_window,
-                        pairs=len(pair_keys_snapshot),
                     )
 
                     # Pairs for correlation: auto-discover from env/global list. Ignore per-alert pairs.

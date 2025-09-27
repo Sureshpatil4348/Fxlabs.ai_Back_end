@@ -25,7 +25,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
-- **Smart Email Cooldown**: Value-based cooldown prevents spam while allowing significant RSI changes
+- **Smart Email Cooldown**: Value-based cooldown prevents spam while allowing significant RSI changes (email-level only; RSI Tracker pair-level cooldown removed)
 - **Intelligent Caching**: Memory-efficient selective data caching
 - **High Performance**: 99.9% bandwidth reduction through selective streaming
 - **Scalable Architecture**: Async/await design for high concurrency
@@ -206,11 +206,11 @@ Internal alert tick_data shape:
 - Only‑NEW: Not required; detection uses previous vs current closed bar to identify a fresh crossing.
 - Rearm policy: Threshold‑level re‑arm. After a trigger at OB, re‑arm when RSI returns below OB; for OS, re‑arm when RSI returns above OS.
 - Evaluation timing: Closed‑bar only (evaluates at timeframe boundaries). Intrabar/live evaluation is disabled to ensure RSI‑closed compliance.
-- Cooldown: Per (alert, symbol, timeframe, side) cooldown (default 30 minutes).
+- Cooldown: None at pair-level for RSI Tracker; threshold re‑arm only.
 Notes:
 - Single alert per user from `rsi_tracker_alerts` table.
 - Backend enforces closed‑bar evaluation.
-- Pairs are auto-selected by backend via `FX_PAIRS_WHITELIST` or built-in majors (no pair selection in UI).
+- Pairs are fixed in code via `app/constants.py` (no per-alert selection, no env overrides).
 
 #### Email Template (RSI)
 - Compact, per‑pair card format.
@@ -228,7 +228,7 @@ Notes:
 
 The RSI Correlation Tracker is available as a single per-user alert. Users select exactly one timeframe and a mode (`rsi_threshold` or `real_correlation`).
 
-- Pair selection is not required; backend evaluates correlation pairs from `FX_PAIRS_WHITELIST` (all A_B combos) or built-in majors.
+- Pair selection is not required; backend evaluates a fixed set of correlation pair keys from `app/constants.py`.
 - Triggers insert into `rsi_correlation_tracker_alert_triggers` and emails reuse a compact template.
 
 ### Global Limit: Max 3 Pairs/User

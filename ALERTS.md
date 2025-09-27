@@ -13,10 +13,9 @@
 - RSI Tracker Alert (single per user)
   - Timeframe: choose exactly one (e.g., `1M`, `5M`, `15M`, `30M`, `1H`, `4H`, `1D`, `1W`).
   - RSI settings: `rsi_period` (5–50), `rsi_overbought` (60–90), `rsi_oversold` (10–40).
-  - Pairs: no selection needed; backend auto-checks all configured pairs.
+  - Pairs: fixed set, backend uses a documented list (no per-alert selection, no env overrides).
   - Behavior: If any pair crosses into overbought/oversold on the closed candle, a trigger is recorded and emailed.
-  - Default pairs evaluated (when not configured via env): `EURUSD`, `GBPUSD`, `USDJPY`, `USDCHF`, `USDCAD`, `AUDUSD`, `NZDUSD`.
-  - Environment override: `FX_PAIRS_WHITELIST` (comma-separated) → global pairs for all trackers
+  - Supported trading pairs (MT5-suffixed): `EURUSDm, GBPUSDm, USDJPYm, USDCHFm, AUDUSDm, USDCADm, NZDUSDm, EURGBPm, EURJPYm, EURCHFm, EURAUDm, EURCADm, EURNZDm, GBPJPYm, GBPCHFm, GBPAUDm, GBPCADm, GBPNZDm, AUDJPYm, AUDCHFm, AUDCADm, AUDNZDm, NZDJPYm, NZDCHFm, NZDCADm, CADJPYm, CADCHFm, CHFJPYm, XAUUSDm, XAGUSDm, BTCUSDm, ETHUSDm`.
 
 **System Safeguards**
 - Rate limit: max 5 emails/user/hour (overflow → digest).
@@ -29,7 +28,7 @@
 - Footer: Not financial advice.
 
 **Defaults That Work**
-- RSI Tracker: timeframe `1H`, period `14`, thresholds OB=70 / OS=30, cooldown 30m.
+- RSI Tracker: timeframe `1H`, period `14`, thresholds OB=70 / OS=30.
 
 **RSI Tracker — Product & Tech Spec**
 1) Configuration
@@ -42,7 +41,7 @@
   - Wilder’s method using broker OHLC; closed‑bar only; warm‑up enforced.
 5) Trigger Logic
   - Crossing policy: Overbought (prev < OB and curr ≥ OB), Oversold (prev > OS and curr ≤ OS).
-  - Threshold‑level re‑arm per side; per (alert, symbol, timeframe, side) cooldown.
+  - Threshold‑level re‑arm per side. No additional per-pair cooldown applied for RSI Tracker.
 6) Alert Content
   - Email Subject: `RSI Alert - <alert_name>`; includes per‑pair summary (zone, RSI value, price, IST time).
 7) Example Config (JSON)
@@ -73,18 +72,10 @@ Single per-user alert for the RSI Correlation dashboard. User selects `mode` and
 - **Real Correlation**: `correlation_window` (20, 50, 90, 120)
 - **Behavior**: Insert a trigger when a correlation pair transitions into a mismatch per rules below.
   
-Default correlation pair_keys evaluated (when not configured via env):
+Fixed correlation pair_keys evaluated:
 
-- `EURUSD_GBPUSD`, `EURUSD_USDJPY`, `EURUSD_USDCHF`, `EURUSD_USDCAD`, `EURUSD_AUDUSD`, `EURUSD_NZDUSD`
-- `GBPUSD_EURUSD`, `GBPUSD_USDJPY`, `GBPUSD_USDCHF`, `GBPUSD_USDCAD`, `GBPUSD_AUDUSD`, `GBPUSD_NZDUSD`
-- `USDJPY_EURUSD`, `USDJPY_GBPUSD`, `USDJPY_USDCHF`, `USDJPY_USDCAD`, `USDJPY_AUDUSD`, `USDJPY_NZDUSD`
-- `USDCHF_EURUSD`, `USDCHF_GBPUSD`, `USDCHF_USDJPY`, `USDCHF_USDCAD`, `USDCHF_AUDUSD`, `USDCHF_NZDUSD`
-- `USDCAD_EURUSD`, `USDCAD_GBPUSD`, `USDCAD_USDJPY`, `USDCAD_USDCHF`, `USDCAD_AUDUSD`, `USDCAD_NZDUSD`
-- `AUDUSD_EURUSD`, `AUDUSD_GBPUSD`, `AUDUSD_USDJPY`, `AUDUSD_USDCHF`, `AUDUSD_USDCAD`, `AUDUSD_NZDUSD`
-- `NZDUSD_EURUSD`, `NZDUSD_GBPUSD`, `NZDUSD_USDJPY`, `NZDUSD_USDCHF`, `NZDUSD_USDCAD`, `NZDUSD_AUDUSD`
-
-Environment override:
-- `FX_PAIRS_WHITELIST` (comma-separated) → build all `A_B` pair_keys for A≠B
+- Positive: `EURUSDm_GBPUSDm`, `EURUSDm_AUDUSDm`, `EURUSDm_NZDUSDm`, `GBPUSDm_AUDUSDm`, `AUDUSDm_NZDUSDm`, `USDCHFm_USDJPYm`, `XAUUSDm_XAGUSDm`, `XAUUSDm_EURUSDm`, `BTCUSDm_ETHUSDm`, `BTCUSDm_XAUUSDm`
+- Negative: `EURUSDm_USDCHFm`, `GBPUSDm_USDCHFm`, `USDJPYm_EURUSDm`, `USDJPYm_GBPUSDm`, `USDCADm_AUDUSDm`, `USDCHFm_AUDUSDm`, `XAUUSDm_USDJPYm`
 
 Configuration:
 - Single alert per user (unique by `user_id`)
