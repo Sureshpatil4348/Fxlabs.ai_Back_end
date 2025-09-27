@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import aiohttp
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -15,6 +16,7 @@ from .models import Timeframe
 from .mt5_utils import get_ohlc_data
 from .heatmap_tracker_alert_service import heatmap_tracker_alert_service
 from . import news as news_mod
+from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY
 
 
 logger = logging.getLogger(__name__)
@@ -206,9 +208,73 @@ def _next_9am_ist_utc(now_utc: Optional[datetime] = None) -> datetime:
     return target_ist.astimezone(timezone.utc)
 
 
+async def _fetch_all_user_emails_from_auth() -> List[str]:
+    """Fetch all user emails from Supabase Auth admin API.
+
+    Uses service role key to list users. Paginates until no results.
+    """
+    try:
+        supabase_url = SUPABASE_URL
+        supabase_key = SUPABASE_SERVICE_KEY
+        if not supabase_url or not supabase_key:
+            log_error(logger, "daily_auth_users_fetch_skipped", reason="missing_supabase_credentials")
+            return []
+
+        base = supabase_url.rstrip("/")
+        url = f"{base}/auth/v1/admin/users"
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Content-Type": "application/json",
+        }
+        timeout = aiohttp.ClientTimeout(connect=3, sock_read=10, total=20)
+        emails: List[str] = []
+        page = 1
+        per_page = 1000
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                params = {"page": page, "per_page": per_page}
+                try:
+                    async with session.get(url, headers=headers, params=params) as resp:
+                        if resp.status != 200:
+                            txt = await resp.text()
+                            log_error(
+                                logger,
+                                "daily_auth_users_fetch_failed",
+                                status=resp.status,
+                                page=page,
+                                body=(txt[:200] if isinstance(txt, str) else ""),
+                            )
+                            break
+                        data = await resp.json()
+                        # Response can be a list of users or an object with a 'users' key
+                        users = data if isinstance(data, list) else data.get("users", []) if isinstance(data, dict) else []
+                        if not users:
+                            break
+                        for u in users:
+                            try:
+                                em = str(u.get("email", "")).strip()
+                                if em:
+                                    emails.append(em)
+                            except Exception:
+                                continue
+                        if len(users) < per_page:
+                            break
+                        page += 1
+                except Exception as e:
+                    log_error(logger, "daily_auth_users_fetch_error", page=page, error=str(e))
+                    break
+        # Deduplicate and sort for stable logging
+        return sorted({e for e in emails if isinstance(e, str) and e})
+    except Exception as e:
+        log_error(logger, "daily_auth_users_fetch_unexpected", error=str(e))
+        return []
+
+
 async def _send_daily_to_all_users(payload: Dict[str, Any]) -> None:
     try:
-        emails = await news_mod._fetch_all_user_emails()
+        # For daily mails, use Supabase Auth users as the source of truth
+        emails = await _fetch_all_user_emails_from_auth()
     except Exception as e:
         log_error(logger, "daily_fetch_users_error", error=str(e))
         emails = []

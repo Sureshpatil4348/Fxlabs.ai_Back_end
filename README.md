@@ -159,7 +159,10 @@ SUPABASE_SERVICE_KEY=your_supabase_service_key
 ### Daily Morning Brief
 - Uses the same SendGrid configuration (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`).
 - Runs at 09:00 IST daily via `daily_mail_scheduler()`.
-- Recipients are fetched from active alert tables in Supabase (union of `rsi_tracker_alerts`, `rsi_correlation_tracker_alerts`, `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`).
+- Recipients are fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for daily emails and does not depend on per‑product alert tables.
+  - Endpoint: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
+  - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
+  - The code automatically paginates and deduplicates emails.
 - For observability, the batch log includes a CSV of recipient emails and count.
 
 #### Environment Loading (.env)
