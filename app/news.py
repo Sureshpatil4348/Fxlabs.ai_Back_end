@@ -936,6 +936,11 @@ async def check_and_send_news_reminders() -> None:
             return
 
         # Send reminders per item to all users
+        try:
+            emails_csv = ",".join([e for e in emails if isinstance(e, str)])
+        except Exception:
+            emails_csv = ""
+        log_info(logger, "news_reminder_recipients", users=len(emails), emails_csv=emails_csv)
         for item in due_items:
             title = (item.headline or "News Event").strip()
             event_time_local = _format_event_time_local(item.time)

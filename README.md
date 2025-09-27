@@ -156,6 +156,12 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_KEY=your_supabase_service_key
 ```
 
+### Daily Morning Brief
+- Uses the same SendGrid configuration (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`).
+- Runs at 09:00 IST daily via `daily_mail_scheduler()`.
+- Recipients are fetched from active alert tables in Supabase (union of `rsi_tracker_alerts`, `rsi_correlation_tracker_alerts`, `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`).
+- For observability, the batch log includes a CSV of recipient emails and count.
+
 #### Environment Loading (.env)
 - The app now auto-loads `.env` via `python-dotenv` in `app/config.py`.
 - Place your `.env` at the project root (same folder as `server.py`).

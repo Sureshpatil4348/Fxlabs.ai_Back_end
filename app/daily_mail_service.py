@@ -215,7 +215,11 @@ async def _send_daily_to_all_users(payload: Dict[str, Any]) -> None:
     if not emails:
         log_error(logger, "daily_no_users")
         return
-    log_info(logger, "daily_send_batch", users=len(emails))
+    try:
+        emails_csv = ",".join([e for e in emails if isinstance(e, str)])
+    except Exception:
+        emails_csv = ""
+    log_info(logger, "daily_send_batch", users=len(emails), emails_csv=emails_csv)
     tasks = []
     for em in emails:
         tasks.append(email_service.send_daily_brief(user_email=em, payload=payload))
