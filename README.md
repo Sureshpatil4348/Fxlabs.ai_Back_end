@@ -33,6 +33,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Warm-up & Stale-Data Protection**: Skips evaluations when latest bar is stale (>2× timeframe) and enforces indicator lookback (e.g., RSI series) before triggering
 // Removed: Rate Limits + Digest (alerts send immediately subject to value-based cooldown)
 - **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
+- **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FXLabs • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers
   - Per-alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
 

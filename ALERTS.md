@@ -185,3 +185,11 @@ Email HTML structure example (simplified):
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FxLabs • News Reminder</title></head>
 <body style="margin:0;background:#F5F7FB;"> ... </body></html>
 ```
+
+### Common Email Header (All alerts)
+
+- Color: `#07c05c`
+- Layout: `[FxLabs logo] FXLabs • <Alert Type> • <Local Date IST> • <Local Time IST>`
+  - The time part is rendered in a smaller font size.
+  - Logo uses the white SVG mark embedded inline for email compatibility.
+- Timezone: Defaults to `Asia/Kolkata` (IST). For Daily emails, the header shows the configured time label (e.g., `IST 09:00`).
