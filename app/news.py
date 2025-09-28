@@ -1020,7 +1020,7 @@ def _derive_bias(effect: Optional[str]) -> str:
 
 
 async def check_and_send_news_reminders() -> None:
-    """Check news within next 5 minutes and email all users once per event.
+    """Check high‑impact news within next 5 minutes and email all users once per event.
 
     - Scans in-memory `global_news_cache` for events with UTC time within (now, now+5m].
     - Skips items already marked `reminder_sent`.
@@ -1037,7 +1037,14 @@ async def check_and_send_news_reminders() -> None:
                     continue
                 event_dt = _iso_to_dt(item.time)
                 if now < event_dt <= window_end:
-                    due_items.append(item)
+                    # Only consider high‑impact items
+                    try:
+                        impact_token = (item.analysis or {}).get("impact")
+                        impact_norm = str(impact_token).strip().lower() if impact_token is not None else ""
+                    except Exception:
+                        impact_norm = ""
+                    if impact_norm == "high":
+                        due_items.append(item)
             except Exception:
                 continue
 

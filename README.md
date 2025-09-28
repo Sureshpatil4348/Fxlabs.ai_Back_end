@@ -165,6 +165,10 @@ SUPABASE_SERVICE_KEY=your_supabase_service_key
   - The code automatically paginates and deduplicates emails.
 - For observability, the batch log includes a CSV of recipient emails and count.
 
+#### News Reminder Behavior (High‑Impact Only)
+- The 5‑minute news reminder now filters to only AI‑normalized high‑impact items (`impact == "high"`). Medium/low impact items are skipped.
+- Source impact values and AI analysis are normalized to `high|medium|low`; only `high` qualifies for reminders.
+
 #### Auth Fetch Logging (Verbose)
 - Start: `daily_auth_fetch_start | page: 1 | per_page: 1000`
 - Per page: `daily_auth_fetch_page | page: <n> | users: <count>`
