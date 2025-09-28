@@ -1,4 +1,5 @@
 import os
+import base64
 import asyncio
 import hashlib
 import hmac
@@ -18,11 +19,13 @@ try:
         TrackingSettings,
         ClickTracking,
         OpenTracking,
+        Attachment,
     )
 except Exception:  # Module may be missing in some environments
     SendGridAPIClient = None
     Mail = Email = To = Content = None
     TrackingSettings = ClickTracking = OpenTracking = None
+    Attachment = None
 import logging
 
 # Configure logging
@@ -213,18 +216,13 @@ class EmailService:
             date_display = f"{date_display} {tz_label}".strip()
         time_display = time_label_override if time_label_override else f"{time_str} {tz_label}".strip()
 
-        logo_svg = (
-            '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 1014 1102" aria-hidden="true" style="vertical-align:middle;display:inline-block">'
-            '<path d="M0 0 C332.64 0 665.28 0 1008 0 C1008 88.44 1008 176.88 1008 268 C763.8 268 519.6 268 268 268 C268 542.56 268 817.12 268 1100 C179.56 1100 91.12 1100 0 1100 C0 737 0 374 0 0 Z " fill="#FFFFFF" transform="translate(2,1)"/>'
-            '<path d="M0 0 C105.93 0 211.86 0 321 0 C321 105.93 321 211.86 321 321 C215.07 321 109.14 321 0 321 C0 215.07 0 109.14 0 0 Z " fill="#FFFFFF" transform="translate(417,415)"/>'
-            '</svg>'
-        )
+        logo_img = '<img src="cid:fx-logo" width="18" height="18" alt="FxLabs" style="vertical-align:middle;display:inline-block" />'
 
         return (
             f"<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" "
             f"style=\"width:600px;background:#07c05c;color:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;\">"
             f"<tr><td style=\"padding:14px 16px;\">"
-            f"<span style=\"display:inline-block;vertical-align:middle;\">{logo_svg}</span>"
+            f"<span style=\"display:inline-block;vertical-align:middle;\">{logo_img}</span>"
             f"<span style=\"display:inline-block;vertical-align:middle;font-weight:700;margin-left:8px;\">FXLabs</span>"
             f"<span style=\"display:inline-block;margin:0 6px;vertical-align:middle;\">•</span>"
             f"<span style=\"display:inline-block;vertical-align:middle;\">{alert_type}</span>"
@@ -340,6 +338,35 @@ class EmailService:
                 mail.add_header("X-Entity-Ref-ID", ref_id)
             except Exception:
                 pass
+        # Attach inline logo (CID) for email header if available
+        try:
+            if Attachment:
+                logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "images", "fxlabs_logo_white.png")
+                if not os.path.exists(logo_path):
+                    # Fallback to project root assets path
+                    logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "images", "fxlabs_logo_white.png")
+                if os.path.exists(logo_path):
+                    with open(logo_path, "rb") as f:
+                        data = base64.b64encode(f.read()).decode()
+                    attachment = Attachment()
+                    attachment.file_content = data
+                    attachment.file_type = "image/png"
+                    attachment.file_name = "fxlabs_logo_white.png"
+                    # Use Content-ID so <img src="cid:fx-logo"> can reference
+                    attachment.disposition = "inline"
+                    attachment.content_id = "fx-logo"
+                    # Some helper libs use different property names; assign defensively
+                    try:
+                        mail.add_attachment(attachment)
+                    except Exception:
+                        # Older helper version: .attachments list
+                        try:
+                            mail.attachments = getattr(mail, "attachments", []) + [attachment]
+                        except Exception:
+                            pass
+        except Exception:
+            # Non-fatal if attachment fails
+            pass
         return mail
 
     # Unsubscribe management removed per spec
