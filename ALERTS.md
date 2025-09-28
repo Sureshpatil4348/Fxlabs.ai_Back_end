@@ -98,7 +98,7 @@ Supabase Schema: `supabase_rsi_correlation_tracker_alerts_schema.sql`
 Single per-user alert for the All-in-One/Quantum Analysis heatmap. Users select up to 3 currency pairs, a mode (trading style), and thresholds. When any selected pair’s Buy% or Sell% crosses its threshold, a trigger is recorded.
 
 - Pairs: up to 3 (e.g., `EURUSD`, `GBPUSD`)
-- Mode: `scalper`, `dayTrader`, or `swingTrader`
+- Mode: `scalper` or `swingTrader`
 - Thresholds: `buy_threshold` and `sell_threshold` (0–100)
 - Behavior: triggers on upward crossings into threshold for either Buy% or Sell%.
 
@@ -165,7 +165,7 @@ Automated daily email at 09:00 IST to all users
   - The code automatically paginates and deduplicates emails
 - When: A daily scheduler computes the next 09:00 IST and sleeps until then; after sending, it schedules for the next day.
 - Data sources:
-  - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `dayTrader` style for EURUSDm, XAUUSDm, BTCUSDm
+  - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `scalper` style for EURUSDm, XAUUSDm, BTCUSDm
   - RSI(14) 4H: uses real MT5 OHLC via `get_ohlc_data` and computes RSI locally
   - News: filters `global_news_cache` for items with IST date == today and impact in {high, medium}
 - Template: Responsive table layout; badges (BUY=#0CCC7C, SELL=#E5494D); simple lists for RSI and a compact news table.

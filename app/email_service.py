@@ -678,7 +678,7 @@ class EmailService:
         """Build HTML email body for heatmap alert"""
         
         # Get alert configuration details
-        trading_style = alert_config.get("trading_style", "dayTrader")
+        trading_style = alert_config.get("trading_style", "scalper")
         buy_threshold = f"{alert_config.get('buy_threshold_min', 70)}-{alert_config.get('buy_threshold_max', 100)}"
         sell_threshold = f"{alert_config.get('sell_threshold_min', 0)}-{alert_config.get('sell_threshold_max', 30)}"
         indicators = ", ".join(alert_config.get("selected_indicators", []))

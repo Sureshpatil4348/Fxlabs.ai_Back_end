@@ -45,7 +45,7 @@ class HeatmapTrackerAlertService:
 
                     alert_id = alert.get("id")
                     user_email = alert.get("user_email", "")
-                    style = (alert.get("trading_style") or "dayTrader").lower()
+                    style = (alert.get("trading_style") or "scalper").lower()
                     buy_t = float(alert.get("buy_threshold", 70))
                     sell_t = float(alert.get("sell_threshold", 30))
                     pairs: List[str] = alert.get("pairs", []) or []

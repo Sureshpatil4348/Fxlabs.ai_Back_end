@@ -61,7 +61,7 @@ def _rsi_latest_from_closes(closes: List[float], period: int = 14) -> Optional[f
 
 
 async def _collect_core_signals() -> List[Dict[str, Any]]:
-    """Collect All-in-One (Quantum Analysis) signals for EURUSD, XAUUSD, BTCUSD using dayTrader style."""
+    """Collect All-in-One (Quantum Analysis) signals for EURUSD, XAUUSD, BTCUSD using scalper style."""
     pairs = [
         ("EURUSDm", "EUR/USD"),
         ("XAUUSDm", "XAU/USD"),
@@ -70,7 +70,7 @@ async def _collect_core_signals() -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     for sym, disp in pairs:
         try:
-            buy_pct, sell_pct, _score = await heatmap_tracker_alert_service._compute_buy_sell_percent(sym, "dayTrader")
+            buy_pct, sell_pct, _score = await heatmap_tracker_alert_service._compute_buy_sell_percent(sym, "scalper")
             signal = "BUY" if buy_pct >= sell_pct else "SELL"
             probability = round(float(buy_pct if signal == "BUY" else sell_pct), 2)
             badge_bg = "#0CCC7C" if signal == "BUY" else "#E5494D"
@@ -78,7 +78,7 @@ async def _collect_core_signals() -> List[Dict[str, Any]]:
                 "pair": disp,
                 "signal": signal,
                 "probability": probability,
-                "tf": "dayTrader",
+                "tf": "scalper",
                 "badge_bg": badge_bg,
             })
         except Exception as e:

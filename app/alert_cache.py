@@ -156,7 +156,7 @@ class AlertCache:
                         "user_email": alert.get("user_email"),
                         "is_active": alert.get("is_active", True),
                         "pairs": alert.get("pairs", []),
-                        "trading_style": alert.get("trading_style", "dayTrader"),
+                        "trading_style": alert.get("trading_style", "scalper"),
                         "buy_threshold": alert.get("buy_threshold", 70),
                         "sell_threshold": alert.get("sell_threshold", 30),
                         "notification_methods": alert.get("notification_methods", ["email"]),

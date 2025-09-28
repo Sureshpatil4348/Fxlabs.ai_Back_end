@@ -163,6 +163,7 @@ SUPABASE_SERVICE_KEY=your_supabase_service_key
   - Endpoint: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
   - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
   - The code automatically paginates and deduplicates emails.
+  - Core signals in the daily brief use `scalper` mode for Quantum analysis.
 - For observability, the batch log includes a CSV of recipient emails and count.
 
 #### News Reminder Behavior (High‑Impact Only)
@@ -342,7 +343,6 @@ Notes:
 - Startup warm‑up: For the Tracker, armed state per (alert, symbol) is initialized from current Buy%/Sell% (sides already above thresholds start disarmed) and the first observation is skipped. For the Custom Indicator Tracker, the last signal per (alert, symbol, timeframe, indicator) is baselined and the first observation is skipped.
 - Style weighting aggregates across the alert’s selected timeframes:
   - Scalper: 1M(0.2), 5M(0.4), 15M(0.3), 30M(0.1)
-  - Day: 15M(0.2), 30M(0.35), 1H(0.35), 4H(0.1)
   - Swing: 1H(0.25), 4H(0.45), 1D(0.3)
 - Final Score = weighted average of per‑TF scores; Buy Now % = (Final Score + 100)/2.
 - Triggers:

@@ -6,7 +6,7 @@ create table if not exists public.heatmap_tracker_alerts (
   user_id uuid references auth.users(id) on delete cascade,
   user_email text not null,
   pairs jsonb not null, -- array of 1-3 symbols
-  trading_style text not null check (trading_style in ('scalper','dayTrader','swingTrader')),
+  trading_style text not null check (trading_style in ('scalper','swingTrader')),
   buy_threshold int2 not null check (buy_threshold between 0 and 100) default 70,
   sell_threshold int2 not null check (sell_threshold between 0 and 100) default 30,
   is_active boolean not null default true,

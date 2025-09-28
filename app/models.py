@@ -76,7 +76,7 @@ class HeatmapAlertRequest(BaseModel):
     pairs: List[str]
     timeframes: List[str]
     selected_indicators: List[str]
-    trading_style: str = "dayTrader"
+    trading_style: str = "scalper"
     buy_threshold_min: int = 70
     buy_threshold_max: int = 100
     sell_threshold_min: int = 0
