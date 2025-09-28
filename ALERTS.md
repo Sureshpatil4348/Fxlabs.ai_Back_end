@@ -135,11 +135,18 @@ Automatic email 5 minutes before each scheduled news item
 ### ⏰ News Reminder (5 Minutes Before)
 
 - What: Sends an email with subject "News reminder" to all active users 5 minutes before each upcoming news event found in the local news cache.
-- Who: All user emails discovered by unioning `user_email` across active alert tables (`rsi_tracker_alerts`, `rsi_correlation_tracker_alerts`, `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`). No per-user config needed.
+- Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for news reminders and does not depend on per‑product alert tables.
+  - Primary source: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
+  - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
+  - Email extraction: Primary `email`, fallback to `user_metadata.email/email_address/preferred_email`, and `identities[].email`/`identities[].identity_data.email` for OAuth providers
+  - Fallback: If Auth returns no emails, falls back to union of alert tables (`rsi_tracker_alerts`, `rsi_correlation_tracker_alerts`, `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`)
 - When: A dedicated 1-minute scheduler runs in `server.py` and calls `app.news.check_and_send_news_reminders()`.
 - How it avoids duplicates: Each `NewsAnalysis` item has a boolean `reminder_sent`. Once sent, the item is flagged and the cache is persisted to disk, preventing repeats across restarts.
 - Template: Minimal, mobile-friendly HTML with fields: `event_title`, `event_time_local` (IST by default), `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
-- Logging: Uses human-readable logs via `app/alert_logging.py` with events `news_reminder_due_items`, `news_users_fetch_*`, and `news_reminder_completed`.
+- Logging: Uses human-readable logs via `app/alert_logging.py` with events:
+  - Auth fetch: `news_auth_fetch_start`, `news_auth_fetch_page`, `news_auth_fetch_page_emails` (debug), `news_auth_fetch_done`
+  - Fallback: `news_users_fetch_fallback_alert_tables`
+  - Send: `news_auth_emails` (full CSV), `news_reminder_recipients`, `news_reminder_completed`
 - Requirements: SendGrid configured (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`) and Supabase (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`). If either is missing, the scheduler logs and skips sending.
 
 ## Daily Morning Brief
@@ -148,15 +155,22 @@ Automated daily email at 09:00 IST to all users
 - What: A daily brief sent to all users at 09:00 IST containing:
   - Core signals for EUR/USD, XAU/USD, BTC/USD from the All‑in‑One (Quantum) model
   - RSI(14) on 4H: lists of pairs currently Oversold (≤30) and Overbought (≥70)
-  - Today’s high/medium‑impact news from the local news cache (IST day)
-- Who: All user emails discovered by unioning `user_email` across active alert tables (same method as News Reminder).
+  - Today's high/medium‑impact news from the local news cache (IST day)
+- Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for daily emails and does not depend on per‑product alert tables.
+  - Primary source: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
+  - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
+  - Email extraction: Primary `email`, fallback to `user_metadata.email/email_address/preferred_email`, and `identities[].email`/`identities[].identity_data.email` for OAuth providers
+  - The code automatically paginates and deduplicates emails
 - When: A daily scheduler computes the next 09:00 IST and sleeps until then; after sending, it schedules for the next day.
 - Data sources:
   - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `dayTrader` style for EURUSDm, XAUUSDm, BTCUSDm
   - RSI(14) 4H: uses real MT5 OHLC via `get_ohlc_data` and computes RSI locally
   - News: filters `global_news_cache` for items with IST date == today and impact in {high, medium}
 - Template: Responsive table layout; badges (BUY=#0CCC7C, SELL=#E5494D); simple lists for RSI and a compact news table.
-- Logging: `daily_sleep_until`, `daily_build_start`, `daily_build_done`, `daily_send_batch`, `daily_completed`, with error events on failures.
+- Logging: Uses human-readable logs via `app/alert_logging.py` with events:
+  - Auth fetch: `daily_auth_fetch_start`, `daily_auth_fetch_page`, `daily_auth_fetch_page_emails` (debug), `daily_auth_fetch_done`
+  - Send: `daily_auth_emails` (full CSV), `daily_send_batch`, `daily_completed`
+  - Scheduler: `daily_sleep_until`, `daily_build_start`, `daily_build_done`, with error events on failures
 
 Email HTML structure example (simplified):
 
