@@ -158,7 +158,16 @@ SUPABASE_SERVICE_KEY=your_supabase_service_key
 
 ### Daily Morning Brief
 - Uses the same SendGrid configuration (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`).
-- Runs at 09:00 IST daily via `daily_mail_scheduler()`.
+- Runs daily at a configurable local time via `daily_mail_scheduler()`.
+- Configure timezone and send time using env vars:
+
+```env
+# Daily brief schedule
+DAILY_TZ_NAME=Asia/Kolkata           # IANA tz (e.g., Asia/Kolkata, UTC, Europe/London)
+DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
+```
+
+- The same timezone/time label is shown at the top-right of the email header.
 - Recipients are fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for daily emails and does not depend on per‑product alert tables.
   - Endpoint: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
   - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)

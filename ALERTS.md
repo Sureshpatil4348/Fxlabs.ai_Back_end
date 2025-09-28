@@ -152,7 +152,7 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 - Requirements: SendGrid configured (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`) and Supabase (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`). If either is missing, the scheduler logs and skips sending.
 
 ## Daily Morning Brief
-Automated daily email at 09:00 IST to all users
+Automated daily email to all users at a configurable local time
 
 - What: A daily brief sent to all users at 09:00 IST containing:
   - Core signals for EUR/USD, XAU/USD, BTC/USD from the All‑in‑One (Quantum) model
@@ -163,7 +163,11 @@ Automated daily email at 09:00 IST to all users
   - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
   - Email extraction: Primary `email`, fallback to `user_metadata.email/email_address/preferred_email`, and `identities[].email`/`identities[].identity_data.email` for OAuth providers
   - The code automatically paginates and deduplicates emails
-- When: A daily scheduler computes the next 09:00 IST and sleeps until then; after sending, it schedules for the next day.
+- When: A daily scheduler computes the next configured local send time and sleeps until then; after sending, it schedules for the next day.
+- Config:
+  - `DAILY_TZ_NAME` (default `Asia/Kolkata`) — IANA timezone used for scheduling and display label ("IST" when `Asia/Kolkata`).
+  - `DAILY_SEND_LOCAL_TIME` (default `09:00`) — local time in `HH:MM` or `HH:MM:SS`.
+  - The email header shows the same time label (e.g., `IST 09:00`).
 - Data sources:
   - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `scalper` style for EURUSDm, XAUUSDm, BTCUSDm
   - RSI(14) 4H: uses real MT5 OHLC via `get_ohlc_data` and computes RSI locally

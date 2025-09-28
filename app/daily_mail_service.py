@@ -16,7 +16,7 @@ from .models import Timeframe
 from .mt5_utils import get_ohlc_data
 from .heatmap_tracker_alert_service import heatmap_tracker_alert_service
 from . import news as news_mod
-from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY, DAILY_TZ_NAME, DAILY_SEND_LOCAL_TIME
 
 
 logger = logging.getLogger(__name__)
@@ -111,32 +111,67 @@ async def _collect_rsi_h4(period: int = 14) -> Tuple[List[Dict[str, Any]], List[
     return oversold, overbought
 
 
-def _get_ist_tz():
-    """Return a tzinfo for IST. Prefer ZoneInfo, fallback to fixed +05:30 offset.
+def _get_local_tz():
+    """Return tzinfo for configured DAILY_TZ_NAME; fallback to best-effort.
 
-    Avoids crashing when tz database is unavailable in the runtime.
+    Prefers ZoneInfo when available. If DAILY_TZ_NAME is Asia/Kolkata and ZoneInfo is
+    unavailable, fall back to fixed +05:30 offset named IST. Otherwise, fallback to UTC.
     """
+    tz_name = (DAILY_TZ_NAME or "").strip() or "Asia/Kolkata"
     try:
         if ZoneInfo is not None:
-            return ZoneInfo("Asia/Kolkata")
+            return ZoneInfo(tz_name)
     except Exception:
         pass
-    try:
-        return timezone(timedelta(hours=5, minutes=30), name="IST")
-    except Exception:
-        return timezone.utc
+    if tz_name == "Asia/Kolkata":
+        try:
+            return timezone(timedelta(hours=5, minutes=30), name="IST")
+        except Exception:
+            return timezone.utc
+    return timezone.utc
 
 
-def _ist_now() -> datetime:
-    return datetime.now(_get_ist_tz())
+def _local_now() -> datetime:
+    return datetime.now(_get_local_tz())
 
 
-def _format_date_ist(d: Optional[datetime] = None) -> str:
-    dt = d or _ist_now()
+def _format_date_local(d: Optional[datetime] = None) -> str:
+    dt = d or _local_now()
     try:
         return dt.strftime("%Y-%m-%d")
     except Exception:
         return dt.date().isoformat()
+
+
+def _tz_display_label() -> str:
+    tz_name = (DAILY_TZ_NAME or "").strip() or "Asia/Kolkata"
+    return "IST" if tz_name == "Asia/Kolkata" else tz_name
+
+
+def _parse_send_hms() -> Tuple[int, int, int]:
+    s = (DAILY_SEND_LOCAL_TIME or "").strip()
+    if not s:
+        return (9, 0, 0)
+    try:
+        # Support HH:MM[:SS]
+        parts = s.split(":")
+        h = int(parts[0]) if len(parts) > 0 else 9
+        m = int(parts[1]) if len(parts) > 1 else 0
+        sec = int(parts[2]) if len(parts) > 2 else 0
+        h = max(0, min(23, h))
+        m = max(0, min(59, m))
+        sec = max(0, min(59, sec))
+        return (h, m, sec)
+    except Exception:
+        return (9, 0, 0)
+
+
+def _send_time_label() -> str:
+    h, m, s = _parse_send_hms()
+    label = _tz_display_label()
+    if s:
+        return f"{label} {h:02d}:{m:02d}:{s:02d}"
+    return f"{label} {h:02d}:{m:02d}"
 
 
 def _collect_today_news_compact() -> List[Dict[str, Any]]:
@@ -148,7 +183,7 @@ def _collect_today_news_compact() -> List[Dict[str, Any]]:
     except Exception:
         pass
     try:
-        today_ist = _ist_now().date()
+        today_local = _local_now().date()
         for item in list(news_mod.global_news_cache):
             try:
                 # Impact filter
@@ -156,7 +191,7 @@ def _collect_today_news_compact() -> List[Dict[str, Any]]:
                 if impact not in ("high", "medium"):
                     continue
                 # Date filter in IST
-                time_local = news_mod._format_event_time_local(item.time)  # e.g., "YYYY-mm-dd HH:MM IST"
+                time_local = news_mod._format_event_time_local(item.time, tz_name=(DAILY_TZ_NAME or "Asia/Kolkata"))  # e.g., "YYYY-mm-dd HH:MM <LABEL>"
                 date_str = (time_local or "").split(" ")[0]
                 if not date_str:
                     continue
@@ -164,7 +199,7 @@ def _collect_today_news_compact() -> List[Dict[str, Any]]:
                     dt_ist_date = datetime.strptime(date_str, "%Y-%m-%d").date()
                 except Exception:
                     continue
-                if dt_ist_date != today_ist:
+                if dt_ist_date != today_local:
                     continue
                 title = (item.headline or "").strip()
                 bias = news_mod._derive_bias(item.analysis.get("effect") if item.analysis else None)
@@ -184,12 +219,14 @@ def _collect_today_news_compact() -> List[Dict[str, Any]]:
 
 
 async def _build_daily_payload() -> Dict[str, Any]:
-    date_local = _format_date_ist()
+    date_local = _format_date_local()
     core_signals = await _collect_core_signals()
     rsi_os, rsi_ob = await _collect_rsi_h4()
     news_today = _collect_today_news_compact()
     payload = {
-        "date_local_IST": date_local,
+        "date_local": date_local,
+        "time_label": _send_time_label(),
+        "tz_name": (DAILY_TZ_NAME or "Asia/Kolkata"),
         "core_signals": core_signals,
         "rsi_oversold": rsi_os,
         "rsi_overbought": rsi_ob,
@@ -198,14 +235,15 @@ async def _build_daily_payload() -> Dict[str, Any]:
     return payload
 
 
-def _next_9am_ist_utc(now_utc: Optional[datetime] = None) -> datetime:
+def _next_send_local_utc(now_utc: Optional[datetime] = None) -> datetime:
     now_utc = now_utc or datetime.now(timezone.utc)
-    ist_tz = _get_ist_tz()
-    ist = now_utc.astimezone(ist_tz)
-    target_ist = ist.replace(hour=9, minute=0, second=0, microsecond=0)
-    if ist >= target_ist:
-        target_ist = target_ist + timedelta(days=1)
-    return target_ist.astimezone(timezone.utc)
+    tz = _get_local_tz()
+    h, m, s = _parse_send_hms()
+    local_now = now_utc.astimezone(tz)
+    target_local = local_now.replace(hour=h, minute=m, second=s, microsecond=0)
+    if local_now >= target_local:
+        target_local = target_local + timedelta(days=1)
+    return target_local.astimezone(timezone.utc)
 
 
 async def _fetch_all_user_emails_from_auth() -> List[str]:
@@ -360,11 +398,11 @@ async def _send_daily_to_all_users(payload: Dict[str, Any]) -> None:
 
 
 async def daily_mail_scheduler() -> None:
-    """Scheduler that sends a Daily Morning Brief at 09:00 IST every day."""
+    """Scheduler that sends a Daily Morning Brief at configured local time daily."""
     while True:
         try:
             now = datetime.now(timezone.utc)
-            next_run = _next_9am_ist_utc(now)
+            next_run = _next_send_local_utc(now)
             sleep_s = max(1.0, (next_run - now).total_seconds())
             log_info(logger, "daily_sleep_until", next_run_utc=next_run.isoformat(), seconds=int(sleep_s))
             await asyncio.sleep(sleep_s)

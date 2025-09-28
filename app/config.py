@@ -39,3 +39,10 @@ FROM_NAME = os.environ.get("FROM_NAME", "FX Labs Alerts")
 
 # Public URL (for links in emails)
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
+
+# Daily brief schedule (timezone and local send time)
+# Example:
+#   DAILY_TZ_NAME=Asia/Kolkata
+#   DAILY_SEND_LOCAL_TIME=09:00
+DAILY_TZ_NAME = os.environ.get("DAILY_TZ_NAME", "Asia/Kolkata")
+DAILY_SEND_LOCAL_TIME = os.environ.get("DAILY_SEND_LOCAL_TIME", "09:00")

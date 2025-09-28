@@ -1525,7 +1525,8 @@ class EmailService:
                 return s
             except Exception:
                 return ""
-        date_local = esc(payload.get("date_local_IST", ""))
+        date_local = esc(payload.get("date_local", ""))
+        time_label = esc(payload.get("time_label", ""))
         # Core signals rows
         rows = []
         for s in payload.get("core_signals", []) or []:
@@ -1596,7 +1597,7 @@ class EmailService:
             <td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;\">
               <table role=\"presentation\" width=\"100%\"><tr>
                 <td align=\"left\" style=\"font-weight:700;font-size:18px;\">FxLabs Daily • {date_local}</td>
-                <td align=\"right\" style=\"font-size:12px;color:#6B7280;\">IST 09:00</td>
+                <td align=\"right\" style=\"font-size:12px;color:#6B7280;\">{time_label}</td>
               </tr></table>
             </td>
           </tr>
@@ -1659,7 +1660,12 @@ class EmailService:
 
     def _build_daily_text(self, payload: Dict[str, Any]) -> str:
         lines: List[str] = []
-        lines.append(f"FxLabs Daily • {payload.get('date_local_IST','')}")
+        header_date = payload.get('date_local','')
+        header_time = payload.get('time_label','')
+        header = f"FxLabs Daily • {header_date}"
+        if header_time:
+            header = f"{header} ({header_time})"
+        lines.append(header)
         lines.append("")
         lines.append("Signal Summary (Core Pairs):")
         for s in payload.get("core_signals", []) or []:
