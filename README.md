@@ -223,9 +223,53 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 #### Market Data WebSocket (`/ws/market`)
 - **URL**: `ws://localhost:8000/ws/market`
 - **Purpose**: Real-time tick and OHLC data streaming
-- **Features**: Selective timeframe subscriptions, intelligent caching
+- **Features**: Selective timeframe subscriptions, intelligent caching, Bid/Ask parallel OHLC fields
 
 Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services.
+Connected discovery message now includes Bid/Ask capabilities and schema:
+
+```json
+{
+  "type": "connected",
+  "message": "WebSocket connected successfully",
+  "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W"],
+  "supported_data_types": ["ticks", "ohlc"],
+  "supported_price_bases": ["last", "bid", "ask"],
+  "ohlc_schema": "parallel"
+}
+```
+
+Extended subscribe supports price basis and schema shaping (defaults: `last`, `parallel`):
+
+```json
+{
+  "action": "subscribe",
+  "symbol": "EURUSD",
+  "timeframe": "1M",
+  "data_types": ["ohlc", "ticks"],
+  "price_basis": "bid",
+  "ohlc_schema": "parallel"
+}
+```
+
+OHLC payloads include parallel fields when schema is `parallel`:
+
+```json
+{
+  "type": "ohlc_update",
+  "data": {
+    "symbol": "EURUSD",
+    "timeframe": "1M",
+    "time": 1738219500000,
+    "open": 1.1052, "high": 1.1056, "low": 1.1050, "close": 1.1054,
+    "openBid": 1.1051, "highBid": 1.1055, "lowBid": 1.1049, "closeBid": 1.1053,
+    "openAsk": 1.1053, "highAsk": 1.1057, "lowAsk": 1.1051, "closeAsk": 1.1055,
+    "is_closed": true
+  }
+}
+```
+
+If a client requests `ohlc_schema = "basis_only"`, payloads omit parallel fields and map the requested basis into the canonical `open/high/low/close` keys.
 
 Internal alert tick_data shape:
 

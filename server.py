@@ -35,7 +35,16 @@ from app.heatmap_tracker_alert_service import heatmap_tracker_alert_service
 from app.heatmap_indicator_tracker_alert_service import heatmap_indicator_tracker_alert_service
 from app.email_service import email_service
 from app.daily_mail_service import daily_mail_scheduler
-from app.models import Timeframe, Tick, OHLC, SubscriptionInfo, NewsItem, NewsAnalysis
+from app.models import (
+    Timeframe,
+    Tick,
+    OHLC,
+    SubscriptionInfo,
+    NewsItem,
+    NewsAnalysis,
+    PriceBasis,
+    OHLCSchema,
+)
 from app.mt5_utils import (
     MT5_TIMEFRAMES,
     ensure_symbol_selected,
@@ -198,17 +207,82 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
     try:
         ts_ms = int(rate_data[0]) * 1000  # time is at index 0
         dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
-        
+        # Base OHLC (MT5 bars are typically Bid-based for FX; we keep as canonical/"last")
+        open_val = float(rate_data[1])    # open is at index 1
+        high_val = float(rate_data[2])    # high is at index 2
+        low_val = float(rate_data[3])     # low is at index 3
+        close_val = float(rate_data[4])   # close is at index 4
+        vol_val = float(rate_data[5])     # tick_volume is at index 5
+
+        # Derive approximate bid/ask parallel fields using spread when available.
+        # We assume canonical OHLC represent mid/last; we split spread equally.
+        try:
+            spread_points = float(rate_data[6])
+        except Exception:
+            spread_points = None
+
+        point = None
+        try:
+            sym_info = mt5.symbol_info(symbol)
+            point = getattr(sym_info, "point", None) if sym_info else None
+        except Exception:
+            point = None
+
+        # Fallback using current tick if spread absent
+        if spread_points in (None, 0) and point:
+            try:
+                tinfo = mt5.symbol_info_tick(symbol)
+                if tinfo and getattr(tinfo, "bid", None) is not None and getattr(tinfo, "ask", None) is not None:
+                    spread_points = (float(getattr(tinfo, "ask")) - float(getattr(tinfo, "bid"))) / float(point)
+            except Exception:
+                pass
+
+        half_spread = (spread_points * point / 2.0) if (spread_points and point) else 0.0
+
+        open_bid = open_val - half_spread if half_spread else None
+        high_bid = high_val - half_spread if half_spread else None
+        low_bid = low_val - half_spread if half_spread else None
+        close_bid = close_val - half_spread if half_spread else None
+
+        open_ask = open_val + half_spread if half_spread else None
+        high_ask = high_val + half_spread if half_spread else None
+        low_ask = low_val + half_spread if half_spread else None
+        close_ask = close_val + half_spread if half_spread else None
+
+        # Candle is considered closed if current time is beyond the bar's end
+        tf_seconds_map = {
+            "1M": 60,
+            "5M": 300,
+            "15M": 900,
+            "30M": 1800,
+            "1H": 3600,
+            "4H": 14400,
+            "1D": 86400,
+            "1W": 604800,
+        }
+        tf_secs = tf_seconds_map.get(timeframe, 60)
+        bar_end_ms = ts_ms + (tf_secs * 1000)
+        is_closed = int(datetime.now(timezone.utc).timestamp() * 1000) >= bar_end_ms
+
         return OHLC(
             symbol=symbol,
             timeframe=timeframe,
             time=ts_ms,
             time_iso=dt.isoformat(),
-            open=float(rate_data[1]),    # open is at index 1
-            high=float(rate_data[2]),    # high is at index 2
-            low=float(rate_data[3]),     # low is at index 3
-            close=float(rate_data[4]),   # close is at index 4
-            volume=float(rate_data[5])   # tick_volume is at index 5
+            open=open_val,
+            high=high_val,
+            low=low_val,
+            close=close_val,
+            volume=vol_val,
+            openBid=open_bid,
+            highBid=high_bid,
+            lowBid=low_bid,
+            closeBid=close_bid,
+            openAsk=open_ask,
+            highAsk=high_ask,
+            lowAsk=low_ask,
+            closeAsk=close_ask,
+            is_closed=is_closed,
         )
     except (IndexError, ValueError, TypeError) as e:
         print(f"Error converting rate data to OHLC: {e}")
@@ -563,6 +637,44 @@ class WSClient:
         self._ohlc_task: Optional[asyncio.Task] = None
         self._send_interval_s: float = 0.10  # 10 Hz for ticks
 
+    @staticmethod
+    def _map_basis_only(ohlc_dict: Dict[str, Any], basis: PriceBasis) -> Dict[str, Any]:
+        """Return an OHLC dict shaped per basis_only schema: canonical keys reflect requested basis; parallel fields removed."""
+        mapped = dict(ohlc_dict)
+        # Choose source fields based on basis
+        if basis == PriceBasis.BID:
+            open_v = mapped.get("openBid", mapped.get("open"))
+            high_v = mapped.get("highBid", mapped.get("high"))
+            low_v = mapped.get("lowBid", mapped.get("low"))
+            close_v = mapped.get("closeBid", mapped.get("close"))
+        elif basis == PriceBasis.ASK:
+            open_v = mapped.get("openAsk", mapped.get("open"))
+            high_v = mapped.get("highAsk", mapped.get("high"))
+            low_v = mapped.get("lowAsk", mapped.get("low"))
+            close_v = mapped.get("closeAsk", mapped.get("close"))
+        else:
+            open_v = mapped.get("open")
+            high_v = mapped.get("high")
+            low_v = mapped.get("low")
+            close_v = mapped.get("close")
+
+        mapped["open"], mapped["high"], mapped["low"], mapped["close"] = open_v, high_v, low_v, close_v
+        # Remove parallel fields for basis-only schema
+        for k in ("openBid","highBid","lowBid","closeBid","openAsk","highAsk","lowAsk","closeAsk"):
+            if k in mapped:
+                del mapped[k]
+        return mapped
+
+    def _format_ohlc_for_subscription(self, ohlc: OHLC, symbol: str) -> Dict[str, Any]:
+        """Shape an OHLC payload according to the subscriber's selected schema and basis."""
+        sub = self.subscriptions.get(symbol)
+        ohlc_dict = ohlc.model_dump()
+        if not sub:
+            return ohlc_dict
+        if sub.ohlc_schema == OHLCSchema.BASIS_ONLY:
+            return self._map_basis_only(ohlc_dict, sub.price_basis)
+        return ohlc_dict
+
     async def start(self):
         # WebSocket is already accepted in the main handler
         # Start both tick and OHLC background tasks
@@ -707,7 +819,7 @@ class WSClient:
                             current_ohlc = cached_data[-1]
                             await self.websocket.send_json({
                                 "type": "ohlc_update",
-                                "data": current_ohlc.model_dump()
+                                "data": self._format_ohlc_for_subscription(current_ohlc, symbol)
                             })
                         
                         # Schedule next update
@@ -731,22 +843,42 @@ class WSClient:
             symbol = message.get("symbol", "")
             timeframe = message.get("timeframe", "5M")
             data_types = message.get("data_types", ["ticks", "ohlc"])
+            price_basis_str = message.get("price_basis", "last")
+            ohlc_schema_str = message.get("ohlc_schema", "parallel")
             
             if not symbol:
                 await self.websocket.send_json({"type": "error", "error": "symbol_required"})
                 return
             
             try:
-                # Validate timeframe
-                tf = Timeframe(timeframe)
+                # Validate timeframe (accept both "1M" style and "M1" alias)
+                try:
+                    tf = Timeframe(timeframe)
+                except ValueError:
+                    try:
+                        tf = Timeframe[timeframe]
+                    except Exception:
+                        raise ValueError(f"Invalid timeframe: {timeframe}")
                 ensure_symbol_selected(symbol)
                 
+                # Parse enums with safe defaults
+                try:
+                    pb = PriceBasis(price_basis_str)
+                except Exception:
+                    pb = PriceBasis.LAST
+                try:
+                    schema = OHLCSchema(ohlc_schema_str)
+                except Exception:
+                    schema = OHLCSchema.PARALLEL
+
                 # Create subscription info
                 sub_info = SubscriptionInfo(
                     symbol=symbol,
                     timeframe=tf,
                     subscription_time=datetime.now(timezone.utc),
-                    data_types=data_types
+                    data_types=data_types,
+                    price_basis=pb,
+                    ohlc_schema=schema,
                 )
                 
                 self.subscriptions[symbol] = sub_info
@@ -761,7 +893,7 @@ class WSClient:
                                 "type": "initial_ohlc",
                                 "symbol": symbol,
                                 "timeframe": timeframe,
-                                "data": [ohlc.model_dump() for ohlc in ohlc_data]
+                                "data": [self._format_ohlc_for_subscription(ohlc, symbol) for ohlc in ohlc_data]
                             })
                         else:
                             # Only log at debug level to reduce noise
@@ -788,7 +920,9 @@ class WSClient:
                     "type": "subscribed",
                     "symbol": symbol,
                     "timeframe": timeframe,
-                    "data_types": data_types
+                    "data_types": data_types,
+                    "price_basis": sub_info.price_basis.value,
+                    "ohlc_schema": sub_info.ohlc_schema.value,
                 })
                 
             except ValueError:
@@ -875,7 +1009,9 @@ async def ws_market(websocket: WebSocket):
             "type": "connected", 
             "message": "WebSocket connected successfully",
             "supported_timeframes": [tf.value for tf in Timeframe],
-            "supported_data_types": ["ticks", "ohlc"]
+            "supported_data_types": ["ticks", "ohlc"],
+            "supported_price_bases": ["last", "bid", "ask"],
+            "ohlc_schema": "parallel"
         })
         
         # Create WSClient for real MT5 data

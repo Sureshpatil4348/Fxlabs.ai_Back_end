@@ -67,17 +67,21 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
   "type": "connected",
   "message": "WebSocket connected successfully",
   "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W"],
-  "supported_data_types": ["ticks", "ohlc"]
+  "supported_data_types": ["ticks", "ohlc"],
+  "supported_price_bases": ["last", "bid", "ask"],
+  "ohlc_schema": "parallel"
 }
 ```
 
-### Subscribe to Market Data
+### Subscribe to Market Data (extended)
 ```json
 {
   "action": "subscribe",
   "symbol": "EURUSD",
   "timeframe": "1M",
-  "data_types": ["ticks", "ohlc"]
+  "data_types": ["ticks", "ohlc"],
+  "price_basis": "bid",
+  "ohlc_schema": "parallel"
 }
 ```
 
@@ -92,11 +96,13 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
   "type": "subscribed",
   "symbol": "EURUSD",
   "timeframe": "1M",
-  "data_types": ["ticks", "ohlc"]
+  "data_types": ["ticks", "ohlc"],
+  "price_basis": "bid",
+  "ohlc_schema": "parallel"
 }
 ```
 
-### Initial OHLC Data (100 bars)
+### Initial OHLC Data (parallel fields)
 ```json
 {
   "type": "initial_ohlc",
@@ -112,6 +118,15 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
       "high": 1.1055,
       "low": 1.1048,
       "close": 1.1052,
+      "openBid": 1.1049,
+      "highBid": 1.1054,
+      "lowBid": 1.1047,
+      "closeBid": 1.1051,
+      "openAsk": 1.1051,
+      "highAsk": 1.1056,
+      "lowAsk": 1.1049,
+      "closeAsk": 1.1053,
+      "is_closed": true,
       "volume": 1250
     }
     // ... 99 more bars
@@ -138,7 +153,7 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
 }
 ```
 
-### OHLC Updates (When Timeframe Completes)
+### OHLC Updates (parallel fields)
 ```json
 {
   "type": "ohlc_update",
@@ -151,6 +166,15 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
     "high": 1.1056,
     "low": 1.1050,
     "close": 1.1054,
+    "openBid": 1.1051,
+    "highBid": 1.1055,
+    "lowBid": 1.1049,
+    "closeBid": 1.1053,
+    "openAsk": 1.1053,
+    "highAsk": 1.1057,
+    "lowAsk": 1.1051,
+    "closeAsk": 1.1055,
+    "is_closed": true,
     "volume": 2150
   }
 }

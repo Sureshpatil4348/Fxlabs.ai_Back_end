@@ -27,6 +27,17 @@ class Tick(BaseModel):
     flags: Optional[int] = None
 
 
+class PriceBasis(str, Enum):
+    LAST = "last"
+    BID = "bid"
+    ASK = "ask"
+
+
+class OHLCSchema(str, Enum):
+    PARALLEL = "parallel"
+    BASIS_ONLY = "basis_only"
+
+
 class OHLC(BaseModel):
     symbol: str
     timeframe: str
@@ -37,6 +48,17 @@ class OHLC(BaseModel):
     low: float
     close: float
     volume: Optional[float] = None
+    # Parallel fields for bid/ask parity
+    openBid: Optional[float] = None
+    highBid: Optional[float] = None
+    lowBid: Optional[float] = None
+    closeBid: Optional[float] = None
+    openAsk: Optional[float] = None
+    highAsk: Optional[float] = None
+    lowAsk: Optional[float] = None
+    closeAsk: Optional[float] = None
+    # Candle metadata
+    is_closed: Optional[bool] = None
 
 
 class SubscriptionInfo(BaseModel):
@@ -44,6 +66,8 @@ class SubscriptionInfo(BaseModel):
     timeframe: Timeframe
     subscription_time: datetime
     data_types: List[str]
+    price_basis: PriceBasis = PriceBasis.LAST
+    ohlc_schema: OHLCSchema = OHLCSchema.PARALLEL
 
 
 class NewsItem(BaseModel):
