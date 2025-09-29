@@ -1,4 +1,5 @@
 import os
+from .tenancy import get_tenant_config
 
 # Auto-load .env if present (non-intrusive)
 try:
@@ -21,9 +22,10 @@ JBLANKED_API_KEY = os.environ.get("JBLANKED_API_KEY", "OZaABMUo")
 NEWS_UPDATE_INTERVAL_HOURS = int(os.environ.get("NEWS_UPDATE_INTERVAL_HOURS", "1"))
 NEWS_CACHE_MAX_ITEMS = int(os.environ.get("NEWS_CACHE_MAX_ITEMS", "500"))
 
-# Supabase configuration
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
-SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5YWp3aHRrd2xkcm1saGZpdXdnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjI5NjUzNCwiZXhwIjoyMDcxODcyNTM0fQ.UDqYHY5Io0o-fQTswCYQmMdC6UCPQI2gf3aTb9o09SE")
+# Supabase configuration (tenant-aware)
+_ten = get_tenant_config()
+SUPABASE_URL = _ten.supabase_url
+SUPABASE_SERVICE_KEY = _ten.supabase_service_key
 
 # Filesystem-backed news cache
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
@@ -32,17 +34,14 @@ NEWS_CACHE_FILE = os.environ.get("NEWS_CACHE_FILE", os.path.join(BASE_DIR, "news
 HOST = os.environ.get("HOST", "127.0.0.1")
 PORT = int(os.environ.get("PORT", "8000"))
 
-# Email service configuration
-SENDGRID_API_KEY = os.environ.get("SENDGRID_API_KEY", "")
-FROM_EMAIL = os.environ.get("FROM_EMAIL", "alerts@fxlabs.ai")
-FROM_NAME = os.environ.get("FROM_NAME", "FX Labs Alerts")
+# Email service configuration (tenant-aware)
+SENDGRID_API_KEY = _ten.sendgrid_api_key
+FROM_EMAIL = _ten.from_email
+FROM_NAME = _ten.from_name
 
 # Public URL (for links in emails)
-PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "")
+PUBLIC_BASE_URL = _ten.public_base_url
 
 # Daily brief schedule (timezone and local send time)
-# Example:
-#   DAILY_TZ_NAME=Asia/Kolkata
-#   DAILY_SEND_LOCAL_TIME=09:00
-DAILY_TZ_NAME = os.environ.get("DAILY_TZ_NAME", "Asia/Kolkata")
-DAILY_SEND_LOCAL_TIME = os.environ.get("DAILY_SEND_LOCAL_TIME", "09:00")
+DAILY_TZ_NAME = _ten.daily_tz_name
+DAILY_SEND_LOCAL_TIME = _ten.daily_send_local_time

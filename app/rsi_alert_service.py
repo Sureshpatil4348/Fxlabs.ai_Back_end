@@ -22,8 +22,9 @@ class RSIAlertService:
     """
     
     def __init__(self):
-        self.supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
-        self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
+        from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+        self.supabase_url = SUPABASE_URL
+        self.supabase_service_key = SUPABASE_SERVICE_KEY
         self.last_triggered_alerts: Dict[str, datetime] = {}  # Track last trigger time per alert
         self.default_cooldown_seconds = 300  # 5 minutes default cooldown
         # Crossing policy: closed-bar only; immediate on crossing; threshold-level re-arm

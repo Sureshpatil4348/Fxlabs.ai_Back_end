@@ -18,18 +18,19 @@ No code changes done yet. This document maps the system to tenancy touchpoints a
 
 ### Tenancy touchpoints in current code
 
-- Supabase credentials (single‑tenant today):
-  - `app/config.py`: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` (global)
-  - `app/alert_cache.py` and alert services read env directly; assumes one project
+- Supabase credentials (now tenant-aware via `app/tenancy.py` and `app/config.py`):
+  - `app/tenancy.py`: central tenant resolver; entry scripts set tenant; per-tenant env overrides supported
+  - `app/config.py`: exposes `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` from tenant config
+  - All services now import from `app.config` instead of reading env directly
   - Daily/news schedulers fetch users from `auth.admin` using the service key
 
 - Schedulers (single instance today, no tenant context):
   - `server.py` creates: `news.news_scheduler()`, `news.news_reminder_scheduler()`, `daily_mail_scheduler()`
   - `app/daily_mail_service.py` uses `DAILY_TZ_NAME` + `DAILY_SEND_LOCAL_TIME` (global)
 
-- Email branding (FXLabs hardcoded today):
-  - `app/email_service.py` builds headers and bodies with “FXLabs” label and `assets/images/fxlabs_logo_white.png`
-  - `FROM_EMAIL`/`FROM_NAME` are env‑driven, but HTML header/text includes fixed brand name and logo
+- Email branding (FXLabs by default; HexTech placeholders pending):
+  - `app/email_service.py` still renders FXLabs brand in templates. HexTech branding swap is a TODO when HexTech goes live.
+  - `FROM_EMAIL`/`FROM_NAME` are tenant‑aware via `app/config.py`.
 
 - CORS / API token (global today):
   - `ALLOWED_ORIGINS`, `API_TOKEN` are single values; would be per tenant in soft multi‑tenancy
@@ -103,10 +104,10 @@ PORT=8001
 #### Run commands (two processes)
 ```bash
 # Terminal 1 (FXLabs)
-env $(cat .env.fxlabs | xargs) python server.py
+python fxlabs-server.py
 
 # Terminal 2 (HexTech)
-env $(cat .env.hextech | xargs) python server.py
+python hextech-server.py
 ```
 
 #### Cloudflare Tunnel (reverse proxy) example

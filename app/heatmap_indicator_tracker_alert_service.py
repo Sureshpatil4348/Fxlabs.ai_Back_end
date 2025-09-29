@@ -26,9 +26,10 @@ class HeatmapIndicatorTrackerAlertService:
     def __init__(self) -> None:
         # Last signal per (alert, symbol, timeframe, indicator)
         self._last_signal: Dict[str, str] = {}
-        # Supabase creds for trigger logging
-        self.supabase_url = os.environ.get("SUPABASE_URL", "")
-        self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+        # Supabase creds for trigger logging (tenant-aware)
+        from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+        self.supabase_url = SUPABASE_URL
+        self.supabase_service_key = SUPABASE_SERVICE_KEY
 
     def _normalize_timeframe(self, timeframe: str) -> str:
         """Enforce minimum timeframe of 5M for alerts."""

@@ -89,8 +89,9 @@ cp config.env.example .env
 
 #### Step 5: Start the Server
 ```bash
-# Start the server
-python server.py
+# Start with convenience entrypoints (auto-set TENANT)
+python fxlabs-server.py
+python hextech-server.py
 ```
 
 ### Alternative: Using Platform Scripts
@@ -119,7 +120,7 @@ curl http://127.0.0.1:8000/health
 
 ### Configuration
 
-Create a `.env` file with the following variables:
+Create a `.env` file with the following variables (tenant-aware via entry scripts; no TENANT var needed):
 
 ```env
 # MT5 Terminal Path (optional)
@@ -144,17 +145,38 @@ JBLANKED_API_KEY=your_jblanked_key
 NEWS_UPDATE_INTERVAL_HOURS=1
 NEWS_CACHE_MAX_ITEMS=500
 
-# Alert System Configuration
-SENDGRID_API_KEY=your_sendgrid_api_key
+# Alert System Configuration (tenant-aware; base variables act as fallback)
+SENDGRID_API_KEY=
 FROM_EMAIL=alerts@fxlabs.ai
 FROM_NAME=FX Labs Alerts
-PUBLIC_BASE_URL=https://api.fxlabs.ai
+PUBLIC_BASE_URL=
 UNSUBSCRIBE_SECRET=change_me_to_a_random_secret
 UNSUBSCRIBE_STORE_FILE=/var/fxlabs/unsubscribes.json
 
 # Supabase (required for alerts and news reminders)
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_SERVICE_KEY=your_supabase_service_key
+SUPABASE_URL=
+SUPABASE_SERVICE_KEY=
+
+# Optional: per-tenant overrides (used by entry scripts and take precedence over base vars)
+# FXLabs
+FXLABS_SUPABASE_URL=https://your-fxlabs.supabase.co
+FXLABS_SUPABASE_SERVICE_KEY=
+FXLABS_SENDGRID_API_KEY=
+FXLABS_FROM_EMAIL=alerts@fxlabs.ai
+FXLABS_FROM_NAME=FX Labs Alerts
+FXLABS_PUBLIC_BASE_URL=https://api.fxlabs.ai
+FXLABS_DAILY_TZ_NAME=Asia/Kolkata
+FXLABS_DAILY_SEND_LOCAL_TIME=09:00
+
+# HexTech (placeholders; fill when provisioning HexTech)
+HEXTECH_SUPABASE_URL=
+HEXTECH_SUPABASE_SERVICE_KEY=
+HEXTECH_SENDGRID_API_KEY=
+HEXTECH_FROM_EMAIL=
+HEXTECH_FROM_NAME=
+HEXTECH_PUBLIC_BASE_URL=
+HEXTECH_DAILY_TZ_NAME=Asia/Dubai
+HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
 ```
 
 ### Daily Morning Brief

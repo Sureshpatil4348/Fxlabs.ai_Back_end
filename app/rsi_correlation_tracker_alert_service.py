@@ -28,8 +28,9 @@ class RSICorrelationTrackerAlertService:
     """
 
     def __init__(self) -> None:
-        self.supabase_url = os.environ.get("SUPABASE_URL", "")
-        self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+        from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+        self.supabase_url = SUPABASE_URL
+        self.supabase_service_key = SUPABASE_SERVICE_KEY
         # Remember last mismatch state per (alert, pair_key, timeframe, mode)
         self._last_state: Dict[str, bool] = {}
         # Track last evaluated closed bar per (pair_key, timeframe) to enforce closed-bar evaluation

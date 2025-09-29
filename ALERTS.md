@@ -8,7 +8,7 @@
 - Trigger style: crossing into overbought/oversold; not on every bar while in‑zone.
 - Closed‑bar evaluation for RSI family: evaluate RSI on the last closed candlestick only (no intrabar/tick evaluation). Minimum supported timeframe is 5M.
 - Retrigger policy: once triggered, re‑arm only after leaving the triggerable zone and trigger again only on a fresh crossing back in.
-- Timezone for display: Asia/Kolkata.
+- Timezone for display: Asia/Kolkata (tenant-aware for Daily/news: see `DAILY_TZ_NAME`).
 - System safeguards: rate limit 5 emails/user/hour (overflow → digest), per‑pair concurrency cap, warm‑up for RSI, skip stale TFs (last candle age > 2× TF length).
   - Startup warm‑up: On server start or first evaluation per key, alerts baseline current state and skip initial triggers for existing in‑zone conditions. Specifically:
     - RSI Tracker: baseline last closed bar per (symbol, timeframe) and require the next new bar for triggers.
@@ -63,6 +63,8 @@
 
 **Supabase — Table Schemas (Canonical)**
 - See `supabase_rsi_tracker_alerts_schema.sql`.
+
+> Note on multitenancy: All alert trigger inserts now use tenant-aware Supabase via `app/config.py` and `app/tenancy.py`. Use `python fxlabs-server.py` or `python hextech-server.py` to select the tenant; set the corresponding credentials in `.env`.
 
 ### How Alerts Are Evaluated
 

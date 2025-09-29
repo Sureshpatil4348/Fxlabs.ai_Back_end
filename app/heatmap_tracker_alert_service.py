@@ -26,9 +26,10 @@ class HeatmapTrackerAlertService:
     def __init__(self) -> None:
         # Re-arm per (alert, symbol, side) to avoid re-firing while in-zone
         self._armed: Dict[str, Dict[str, bool]] = {}
-        # Supabase creds for trigger logging
-        self.supabase_url = os.environ.get("SUPABASE_URL", "")
-        self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+        # Supabase creds for trigger logging (tenant-aware)
+        from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+        self.supabase_url = SUPABASE_URL
+        self.supabase_service_key = SUPABASE_SERVICE_KEY
 
     def _key(self, alert_id: str, symbol: str) -> str:
         return f"{alert_id}:{symbol}"
