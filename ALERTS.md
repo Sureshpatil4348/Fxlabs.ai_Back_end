@@ -32,7 +32,9 @@
 **Message Structure (email)**
 - Title: RSI Alert • {PAIR} ({TF})
 - Body: zone entered (Overbought/Oversold), RSI value, price, IST time.
-- Footer: Not financial advice.
+- Footer: The disclaimer appears once at the bottom of the email (not per pair).
+  - RSI and RSI Correlation: "Not financial advice. © FxLabs AI"
+  - Heatmap/Indicator trackers and Daily: "Education only. © FxLabs AI" (or equivalent wording)
 
 **Defaults That Work**
 - RSI Tracker: timeframe `1H`, period `14`, thresholds OB=70 / OS=30.
