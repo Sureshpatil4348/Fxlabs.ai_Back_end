@@ -820,13 +820,12 @@ The system provides comprehensive logging for:
 - Handling: The server now treats this as a clean disconnect and exits the read loop gracefully; no action required unless it’s frequent. If frequent, check client networking and retry logic.
 
 #### File Logging (added)
-- Logs are written both to the terminal and to `logs/app.log` in the repository root.
-- File logs rotate automatically at ~10 MB per file with up to 5 backups kept: `app.log`, `app.log.1`, ..., `app.log.5`.
+- Logs are written both to the terminal and to `logs/<YYYY-MM-DDTHH-mm-ssZ>.log` (UTC start time) in the repository root. A new file is created for each server start.
+- File logs rotate automatically at ~10 MB per file with up to 5 backups kept: `<timestamp>.log`, `<timestamp>.log.1`, ..., `<timestamp>.log.5`.
 - The `logs/` directory is created automatically on startup.
 
 Optional environment overrides:
 - `LOG_DIR` — change the directory for log files (default: `<repo>/logs`).
-- `LOG_FILE_NAME` — change the log file name (default: `app.log`).
 - `LOG_MAX_BYTES` — max size of a single log file in bytes (default: `10485760`).
 - `LOG_BACKUP_COUNT` — number of rotated backups to keep (default: `5`).
 

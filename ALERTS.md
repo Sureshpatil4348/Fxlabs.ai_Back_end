@@ -17,7 +17,7 @@
     - Indicator Tracker: baseline last signal per (alert, symbol, timeframe, indicator) and skip the first observation.
 
 **Logging**
-- All alert logs print to terminal and are also persisted to `logs/app.log` with rotation (≈10 MB × 5 files).
+- All alert logs print to terminal and are also persisted to `logs/<YYYY-MM-DDTHH-mm-ssZ>.log` (UTC server start) with rotation (≈10 MB × 5 files).
 - The `logs/` folder is created automatically; you can change location via `LOG_DIR`.
 
 **Simplified Scope (Current Support)**

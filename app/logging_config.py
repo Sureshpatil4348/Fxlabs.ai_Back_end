@@ -1,13 +1,17 @@
 import logging
 import os
+from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
+
+
+_SERVER_START_ISO_NAME = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
 def configure_logging(level: str | int = None) -> None:
     """Configure root logging with timestamped format and file output.
 
     - Always ensures a console stream handler is present.
-    - Also writes logs to `logs/app.log` (repo root), rotating at ~10MB x5.
+    - Also writes logs to `logs/<YYYY-MM-DDTHH-mm-ssZ>.log` (UTC, per server start), rotating at ~10MB x5.
     - Idempotent: updates existing handlers' formatters if already configured,
       and adds the file handler only once.
     """
@@ -34,7 +38,9 @@ def configure_logging(level: str | int = None) -> None:
         # Fallback to current working directory if creation fails
         log_dir = os.getcwd()
 
-    log_file_name = os.environ.get("LOG_FILE_NAME", "app.log")
+    # Enforce per-start log file naming: <UTC server start datetime>.log
+    # Example: logs/2025-09-30T14-05-33Z.log
+    log_file_name = f"{_SERVER_START_ISO_NAME}.log"
     log_file_path = os.path.join(log_dir, log_file_name)
 
     # Apply formatter to existing handlers and detect if our file handler exists
