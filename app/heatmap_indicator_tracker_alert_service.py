@@ -118,6 +118,20 @@ class HeatmapIndicatorTrackerAlertService:
                                     indicator=indicator,
                                     trigger=signal,
                                 )
+                            else:
+                                # No trigger; log concise reason
+                                reason = "neutral_signal" if signal == "neutral" else "no_flip"
+                                log_debug(
+                                    logger,
+                                    "indicator_no_trigger",
+                                    alert_id=alert_id,
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                    indicator=indicator,
+                                    signal=signal,
+                                    previous=prev,
+                                    reason=reason,
+                                )
 
                     if per_alert_triggers:
                         payload = {
@@ -265,5 +279,4 @@ class HeatmapIndicatorTrackerAlertService:
 
 
 heatmap_indicator_tracker_alert_service = HeatmapIndicatorTrackerAlertService()
-
 

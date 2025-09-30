@@ -158,18 +158,18 @@ class RSICorrelationTrackerAlertService:
                                     continue
                                 self._last_closed_bar_ts[pair_tf_key] = last_pair_ts
 
-                                if mode == "rsi_threshold":
-                                    mismatch, val, cond_label = await self._evaluate_rsi_threshold_mismatch(
-                                        s1, s2, timeframe, rsi_period, rsi_ob, rsi_os
-                                    )
-                                else:
-                                    mismatch, val, cond_label = await self._evaluate_real_correlation_mismatch(
-                                        s1, s2, timeframe, corr_window
-                                    )
+                    if mode == "rsi_threshold":
+                        mismatch, val, cond_label = await self._evaluate_rsi_threshold_mismatch(
+                            s1, s2, timeframe, rsi_period, rsi_ob, rsi_os
+                        )
+                    else:
+                        mismatch, val, cond_label = await self._evaluate_real_correlation_mismatch(
+                            s1, s2, timeframe, corr_window
+                        )
 
-                        prev = self._last_state.get(k, False)
-                        self._last_state[k] = mismatch
-                        if (not prev) and mismatch:
+                prev = self._last_state.get(k, False)
+                self._last_state[k] = mismatch
+                if (not prev) and mismatch:
                             # Derive a trigger label for logs/email; DB uses schema-compliant type below
                             trig_type = cond_label or ("mismatch" if mode == "rsi_threshold" else "correlation_break")
                             logger.info(
@@ -228,19 +228,44 @@ class RSICorrelationTrackerAlertService:
                                     "email_queue",
                                     alert_type="rsi_correlation_tracker",
                                     alert_id=alert_id,
-                                )
-                                asyncio.create_task(self._send_email(user_email, payload))
-                            else:
-                                logger.info(
-                                    f"🔕 Email notifications disabled for correlation alert_id={alert_id}; methods={methods}"
-                                )
-                                log_info(
-                                    logger,
-                                    "email_disabled",
-                                    alert_type="rsi_correlation_tracker",
-                                    alert_id=alert_id,
-                                    methods=methods,
-                                )
+                            )
+                            asyncio.create_task(self._send_email(user_email, payload))
+                        else:
+                            logger.info(
+                                f"🔕 Email notifications disabled for correlation alert_id={alert_id}; methods={methods}"
+                            )
+                            log_info(
+                                logger,
+                                "email_disabled",
+                                alert_type="rsi_correlation_tracker",
+                                alert_id=alert_id,
+                                methods=methods,
+                            )
+                else:
+                    # No new trigger; log concise reason at debug level
+                    from .alert_logging import log_debug as _ld
+                    if mismatch and prev:
+                        _ld(
+                            logger,
+                            "corr_persisting_mismatch",
+                            alert_id=alert_id,
+                            pair_key=pair_key,
+                            timeframe=timeframe,
+                            mode=mode,
+                            label=cond_label,
+                            value=val if isinstance(val, (int, float)) else None,
+                        )
+                    elif not mismatch:
+                        _ld(
+                            logger,
+                            "corr_no_mismatch",
+                            alert_id=alert_id,
+                            pair_key=pair_key,
+                            timeframe=timeframe,
+                            mode=mode,
+                            label=cond_label,
+                            value=val if isinstance(val, (int, float)) else None,
+                        )
 
             return triggers
         except Exception as e:
@@ -462,5 +487,4 @@ class RSICorrelationTrackerAlertService:
 
 
 rsi_correlation_tracker_alert_service = RSICorrelationTrackerAlertService()
-
 

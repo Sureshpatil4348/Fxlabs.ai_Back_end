@@ -176,6 +176,15 @@ class RSITrackerAlertService:
         try:
             series = await self._get_recent_rsi_series(symbol, timeframe, period, bars_needed=3)
             if not series or len(series) < 2:
+                log_debug(
+                    logger,
+                    "rsi_insufficient_data",
+                    alert_id=alert_id,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    period=period,
+                    series_len=len(series) if series else 0,
+                )
                 return None
             key = f"{alert_id}:{symbol}:{timeframe}"
             st = self._hysteresis_map.setdefault(key, {"armed_overbought": True, "armed_oversold": True})
@@ -185,8 +194,26 @@ class RSITrackerAlertService:
             # Re-arm when RSI crosses back across thresholds
             if not st["armed_overbought"] and curr_val < overbought:
                 st["armed_overbought"] = True
+                log_debug(
+                    logger,
+                    "rsi_rearm_overbought",
+                    alert_id=alert_id,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    threshold=overbought,
+                    curr_rsi=round(float(curr_val), 2),
+                )
             if not st["armed_oversold"] and curr_val > oversold:
                 st["armed_oversold"] = True
+                log_debug(
+                    logger,
+                    "rsi_rearm_oversold",
+                    alert_id=alert_id,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    threshold=oversold,
+                    curr_rsi=round(float(curr_val), 2),
+                )
 
             if st["armed_overbought"] and prev_val < overbought and curr_val >= overbought:
                 st["armed_overbought"] = False
@@ -216,6 +243,31 @@ class RSITrackerAlertService:
                     curr_rsi=round(float(curr_val), 2),
                 )
                 return "oversold"
+            # No crossing; emit a concise debug reason
+            reason = "no_cross"
+            details: Dict[str, Any] = {
+                "alert_id": alert_id,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "period": period,
+                "overbought": overbought,
+                "oversold": oversold,
+                "prev_rsi": round(float(prev_val), 2),
+                "curr_rsi": round(float(curr_val), 2),
+                "armed_overbought": st.get("armed_overbought", True),
+                "armed_oversold": st.get("armed_oversold", True),
+            }
+            if not st.get("armed_overbought", True) and curr_val >= overbought:
+                reason = "disarmed_overbought"
+            elif not st.get("armed_oversold", True) and curr_val <= oversold:
+                reason = "disarmed_oversold"
+            elif prev_val >= overbought and curr_val >= overbought:
+                reason = "already_overbought"
+            elif prev_val <= oversold and curr_val <= oversold:
+                reason = "already_oversold"
+            elif (prev_val < overbought and curr_val < overbought) and (prev_val > oversold and curr_val > oversold):
+                reason = "within_neutral_band"
+            log_debug(logger, "rsi_no_trigger", reason=reason, **details)
             return None
         except Exception as e:
             log_error(
@@ -507,5 +559,4 @@ class RSITrackerAlertService:
 
 # Global instance
 rsi_tracker_alert_service = RSITrackerAlertService()
-
 

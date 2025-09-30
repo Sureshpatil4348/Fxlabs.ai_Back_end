@@ -126,6 +126,20 @@ class HeatmapTrackerAlertService:
                                     style=style,
                                     trigger=trig_type,
                                 )
+                            else:
+                                log_debug(
+                                    logger,
+                                    "heatmap_no_trigger",
+                                    alert_id=alert_id,
+                                    symbol=symbol,
+                                    style=style,
+                                    buy_percent=round(buy_pct, 2),
+                                    sell_percent=round(sell_pct, 2),
+                                    buy_threshold=buy_t,
+                                    sell_threshold=sell_t,
+                                    armed_buy=st.get("buy", True),
+                                    armed_sell=st.get("sell", True),
+                                )
 
                     if per_alert_triggers:
                         payload = {
@@ -275,5 +289,4 @@ class HeatmapTrackerAlertService:
 
 
 heatmap_tracker_alert_service = HeatmapTrackerAlertService()
-
 

@@ -45,7 +45,7 @@
 2) Supabase Schema
   - See `supabase_rsi_tracker_alerts_schema.sql` for `rsi_tracker_alerts` and `rsi_tracker_alert_triggers` (unique `user_id`; RLS for owner).
 3) Evaluation Cadence
-  - Every minute, server refreshes alert cache, evaluates closed‑bar RSI for subscribed pairs, records triggers, and sends email.
+  - Every 5 minutes, the server refreshes the alert cache, evaluates closed‑bar RSI for all users' active alerts across supported pairs, records triggers, and sends email.
 4) RSI Calculation
   - Wilder’s method using broker OHLC; closed‑bar only; warm‑up enforced.
 5) Trigger Logic
@@ -241,3 +241,13 @@ Additionally, a structured log line with per-category counts is emitted as `app.
 Notes:
 - The `categories` lists reuse the canonical alert objects as cached per user; fields vary by alert type (e.g., `timeframe` for RSI, `pairs` for Heatmap).
 - The categories summary is also printed to the console after refresh for quick admin inspection.
+
+## Evaluation Logs (Debug)
+At DEBUG level, evaluators provide concise reasons when a trigger does not fire, clarifying how each alert was processed:
+
+- RSI Tracker: `rsi_insufficient_data`, `rsi_rearm_overbought`, `rsi_rearm_oversold`, `rsi_no_trigger` (reason and RSI values vs thresholds)
+- RSI Correlation: `corr_no_mismatch`, `corr_persisting_mismatch`
+- Heatmap Tracker: `heatmap_eval`, `heatmap_no_trigger` (Buy%/Sell%, thresholds, armed flags)
+- Indicator Tracker: `indicator_signal`, `indicator_no_trigger` (neutral or no flip)
+
+Set `LOG_LEVEL=DEBUG` to enable.

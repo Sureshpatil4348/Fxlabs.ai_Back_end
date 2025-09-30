@@ -814,6 +814,23 @@ The system provides comprehensive logging for:
 - API request/response cycles
 - Performance metrics
 
+#### Detailed Evaluation Logs (per alert, per symbol/pair)
+At DEBUG level, evaluators emit concise reasons when a trigger does not fire, so you can see exactly how each alert was evaluated:
+
+- RSI Tracker
+  - `rsi_insufficient_data` — fewer than 2 RSI points available
+  - `rsi_rearm_overbought` / `rsi_rearm_oversold` — armed state toggled after exiting threshold
+  - `rsi_no_trigger` — includes reason (`no_cross | disarmed_overbought | disarmed_oversold | already_overbought | already_oversold | within_neutral_band`) and values (`prev_rsi`, `curr_rsi`, thresholds, armed flags)
+- RSI Correlation Tracker
+  - `corr_no_mismatch` — computed condition did not indicate mismatch; includes `label` and `value`
+  - `corr_persisting_mismatch` — mismatch persisted from previous bar (no new trigger)
+- Heatmap Tracker
+  - `heatmap_eval` — Buy%/Sell%/Final Score for each symbol
+  - `heatmap_no_trigger` — includes Buy%/Sell%, thresholds, and armed flags when no trigger
+- Indicator Tracker
+  - `indicator_signal` — current and previous signal
+  - `indicator_no_trigger` — includes reason (`neutral_signal | no_flip`) when no trigger occurs
+
 #### Human‑Readable Emoji Logging (v2.2.0)
 Alert evaluations and actions are now logged in a clean, human‑readable format with emojis using `app/alert_logging.py`.
 
