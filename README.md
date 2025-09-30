@@ -831,6 +831,12 @@ At DEBUG level, evaluators emit concise reasons when a trigger does not fire, so
   - `indicator_signal` — current and previous signal
   - `indicator_no_trigger` — includes reason (`neutral_signal | no_flip`) when no trigger occurs
 
+At INFO level, the scheduler emits compact batch summaries after each evaluation cycle:
+- `rsi_tracker_eval | triggers: <n>`
+- `rsi_correlation_eval | triggers: <n>`
+- `heatmap_tracker_eval | triggers: <n>`
+- `indicator_tracker_eval | triggers: <n>`
+
 #### Human‑Readable Emoji Logging (v2.2.0)
 Alert evaluations and actions are now logged in a clean, human‑readable format with emojis using `app/alert_logging.py`.
 

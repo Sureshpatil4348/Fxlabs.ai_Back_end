@@ -471,25 +471,30 @@ async def _get_user_tracked_symbols(user_email: str) -> Set[str]:
 async def _minute_alerts_scheduler():
     """Every 5 minutes: refresh alerts and evaluate all alert types."""
     try:
+        logger = logging.getLogger(__name__)
         while _minute_scheduler_running:
             try:
                 await alert_cache._refresh_cache()
             except Exception:
                 pass
             try:
-                await rsi_tracker_alert_service.check_rsi_tracker_alerts()
+                rsi_trig = await rsi_tracker_alert_service.check_rsi_tracker_alerts()
+                logger.info("🔎 rsi_tracker_eval | triggers: %d", len(rsi_trig))
             except Exception as e:
                 print(f"❌ RSI Tracker evaluation error: {e}")
             try:
-                await rsi_correlation_tracker_alert_service.check_rsi_correlation_tracker_alerts()
+                corr_trig = await rsi_correlation_tracker_alert_service.check_rsi_correlation_tracker_alerts()
+                logger.info("🔎 rsi_correlation_eval | triggers: %d", len(corr_trig))
             except Exception as e:
                 print(f"❌ RSI Correlation Tracker evaluation error: {e}")
             try:
-                await heatmap_tracker_alert_service.check_heatmap_tracker_alerts()
+                heatmap_trig = await heatmap_tracker_alert_service.check_heatmap_tracker_alerts()
+                logger.info("🔎 heatmap_tracker_eval | triggers: %d", len(heatmap_trig))
             except Exception as e:
                 print(f"❌ Heatmap Tracker evaluation error: {e}")
             try:
-                await heatmap_indicator_tracker_alert_service.check_heatmap_indicator_tracker_alerts()
+                indicator_trig = await heatmap_indicator_tracker_alert_service.check_heatmap_indicator_tracker_alerts()
+                logger.info("🔎 indicator_tracker_eval | triggers: %d", len(indicator_trig))
             except Exception as e:
                 print(f"❌ Indicator Tracker evaluation error: {e}")
             await asyncio.sleep(300)
