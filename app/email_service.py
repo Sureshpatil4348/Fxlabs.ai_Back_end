@@ -32,7 +32,7 @@ import logging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL
+from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, DAILY_TZ_NAME
 from .alert_logging import log_debug, log_info, log_warning, log_error
 
 
@@ -45,6 +45,8 @@ class EmailService:
         # Prefer authenticated subdomain sender for DMARC alignment (example: alerts@alerts.fxlabs.ai)
         self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@alerts.fxlabs.ai")).strip()
         self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs Alerts")).strip()
+        # Tenant-aware timezone for all email timestamps (FXLabs → IST by default)
+        self.tz_name = (DAILY_TZ_NAME or "Asia/Kolkata")
         # Unsubscribe feature removed per spec
         
         # Smart cooldown mechanism - value-based cooldown for similar alerts
@@ -776,7 +778,7 @@ class EmailService:
             """
         
         # Current timestamp (IST display)
-        current_time = self._format_now_local("Asia/Kolkata")
+        current_time = self._format_now_local(self.tz_name)
         
         html_body = f"""
         <!DOCTYPE html>
@@ -787,7 +789,7 @@ class EmailService:
             <title>Heatmap Alert - {alert_name}</title>
         </head>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            {self._build_common_header('Heatmap', 'Asia/Kolkata')}
+            {self._build_common_header('Heatmap', self.tz_name)}
             
             <!-- Alert Details -->
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
@@ -905,7 +907,7 @@ class EmailService:
 <html lang=\"en\">
 <head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Probability Signal</title></head>
 <body style=\"margin:0;background:#F5F7FB;\">\n
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('Probability Signal', 'Asia/Kolkata')}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('Probability Signal', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
         """
 
@@ -951,7 +953,7 @@ class EmailService:
                     <div style="background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
                         <h2 style="color: #1a1a1a; font-size: 18px; font-weight: 600; margin: 0 0 16px 0;">System Test</h2>
                         <p style="color: #4a5568; line-height: 1.6; margin: 0 0 12px 0;">Email delivery system operational.</p>
-                        <p style="color: #718096; font-size: 14px; margin: 0;">{self._format_now_local("Asia/Kolkata")}</p>
+                        <p style="color: #718096; font-size: 14px; margin: 0;">{self._format_now_local(self.tz_name)}</p>
                     </div>
                     
                     <div style="text-align: center; padding-top: 20px; border-top: 1px solid #e9ecef;">
@@ -1124,7 +1126,7 @@ class EmailService:
 
         # Build one card (provided template) per triggered pair
         cards: List[str] = []
-        ts_local = self._format_now_local("Asia/Kolkata")
+        ts_local = self._format_now_local(self.tz_name)
         for pair in triggered_pairs:
             symbol = self._pair_display(pair.get("symbol", "N/A"))
             timeframe = pair.get("timeframe", "N/A")
@@ -1168,7 +1170,7 @@ class EmailService:
 <title>FxLabs • RSI Alert</title>
 </head>
 <body style=\"margin:0;background:#F5F7FB;\">\n
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI', 'Asia/Kolkata')}\n{cards_html}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI', self.tz_name)}\n{cards_html}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
         """
 
@@ -1181,7 +1183,7 @@ class EmailService:
         """Build HTML for Custom Indicator signal using provided compact template."""
 
         cards: List[str] = []
-        ts_local = self._format_now_local("Asia/Kolkata")
+        ts_local = self._format_now_local(self.tz_name)
         indicators_csv = ", ".join((alert_config.get("selected_indicators") or [])) or "-"
         for pair in triggered_pairs:
             symbol = self._pair_display(pair.get("symbol", "N/A"))
@@ -1216,7 +1218,7 @@ class EmailService:
 <html lang=\"en\">
 <head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Custom Indicator Signal</title></head>
 <body style=\"margin:0;background:#F5F7FB;\">\n
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('Indicator Tracker', 'Asia/Kolkata')}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('Indicator Tracker', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
         """
 
@@ -1369,7 +1371,7 @@ class EmailService:
 <!doctype html>
 <html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Correlation Alert</title></head>
 <body style=\"margin:0;background:#F5F7FB;\">\n
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI Correlation', 'Asia/Kolkata')}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Actual Correlation Mismatch</td></tr>\n  {blocks_html}\n</table>\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI Correlation', self.tz_name)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Actual Correlation Mismatch</td></tr>\n  {blocks_html}\n</table>\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
         """
 
@@ -1562,7 +1564,7 @@ class EmailService:
 <!doctype html>
 <html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • RSI Correlation Alert</title></head>
 <body style=\"margin:0;background:#F5F7FB;\">\n
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI Correlation', 'Asia/Kolkata')}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI Correlation', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
             """
 
@@ -1635,7 +1637,7 @@ class EmailService:
 @media screen and (max-width:600px){{ .container{{width:100%!important}} .stack{{display:block!important;width:100%!important}}}}
 </style>
 </head>
-<body style=\"margin:0;background:#F5F7FB;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 12px;\">\n        {self._build_common_header('Daily', 'Asia/Kolkata', date_override=date_local, time_label_override=time_label)}\n        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n          <tr>\n            <td style=\"padding:20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">\n                  <td style=\"padding:10px 8px;\">Pair</td>\n                  <td style=\"padding:10px 8px;\">Signal</td>\n                  <td style=\"padding:10px 8px;\">Probability</td>\n                  <td style=\"padding:10px 8px;\">Timeframe</td>\n                </tr>\n                {core_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">                \n                <tr class=\"stack\">\n                  <td class=\"stack\" valign=\"top\" style=\"width:50%;padding:12px;background:#F9FAFB;border-radius:10px;\">\n                    <div style=\"font-size:12px;color:#6B7280;margin-bottom:6px;\">Oversold</div>\n                    {os_list}\n                  </td>\n                  <td class=\"stack\" valign=\"top\" style=\"width:20px;\">&nbsp;</td>\n                  <td class=\"stack\" valign=\"top\" style=\"width:50%;padding:12px;background:#F9FAFB;border-radius:10px;\">\n                    <div style=\"font-size:12px;color:#6B7280;margin-bottom:6px;\">Overbought</div>\n                    {ob_list}\n                  </td>\n                </tr>\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Today's High/Medium-Impact News</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {news_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">\n              This information is for education only and not financial advice. © FxLabs AI\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>
+<body style=\"margin:0;background:#F5F7FB;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 12px;\">\n        {self._build_common_header('Daily', payload.get('tz_name', self.tz_name), date_override=date_local, time_label_override=time_label)}\n        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n          <tr>\n            <td style=\"padding:20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">\n                  <td style=\"padding:10px 8px;\">Pair</td>\n                  <td style=\"padding:10px 8px;\">Signal</td>\n                  <td style=\"padding:10px 8px;\">Probability</td>\n                  <td style=\"padding:10px 8px;\">Timeframe</td>\n                </tr>\n                {core_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {news_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">\n              This information is for education only and not financial advice. © FxLabs AI\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>
         """
 
     def _build_daily_text(self, payload: Dict[str, Any]) -> str:
