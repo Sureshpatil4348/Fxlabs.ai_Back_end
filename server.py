@@ -1087,19 +1087,28 @@ class WSClient:
 async def ws_ticks_legacy(websocket: WebSocket):
     """Legacy WebSocket endpoint for tick-only streaming"""
     client = None
-    
     try:
         await websocket.accept()
         try:
             await websocket.send_json({"type": "connected", "message": "Legacy tick WebSocket connected"})
         except Exception:
             pass
-        
+
         client = WSClient(websocket, "")
         await client.start()
-        
+
         while True:
-            data = await websocket.receive_text()
+            # If client already disconnected, exit gracefully
+            if getattr(websocket, "client_state", None) != WebSocketState.CONNECTED:
+                break
+            try:
+                data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except RuntimeError:
+                # Starlette raises RuntimeError when not accepted/connected; treat as normal disconnect
+                break
+
             try:
                 message = orjson.loads(data)
                 # Force legacy behavior
@@ -1111,11 +1120,15 @@ async def ws_ticks_legacy(websocket: WebSocket):
                     await websocket.send_json({"type": "error", "error": str(parse_error)})
                 except Exception:
                     break
-                
+
     except WebSocketDisconnect:
         print("🔌 Legacy WebSocket disconnected")
     except Exception as e:
-        print(f"❌ Legacy WebSocket error: {e}")
+        # Treat generic runtime receive/accept errors as disconnects to avoid scary traces
+        if "accept" in str(e).lower() and "websocket" in str(e).lower():
+            print("🔌 Legacy WebSocket disconnected (accept state)")
+        else:
+            print(f"❌ Legacy WebSocket error: {e}")
     finally:
         if client:
             await client.stop()
@@ -1147,7 +1160,16 @@ async def ws_market(websocket: WebSocket):
         
         # Handle incoming messages
         while True:
-            data = await websocket.receive_text()
+            # Exit if client not connected
+            if getattr(websocket, "client_state", None) != WebSocketState.CONNECTED:
+                break
+            try:
+                data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except RuntimeError:
+                # Starlette raises RuntimeError when not accepted/connected; treat as normal disconnect
+                break
             
             try:
                 message = orjson.loads(data)
@@ -1163,9 +1185,11 @@ async def ws_market(websocket: WebSocket):
     except WebSocketDisconnect:
         print("Websocket Disconnected")
     except Exception as e:
-        print(f"❌ WebSocket error: {e}")
-        import traceback
-        traceback.print_exc()
+        # Treat generic runtime receive/accept errors as disconnects to avoid scary traces
+        if "accept" in str(e).lower() and "websocket" in str(e).lower():
+            print("🔌 WebSocket disconnected (accept state)")
+        else:
+            print(f"❌ WebSocket error: {e}")
     finally:
         if client:
             await client.stop()

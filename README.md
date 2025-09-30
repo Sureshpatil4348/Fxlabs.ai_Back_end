@@ -814,6 +814,11 @@ The system provides comprehensive logging for:
 - API request/response cycles
 - Performance metrics
 
+#### Troubleshooting: WebSocket “accept” error
+- Symptom: RuntimeError "WebSocket is not connected. Need to call 'accept' first." in logs.
+- Meaning: The client closed or the connection wasn’t fully established when the server tried to read. This is a normal transient condition with flaky clients or quick reconnects.
+- Handling: The server now treats this as a clean disconnect and exits the read loop gracefully; no action required unless it’s frequent. If frequent, check client networking and retry logic.
+
 #### File Logging (added)
 - Logs are written both to the terminal and to `logs/app.log` in the repository root.
 - File logs rotate automatically at ~10 MB per file with up to 5 backups kept: `app.log`, `app.log.1`, ..., `app.log.5`.
