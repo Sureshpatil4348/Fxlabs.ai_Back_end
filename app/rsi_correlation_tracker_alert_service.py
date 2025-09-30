@@ -228,8 +228,8 @@ class RSICorrelationTrackerAlertService:
                                     "email_queue",
                                     alert_type="rsi_correlation_tracker",
                                     alert_id=alert_id,
-                            )
-                            asyncio.create_task(self._send_email(user_email, payload))
+                                )
+                                asyncio.create_task(self._send_email(user_email, payload))
                         else:
                             logger.info(
                                 f"🔕 Email notifications disabled for correlation alert_id={alert_id}; methods={methods}"
@@ -487,4 +487,3 @@ class RSICorrelationTrackerAlertService:
 
 
 rsi_correlation_tracker_alert_service = RSICorrelationTrackerAlertService()
-
