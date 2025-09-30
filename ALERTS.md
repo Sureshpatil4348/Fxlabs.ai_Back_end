@@ -28,6 +28,7 @@
 - Per‑pair concurrency and warm‑up enforced.
 - Skip stale TFs (last candle age > 2× TF length).
   - Note: Per-user email rate limits and digest have been removed. Alerts are sent immediately when not blocked by service-specific cooldowns (e.g., value-based email cooldown).
+ - Closed‑bar gating is tracked per alert/user (keyed by `alert_id` along with symbol/timeframe or pair_key). This ensures multiple users with identical configurations are each evaluated every cycle without suppressing later users in the same scheduler tick.
 
 **Message Structure (email)**
 - Title: RSI Alert • {PAIR} ({TF})

@@ -37,7 +37,7 @@ class RSITrackerAlertService:
         # Pair-level cooldowns were removed per product decision; rely on threshold re-arm only
         # Hysteresis arm/disarm state per (alert, symbol, timeframe)
         self._hysteresis_map: Dict[str, Dict[str, bool]] = {}
-        # Track last evaluated closed bar per (symbol, timeframe)
+        # Track last evaluated closed bar per (alert_id, symbol, timeframe)
         self._last_closed_bar_ts: Dict[str, int] = {}
 
     def _normalize_timeframe(self, timeframe: str) -> str:
@@ -438,6 +438,7 @@ class RSITrackerAlertService:
                     triggered_pairs: List[Dict[str, Any]] = []
                     for symbol in pairs:
                         key = f"{symbol}:{timeframe}"
+                        bar_key = f"{alert_id}:{symbol}:{timeframe}"
                         async with pair_locks.acquire(key):
                             market = await self._get_market_data_for_symbol(symbol, timeframe)
                             if not market:
@@ -459,15 +460,24 @@ class RSITrackerAlertService:
                                     timeframe=timeframe,
                                 )
                                 continue
-                            prev_ts = self._last_closed_bar_ts.get(key)
+                            prev_ts = self._last_closed_bar_ts.get(bar_key)
                             # Startup warm-up: if we've never seen this (symbol,timeframe) key,
                             # baseline the last closed bar and skip triggering on this first observation.
                             if prev_ts is None:
-                                self._last_closed_bar_ts[key] = last_ts
+                                self._last_closed_bar_ts[bar_key] = last_ts
                                 continue
                             if prev_ts is not None and prev_ts == last_ts:
+                                # Already evaluated this closed bar for this alert/user
+                                log_debug(
+                                    logger,
+                                    "closed_bar_already_evaluated",
+                                    alert_id=alert_id,
+                                    symbol=symbol,
+                                    timeframe=timeframe,
+                                    last_ts=last_ts,
+                                )
                                 continue
-                            self._last_closed_bar_ts[key] = last_ts
+                            self._last_closed_bar_ts[bar_key] = last_ts
 
                             # Detect crossing
                             cond = await self._detect_rsi_crossing(
@@ -559,4 +569,3 @@ class RSITrackerAlertService:
 
 # Global instance
 rsi_tracker_alert_service = RSITrackerAlertService()
-

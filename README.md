@@ -781,6 +781,7 @@ Model behavior:
   - External API keys (Perplexity/Jblanked) are expected via env; missing keys will limit news analysis. Behavior unchanged.
   - News analyzer uses simple keyword extraction to derive effect; this is heuristic, as before.
   - Email per-user rate limiting and digest have been removed. Alerts are sent immediately when not blocked by the value-based cooldown.
+  - Closed-bar gating for alert evaluation is tracked per alert/user (not globally by symbol/timeframe). This ensures multiple users with identical configurations are each evaluated every cycle.
 
 - Low severity:
   - Logging is console-based; consider structured logging for production observability.

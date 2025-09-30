@@ -33,7 +33,7 @@ class RSICorrelationTrackerAlertService:
         self.supabase_service_key = SUPABASE_SERVICE_KEY
         # Remember last mismatch state per (alert, pair_key, timeframe, mode)
         self._last_state: Dict[str, bool] = {}
-        # Track last evaluated closed bar per (pair_key, timeframe) to enforce closed-bar evaluation
+        # Track last evaluated closed bar per (alert_id, pair_key, timeframe) to enforce closed-bar evaluation per user/alert
         self._last_closed_bar_ts: Dict[str, int] = {}
 
     def _normalize_timeframe(self, timeframe: str) -> str:
@@ -124,7 +124,7 @@ class RSICorrelationTrackerAlertService:
                         async with pair_locks.acquire(f"{s1}:{timeframe}"):
                             async with pair_locks.acquire(f"{s2}:{timeframe}"):
                                 # Enforce closed-bar policy: evaluate once per closed bar per pair/timeframe
-                                pair_tf_key = f"{pair_key}:{timeframe}"
+                                pair_tf_key = f"{alert_id}:{pair_key}:{timeframe}"
                                 ts1 = await self._get_last_closed_bar_ts(s1, timeframe)
                                 ts2 = await self._get_last_closed_bar_ts(s2, timeframe)
                                 if ts1 is None or ts2 is None:
@@ -154,7 +154,16 @@ class RSICorrelationTrackerAlertService:
                                     self._last_state[k] = bool(mismatch)
                                     continue
                                 if prev_pair_ts is not None and prev_pair_ts == last_pair_ts:
-                                    # Already evaluated for current closed bar
+                                    # Already evaluated this closed bar for this alert/user
+                                    from .alert_logging import log_debug as _ld
+                                    _ld(
+                                        logger,
+                                        "closed_bar_already_evaluated",
+                                        alert_id=alert_id,
+                                        pair_key=pair_key,
+                                        timeframe=timeframe,
+                                        last_ts=last_pair_ts,
+                                    )
                                     continue
                                 self._last_closed_bar_ts[pair_tf_key] = last_pair_ts
 
