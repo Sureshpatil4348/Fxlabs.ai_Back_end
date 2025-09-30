@@ -217,7 +217,13 @@ After each alert cache refresh, the server logs a categories summary and a full 
      - id=... | name=RSI Correlation Tracker | user=...
 ```
 
-Additionally, a structured log line with per-category counts is emitted as `app.alert_cache | alert_cache_categories` for observability.
+Additionally:
+- A structured log line with per-category counts is emitted as `app.alert_cache | alert_cache_categories` for observability.
+- For each alert in the listing, a concise config snapshot is printed per type:
+  - RSI Tracker: `tf`, `period`, `ob` (overbought), `os` (oversold)
+  - RSI Correlation Tracker: `tf`, `mode`, `period`, `ob`, `os`, `window`
+  - Heatmap Tracker: `style`, `buy_threshold`, `sell_threshold`, `pairs`
+  - Indicator Tracker: `indicator`, `tf`, `pairs`
 
 ### REST: Alerts by Category
 

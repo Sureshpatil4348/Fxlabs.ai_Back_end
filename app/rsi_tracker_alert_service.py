@@ -431,6 +431,18 @@ class RSITrackerAlertService:
                         rsi_overbought=rsi_overbought,
                         rsi_oversold=rsi_oversold,
                     )
+                    # Also log a concise INFO-level config line per request
+                    log_info(
+                        logger,
+                        "alert_eval_config",
+                        alert_type="rsi_tracker",
+                        alert_id=alert_id,
+                        user_email=user_email,
+                        timeframe=timeframe,
+                        rsi_period=rsi_period,
+                        rsi_overbought=rsi_overbought,
+                        rsi_oversold=rsi_oversold,
+                    )
                     # Pairs: auto-discover from env/global list. Ignore per-alert pairs.
                     pairs: List[str] = self._discover_symbols()
 

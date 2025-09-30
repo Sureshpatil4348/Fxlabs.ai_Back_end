@@ -66,6 +66,17 @@ class HeatmapIndicatorTrackerAlertService:
                         indicator=indicator,
                         pairs=len(pairs),
                     )
+                    # INFO-level concise config
+                    log_info(
+                        logger,
+                        "alert_eval_config",
+                        alert_type="indicator_tracker",
+                        alert_id=alert_id,
+                        user_email=user_email,
+                        timeframe=timeframe,
+                        indicator=indicator,
+                        pairs=len(pairs),
+                    )
 
                     ts_iso = datetime.now(timezone.utc).isoformat()
                     per_alert_triggers: List[Dict[str, Any]] = []
@@ -279,4 +290,3 @@ class HeatmapIndicatorTrackerAlertService:
 
 
 heatmap_indicator_tracker_alert_service = HeatmapIndicatorTrackerAlertService()
-

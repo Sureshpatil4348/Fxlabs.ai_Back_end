@@ -97,6 +97,20 @@ class RSICorrelationTrackerAlertService:
                         rsi_oversold=rsi_os,
                         correlation_window=corr_window,
                     )
+                    # INFO-level concise config
+                    log_info(
+                        logger,
+                        "alert_eval_config",
+                        alert_type="rsi_correlation_tracker",
+                        alert_id=alert_id,
+                        user_email=user_email,
+                        timeframe=timeframe,
+                        mode=mode,
+                        rsi_period=rsi_period,
+                        rsi_overbought=rsi_ob,
+                        rsi_oversold=rsi_os,
+                        correlation_window=corr_window,
+                    )
 
                     # Pairs for correlation: auto-discover from env/global list. Ignore per-alert pairs.
                     pair_keys: List[str] = self._discover_pair_keys()
