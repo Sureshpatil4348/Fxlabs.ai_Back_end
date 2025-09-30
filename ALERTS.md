@@ -16,6 +16,10 @@
     - Heatmap Tracker: initialize armed state per (alert, symbol) from current Buy%/Sell% (disarm sides already above thresholds) and skip the first observation.
     - Indicator Tracker: baseline last signal per (alert, symbol, timeframe, indicator) and skip the first observation.
 
+**Logging**
+- All alert logs print to terminal and are also persisted to `logs/app.log` with rotation (≈10 MB × 5 files).
+- The `logs/` folder is created automatically; you can change location via `LOG_DIR`.
+
 **Simplified Scope (Current Support)**
 - RSI Tracker Alert (single per user)
   - Timeframe: choose exactly one (e.g., `5M`, `15M`, `30M`, `1H`, `4H`, `1D`, `1W`).

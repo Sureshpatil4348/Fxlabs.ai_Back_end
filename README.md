@@ -784,7 +784,6 @@ Model behavior:
   - Closed-bar gating for alert evaluation is tracked per alert/user (not globally by symbol/timeframe). This ensures multiple users with identical configurations are each evaluated every cycle.
 
 - Low severity:
-  - Logging is console-based; consider structured logging for production observability.
   - CORS defaults to allow-all when `ALLOWED_ORIGINS` is empty (dev-friendly, same as before). For production, set explicit origins.
   - Tests are minimal; add unit tests per module in future iterations.
 
@@ -814,6 +813,17 @@ The system provides comprehensive logging for:
 - Data processing errors
 - API request/response cycles
 - Performance metrics
+
+#### File Logging (added)
+- Logs are written both to the terminal and to `logs/app.log` in the repository root.
+- File logs rotate automatically at ~10 MB per file with up to 5 backups kept: `app.log`, `app.log.1`, ..., `app.log.5`.
+- The `logs/` directory is created automatically on startup.
+
+Optional environment overrides:
+- `LOG_DIR` — change the directory for log files (default: `<repo>/logs`).
+- `LOG_FILE_NAME` — change the log file name (default: `app.log`).
+- `LOG_MAX_BYTES` — max size of a single log file in bytes (default: `10485760`).
+- `LOG_BACKUP_COUNT` — number of rotated backups to keep (default: `5`).
 
 #### Detailed Evaluation Logs (per alert, per symbol/pair)
 At DEBUG level, evaluators emit concise reasons when a trigger does not fire, so you can see exactly how each alert was evaluated:

@@ -1,11 +1,15 @@
 import logging
 import os
+from logging.handlers import RotatingFileHandler
 
 
 def configure_logging(level: str | int = None) -> None:
-    """Configure root logging with timestamped format.
+    """Configure root logging with timestamped format and file output.
 
-    Idempotent: updates existing handlers' formatters if already configured.
+    - Always ensures a console stream handler is present.
+    - Also writes logs to `logs/app.log` (repo root), rotating at ~10MB x5.
+    - Idempotent: updates existing handlers' formatters if already configured,
+      and adds the file handler only once.
     """
     if level is None:
         level = os.environ.get("LOG_LEVEL", "INFO")
@@ -17,18 +21,57 @@ def configure_logging(level: str | int = None) -> None:
     date_format = "%Y-%m-%d %H:%M:%S%z"
     formatter = logging.Formatter(log_format, datefmt=date_format)
 
-    if root.handlers:
-        for h in root.handlers:
-            # Only update known stream/file handlers
+    # Determine log directory in repo root: <repo>/logs
+    try:
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    except Exception:
+        base_dir = os.getcwd()
+
+    log_dir = os.environ.get("LOG_DIR", os.path.join(base_dir, "logs"))
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except Exception:
+        # Fallback to current working directory if creation fails
+        log_dir = os.getcwd()
+
+    log_file_name = os.environ.get("LOG_FILE_NAME", "app.log")
+    log_file_path = os.path.join(log_dir, log_file_name)
+
+    # Apply formatter to existing handlers and detect if our file handler exists
+    has_console = False
+    has_target_file = False
+    for h in list(root.handlers):
+        try:
+            h.setFormatter(formatter)
+        except Exception:
+            pass
+        if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler):
+            has_console = True
+        if isinstance(h, logging.FileHandler):
             try:
-                h.setFormatter(formatter)
+                if os.path.abspath(getattr(h, "baseFilename", "")) == os.path.abspath(log_file_path):
+                    has_target_file = True
             except Exception:
-                # Skip handlers that don't support formatters
                 pass
-    else:
+
+    # Ensure console stream handler exists
+    if not has_console:
         handler = logging.StreamHandler()
         handler.setFormatter(formatter)
         root.addHandler(handler)
+
+    # Ensure rotating file handler exists (10MB x 5 backups)
+    if not has_target_file:
+        max_bytes = int(os.environ.get("LOG_MAX_BYTES", str(10 * 1024 * 1024)))  # 10 MB
+        backup_count = int(os.environ.get("LOG_BACKUP_COUNT", "5"))
+        file_handler = RotatingFileHandler(
+            log_file_path,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
 
     # Suppress noisy third-party debug logs (e.g., SendGrid client payloads)
     noisy_loggers = [
@@ -43,4 +86,3 @@ def configure_logging(level: str | int = None) -> None:
             logging.getLogger(name).setLevel(logging.WARNING)
         except Exception:
             pass
-
