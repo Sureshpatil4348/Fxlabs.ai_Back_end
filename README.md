@@ -226,6 +226,9 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 - **Purpose**: Real-time tick and OHLC data streaming
 - **Features**: Selective timeframe subscriptions, intelligent caching, Bid/Ask parallel OHLC fields
 
+Note on closed-bar guarantees:
+- The server emits an `is_closed=true` OHLC bar at every timeframe boundary, including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.
+
 Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services.
 Connected discovery message now includes Bid/Ask capabilities and schema:
 

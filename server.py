@@ -813,10 +813,17 @@ class WSClient:
                 try:
                     sub_info = self.subscriptions.get(symbol)
                     if sub_info and "ohlc" in sub_info.data_types:
-                        # Get current OHLC data from cache
+                        # Refresh cache from MT5 at boundary to include zero-tick flat minutes
+                        update_ohlc_cache(symbol, sub_info.timeframe)
+                        # Get current OHLC data from cache (now authoritative and closed)
                         cached_data = get_cached_ohlc(symbol, sub_info.timeframe, 1)
                         if cached_data:
                             current_ohlc = cached_data[-1]
+                            # Guarantee closed flag for boundary emissions
+                            try:
+                                current_ohlc.is_closed = True
+                            except Exception:
+                                pass
                             await self.websocket.send_json({
                                 "type": "ohlc_update",
                                 "data": self._format_ohlc_for_subscription(current_ohlc, symbol)

@@ -82,6 +82,20 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
     try:
         ts_ms = int(rate_data[0]) * 1000
         dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
+        # Determine closed status at conversion time to support strict closed-bar consumers
+        tf_seconds_map = {
+            "1M": 60,
+            "5M": 300,
+            "15M": 900,
+            "30M": 1800,
+            "1H": 3600,
+            "4H": 14400,
+            "1D": 86400,
+            "1W": 604800,
+        }
+        tf_secs = tf_seconds_map.get(timeframe, 60)
+        bar_end_ms = ts_ms + (tf_secs * 1000)
+        is_closed = int(datetime.now(timezone.utc).timestamp() * 1000) >= bar_end_ms
         return OHLC(
             symbol=symbol,
             timeframe=timeframe,
@@ -91,7 +105,8 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
             high=float(rate_data[2]),
             low=float(rate_data[3]),
             close=float(rate_data[4]),
-            volume=float(rate_data[5])
+            volume=float(rate_data[5]),
+            is_closed=is_closed,
         )
     except (IndexError, ValueError, TypeError) as e:
         print(f"Error converting rate data to OHLC: {e}")

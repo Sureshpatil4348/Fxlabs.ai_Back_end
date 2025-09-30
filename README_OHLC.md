@@ -11,6 +11,7 @@ The MT5 Market Data Server has been enhanced with comprehensive OHLC (Open, High
 - **Intelligent Caching**: Global server-side cache for efficient data delivery
 - **Scheduled Updates**: OHLC data sent only when timeframe periods complete
 - **Backward Compatibility**: Legacy tick-only endpoint still available
+ - **Closed-minute emission guarantee**: At every timeframe boundary (including 1M zero‑tick flat minutes), the server emits an `is_closed=true` OHLC bar. Clients don’t need interpolation/fillers; indicators like RSI stay aligned with MT5 with zero drift.
 
 ## 📊 Supported Timeframes
 
