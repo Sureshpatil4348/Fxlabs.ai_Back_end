@@ -183,23 +183,35 @@ class EmailService:
         except Exception:
             return raw
 
+    def _zoneinfo_or_fallback(self, tz_name: str):
+        """Return tzinfo for tz_name. Fallback to fixed IST or UTC when ZoneInfo is unavailable."""
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(tz_name)
+        except Exception:
+            if tz_name == "Asia/Kolkata":
+                try:
+                    return timezone(timedelta(hours=5, minutes=30), name="IST")
+                except Exception:
+                    pass
+            return timezone.utc
+
     def _format_now_local(self, tz_name: str = "Asia/Kolkata") -> str:
         """Return current time formatted with local timezone for display (default IST)."""
         try:
-            from zoneinfo import ZoneInfo
-            dt = datetime.now(ZoneInfo(tz_name))
-            # IST label for Asia/Kolkata
+            tz = self._zoneinfo_or_fallback(tz_name)
+            dt = datetime.now(tz)
             label = "IST" if tz_name == "Asia/Kolkata" else tz_name
             return dt.strftime(f"%Y-%m-%d %H:%M {label}")
         except Exception:
-            # Fallback to UTC
+            # Final fallback to UTC string
             return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     
     def _get_local_date_time_strings(self, tz_name: str = "Asia/Kolkata") -> Tuple[str, str, str]:
         """Return (date_str, time_str, tz_label) for the given timezone, defaulting to IST."""
         try:
-            from zoneinfo import ZoneInfo
-            dt = datetime.now(ZoneInfo(tz_name))
+            tz = self._zoneinfo_or_fallback(tz_name)
+            dt = datetime.now(tz)
             label = "IST" if tz_name == "Asia/Kolkata" else tz_name
             return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M"), label
         except Exception:

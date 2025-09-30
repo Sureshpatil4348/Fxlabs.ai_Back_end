@@ -1,7 +1,7 @@
 ### Multi‑tenant plan: FXLabs (India) and HexTech (Dubai)
 
 Goal: Run two independent but feature‑identical sites with strict isolation:
-- **FXLabs (India)**: own Supabase project, users, alerts; daily brief at 09:00 IST (`Asia/Kolkata`)
+- **FXLabs (India)**: own Supabase project, users, alerts; daily brief at 09:00 IST (`Asia/Kolkata`). All alert emails for FXLabs display times in IST. If ZoneInfo is unavailable on host, a fixed +05:30 fallback is used.
 - **HexTech (Dubai)**: own Supabase project, users, alerts; daily brief at 09:00 Dubai time (`Asia/Dubai`)
 
 No code changes done yet. This document maps the system to tenancy touchpoints and proposes the safest approach.

@@ -995,9 +995,20 @@ def _format_event_time_local(time_iso: Optional[str], tz_name: str = "Asia/Kolka
     try:
         if not time_iso:
             return ""
-        from zoneinfo import ZoneInfo
+        # robust tz handling with fallback for IST
+        try:
+            from zoneinfo import ZoneInfo
+            local_tz = ZoneInfo(tz_name)
+        except Exception:
+            if tz_name == "Asia/Kolkata":
+                try:
+                    local_tz = timezone(timedelta(hours=5, minutes=30))
+                except Exception:
+                    local_tz = timezone.utc
+            else:
+                local_tz = timezone.utc
         dt_utc = datetime.fromisoformat(time_iso.replace("Z", "+00:00")).astimezone(timezone.utc)
-        dt_local = dt_utc.astimezone(ZoneInfo(tz_name))
+        dt_local = dt_utc.astimezone(local_tz)
         label = "IST" if tz_name == "Asia/Kolkata" else tz_name
         return dt_local.strftime(f"%Y-%m-%d %H:%M {label}")
     except Exception:
