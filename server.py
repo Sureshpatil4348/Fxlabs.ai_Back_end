@@ -582,6 +582,21 @@ async def get_alert_cache(x_api_key: Optional[str] = Depends(require_api_token_h
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/alerts/by-category")
+async def get_alerts_by_category(x_api_key: Optional[str] = Depends(require_api_token_header)):
+    """Get all alerts grouped by category (type)"""
+    try:
+        grouped = await alert_cache.get_alerts_by_category()
+        total = sum(len(v) for v in grouped.values())
+        return {
+            "total_alerts": total,
+            "last_refresh": alert_cache._last_refresh.isoformat() if alert_cache._last_refresh else None,
+            "is_refreshing": alert_cache._is_refreshing,
+            "categories": grouped,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/alerts/user/{user_id}")
 async def get_user_alerts(user_id: str, x_api_key: Optional[str] = Depends(require_api_token_header)):
     """Get cached alert configurations for a specific user"""
@@ -1157,6 +1172,7 @@ if __name__ == "__main__":
     print("   - News Analysis: GET /api/news/analysis")
     print("   - News Refresh: POST /api/news/refresh")
     print("   - Alert Cache: GET /api/alerts/cache")
+    print("   - Alerts by Category: GET /api/alerts/by-category")
     print("   - User Alerts: GET /api/alerts/user/{user_id}")
     print("   - Alert Refresh: POST /api/alerts/refresh")
     print("   - Alerts Cache: GET /api/alerts/cache")

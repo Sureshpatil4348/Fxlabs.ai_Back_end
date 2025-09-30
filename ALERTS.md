@@ -197,3 +197,47 @@ Email HTML structure example (simplified):
   - The time part is rendered in a smaller font size.
   - Logo uses the white SVG mark embedded inline for email compatibility.
 - Timezone: Defaults to `Asia/Kolkata` (IST). For Daily emails, the header shows the configured time label (e.g., `IST 09:00`).
+## Alerts Cache — Categories Summary
+
+After each alert cache refresh, the server logs a categories summary and a full list of alerts grouped by category. Example console output:
+
+```
+🔄 Refreshing alert cache...
+✅ Alert cache refreshed: 2 users, 8 total alerts
+📚 Alerts by category (post-refresh):
+  • rsi_tracker: 2
+     - id=... | name=RSI Tracker Alert | user=test@asoasis.tech
+     - id=... | name=RSI Tracker Alert | user=demo@example.com
+  • heatmap_tracker: 3
+     - id=... | name=Heatmap Tracker Alert | user=...
+  • heatmap_indicator_tracker: 2
+     - id=... | name=Indicator Tracker Alert | user=...
+  • rsi_correlation_tracker: 1
+     - id=... | name=RSI Correlation Tracker | user=...
+```
+
+Additionally, a structured log line with per-category counts is emitted as `app.alert_cache | alert_cache_categories` for observability.
+
+### REST: Alerts by Category
+
+- Endpoint: `GET /api/alerts/by-category`
+- Auth: `X-API-Key` (same as other alert endpoints)
+- Response:
+
+```json
+{
+  "total_alerts": 8,
+  "last_refresh": "2025-09-30T15:50:35+00:00",
+  "is_refreshing": false,
+  "categories": {
+    "rsi_tracker": [ { "id": "...", "alert_name": "RSI Tracker Alert", ... } ],
+    "heatmap_tracker": [ ... ],
+    "heatmap_indicator_tracker": [ ... ],
+    "rsi_correlation_tracker": [ ... ]
+  }
+}
+```
+
+Notes:
+- The `categories` lists reuse the canonical alert objects as cached per user; fields vary by alert type (e.g., `timeframe` for RSI, `pairs` for Heatmap).
+- The categories summary is also printed to the console after refresh for quick admin inspection.

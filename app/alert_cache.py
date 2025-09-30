@@ -198,6 +198,29 @@ class AlertCache:
                 users=len(new_cache),
                 total_alerts=total_alerts,
             )
+
+            # After refresh: list all alerts by category (type)
+            categories = self._group_alerts_by_type(new_cache)
+            print("📚 Alerts by category (post-refresh):")
+            for cat, items in categories.items():
+                print(f"  • {cat}: {len(items)}")
+                for a in items:
+                    aid = a.get("id")
+                    name = a.get("alert_name", a.get("name", ""))
+                    email = a.get("user_email", "")
+                    print(f"     - id={aid} | name={name} | user={email}")
+            try:
+                # Structured log with just counts to avoid noisy payloads
+                log_info(
+                    logger,
+                    "alert_cache_categories",
+                    rsi_tracker=len(categories.get("rsi_tracker", [])),
+                    rsi_correlation_tracker=len(categories.get("rsi_correlation_tracker", [])),
+                    heatmap_tracker=len(categories.get("heatmap_tracker", [])),
+                    heatmap_indicator_tracker=len(categories.get("heatmap_indicator_tracker", [])),
+                )
+            except Exception:
+                pass
             
         except Exception as e:
             print(f"❌ Error refreshing alert cache: {e}")
@@ -215,6 +238,25 @@ class AlertCache:
                 pass
         finally:
             self._is_refreshing = False
+
+    def _group_alerts_by_type(self, cache_snapshot: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, List[Dict[str, Any]]]:
+        """Return alerts grouped by their 'type' across all users.
+
+        If cache_snapshot is provided, group that; otherwise group current cache.
+        """
+        src = cache_snapshot if cache_snapshot is not None else self._cache
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for _uid, alerts in src.items():
+            for alert in alerts:
+                atype = alert.get("type", "unknown")
+                grouped.setdefault(atype, []).append(alert)
+        return grouped
+
+    async def get_alerts_by_category(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Public accessor to get alerts grouped by category (type)."""
+        if self._should_refresh():
+            await self._refresh_cache()
+        return self._group_alerts_by_type()
     
     async def _fetch_rsi_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
         """Fetch RSI Tracker alerts from Supabase"""

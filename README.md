@@ -332,6 +332,7 @@ Internal alert tick_data shape:
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
 | `/api/news/refresh` | POST | Manual news refresh | Yes |
 | `/api/alerts/cache` | GET | In-memory alerts cache (RSI Tracker) | Yes |
+| `/api/alerts/by-category` | GET | Alerts grouped by category (type) | Yes |
 | `/api/alerts/refresh` | POST | Force refresh alerts cache | Yes |
 
 ### RSI Tracker Alert — Closed‑bar Crossing
