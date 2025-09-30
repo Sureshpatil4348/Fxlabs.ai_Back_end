@@ -86,6 +86,20 @@ const ws = new WebSocket('ws://localhost:8000/ws/market');
 }
 ```
 
+Multiple timeframes per symbol are supported. Send one subscribe per timeframe. Example:
+
+```json
+{"action":"subscribe","symbol":"EURUSD","timeframe":"1M","data_types":["ohlc"]}
+{"action":"subscribe","symbol":"EURUSD","timeframe":"4H","data_types":["ohlc"]}
+```
+
+Unsubscribe a specific timeframe vs all:
+
+```json
+{"action":"unsubscribe","symbol":"EURUSD","timeframe":"4H"}
+{"action":"unsubscribe","symbol":"EURUSD"}
+```
+
 **Parameters:**
 - `symbol`: Trading symbol (required)
 - `timeframe`: One of the supported timeframes (required)

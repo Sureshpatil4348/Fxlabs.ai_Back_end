@@ -256,6 +256,21 @@ Extended subscribe supports price basis and schema shaping (defaults: `last`, `p
 }
 ```
 
+Multi-timeframe subscriptions per symbol:
+- A single WebSocket connection can subscribe to the same `symbol` across multiple `timeframe`s concurrently (e.g., `1M`, `5M`, `1H`, `4H`).
+- Send a separate `subscribe` message per timeframe; each will stream its own initial snapshot and boundary `ohlc_update`s.
+- To unsubscribe a specific symbol×timeframe, send:
+
+```json
+{ "action": "unsubscribe", "symbol": "EURUSD", "timeframe": "4H" }
+```
+
+- To unsubscribe all timeframes for a symbol, omit `timeframe`:
+
+```json
+{ "action": "unsubscribe", "symbol": "EURUSD" }
+```
+
 OHLC payloads include parallel fields when schema is `parallel`:
 
 ```json
@@ -287,6 +302,19 @@ Internal alert tick_data shape:
   }
 }
 ```
+
+##### WebSocket Disconnect Errors (Expected vs. Actionable)
+- You may occasionally see stack traces like:
+  - `websockets.exceptions.ConnectionClosedError: no close frame received or sent`
+  - `ConnectionClosedOK: received 1001 (going away)`
+  - `WebSocketDisconnect(code=1006)`
+  - `Cannot call "send" once a close message has been sent.`
+- These occur when a client navigates away, a mobile device suspends the tab, or a proxy closes idle connections. The server used to attempt a send during the close handshake, surfacing noisy errors.
+- As of this version, background streaming tasks stop gracefully on disconnect and avoid sending after close. You may still see concise disconnect notices in logs; they are harmless.
+- Client best practices:
+  - Send a proper WebSocket close frame on app shutdown/navigation where possible.
+  - Use keepalive/ping if intermediaries are aggressive about idle timeouts.
+  - Reconnect with backoff on close codes 1001/1006.
 
 #### Legacy Tick WebSocket (`/ws/ticks`)
 - **URL**: `ws://localhost:8000/ws/ticks`

@@ -19,6 +19,7 @@ import orjson
 import logging
 from app.logging_config import configure_logging
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from starlette.websockets import WebSocketState
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -630,12 +631,38 @@ class WSClient:
         # Legacy tick subscriptions
         self.symbols: Set[str] = set()
         self._last_sent_ts: Dict[str, int] = {}
-        # New subscription model
-        self.subscriptions: Dict[str, SubscriptionInfo] = {}  # symbol -> subscription info
-        self.next_ohlc_updates: Dict[str, datetime] = {}  # symbol -> next update time
+        # New subscription model (supports multiple timeframes per symbol)
+        # subscriptions[symbol][timeframe] -> SubscriptionInfo
+        self.subscriptions: Dict[str, Dict[Timeframe, SubscriptionInfo]] = {}
+        # next_ohlc_updates[symbol][timeframe] -> next boundary datetime
+        self.next_ohlc_updates: Dict[str, Dict[Timeframe, datetime]] = {}
         self._task: Optional[asyncio.Task] = None
         self._ohlc_task: Optional[asyncio.Task] = None
         self._send_interval_s: float = 0.10  # 10 Hz for ticks
+
+    def _is_connected(self) -> bool:
+        try:
+            return getattr(self.websocket, "client_state", None) == WebSocketState.CONNECTED
+        except Exception:
+            return False
+
+    async def _try_send_bytes(self, data: bytes) -> bool:
+        if not self._is_connected():
+            return False
+        try:
+            await self.websocket.send_bytes(data)
+            return True
+        except Exception:
+            return False
+
+    async def _try_send_json(self, obj: dict) -> bool:
+        if not self._is_connected():
+            return False
+        try:
+            await self.websocket.send_json(obj)
+            return True
+        except Exception:
+            return False
 
     @staticmethod
     def _map_basis_only(ohlc_dict: Dict[str, Any], basis: PriceBasis) -> Dict[str, Any]:
@@ -665,10 +692,13 @@ class WSClient:
                 del mapped[k]
         return mapped
 
-    def _format_ohlc_for_subscription(self, ohlc: OHLC, symbol: str) -> Dict[str, Any]:
-        """Shape an OHLC payload according to the subscriber's selected schema and basis."""
-        sub = self.subscriptions.get(symbol)
+    def _format_ohlc_for_subscription(self, ohlc: OHLC, symbol: str, timeframe: Timeframe) -> Dict[str, Any]:
+        """Shape an OHLC payload according to the subscriber's selected schema and basis for this symbol×timeframe."""
+        sub_map = self.subscriptions.get(symbol)
         ohlc_dict = ohlc.model_dump()
+        if not sub_map:
+            return ohlc_dict
+        sub = sub_map.get(timeframe)
         if not sub:
             return ohlc_dict
         if sub.ohlc_schema == OHLCSchema.BASIS_ONLY:
@@ -688,39 +718,56 @@ class WSClient:
                 await self._task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                # Task may already have ended due to disconnect
+                pass
         if self._ohlc_task:
             self._ohlc_task.cancel()
             try:
                 await self._ohlc_task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                pass
 
     async def _tick_loop(self):
         """Handle real-time tick streaming"""
         try:
             while True:
+                if not self._is_connected():
+                    return
                 await self._send_tick_updates()
                 await asyncio.sleep(self._send_interval_s)
         except asyncio.CancelledError:
+            return
+        except Exception:
+            # Any exception here should end the loop quietly (likely disconnect)
             return
     
     async def _ohlc_loop(self):
         """Handle scheduled OHLC updates"""
         try:
             while True:
+                if not self._is_connected():
+                    return
                 await self._send_scheduled_ohlc_updates()
                 await asyncio.sleep(1.0)  # Check every second for due updates
         except asyncio.CancelledError:
+            return
+        except Exception:
+            # Likely disconnect while sending
             return
 
     async def _send_tick_updates(self):
         """Send real-time tick updates for subscribed symbols"""
         tick_symbols = set()
         
-        # Collect symbols that need tick updates
-        for symbol, sub_info in self.subscriptions.items():
-            if "ticks" in sub_info.data_types:
-                tick_symbols.add(symbol)
+        # Collect symbols that need tick updates (any timeframe requesting ticks)
+        for symbol, tf_map in self.subscriptions.items():
+            for sub_info in tf_map.values():
+                if "ticks" in sub_info.data_types:
+                    tick_symbols.add(symbol)
+                    break
         
         # Also include legacy tick subscriptions
         tick_symbols.update(self.symbols)
@@ -743,9 +790,11 @@ class WSClient:
                     updates.append(tick.model_dump())
                     self._last_sent_ts[sym] = ts_ms
                     
-                    # Update OHLC cache for this symbol if we have OHLC subscriptions
-                    if sym in self.subscriptions and "ohlc" in self.subscriptions[sym].data_types:
-                        update_ohlc_cache(sym, self.subscriptions[sym].timeframe)
+                    # Update OHLC caches for all subscribed timeframes requesting OHLC for this symbol
+                    if sym in self.subscriptions:
+                        for tf, si in self.subscriptions[sym].items():
+                            if "ohlc" in si.data_types:
+                                update_ohlc_cache(sym, tf)
                         
             except HTTPException:
                 # symbol disappeared or invalid; drop it
@@ -755,7 +804,10 @@ class WSClient:
                     del self.subscriptions[sym]
                     
         if updates:
-            await self.websocket.send_bytes(orjson.dumps({"type": "ticks", "data": updates}))
+            sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": updates}))
+            if not sent:
+                # Stop trying if client is gone
+                return
             
             # Check for alerts on tick updates (non-blocking background task)
             # Only check alerts if there are active alerts to avoid unnecessary processing
@@ -808,39 +860,47 @@ class WSClient:
         """Send OHLC updates when timeframe periods complete"""
         current_time = datetime.now(timezone.utc)
         
-        for symbol, next_update_time in list(self.next_ohlc_updates.items()):
-            if current_time >= next_update_time:
-                try:
-                    sub_info = self.subscriptions.get(symbol)
-                    if sub_info and "ohlc" in sub_info.data_types:
-                        # Refresh cache from MT5 at boundary to include zero-tick flat minutes
-                        update_ohlc_cache(symbol, sub_info.timeframe)
-                        # Get current OHLC data from cache (now authoritative and closed)
-                        cached_data = get_cached_ohlc(symbol, sub_info.timeframe, 1)
-                        if cached_data:
-                            current_ohlc = cached_data[-1]
-                            # Guarantee closed flag for boundary emissions
-                            try:
-                                current_ohlc.is_closed = True
-                            except Exception:
-                                pass
-                            await self.websocket.send_json({
-                                "type": "ohlc_update",
-                                "data": self._format_ohlc_for_subscription(current_ohlc, symbol)
-                            })
-                        
-                        # Schedule next update
-                        self.next_ohlc_updates[symbol] = calculate_next_update_time(
-                            current_time, sub_info.timeframe
-                        )
-                        
-                except Exception as e:
-                    print(f"❌ Error sending OHLC update for {symbol}: {e}")
-                    # Remove problematic subscription
-                    if symbol in self.subscriptions:
-                        del self.subscriptions[symbol]
-                    if symbol in self.next_ohlc_updates:
-                        del self.next_ohlc_updates[symbol]
+        for symbol, tf_map in list(self.next_ohlc_updates.items()):
+            for tf, next_update_time in list(tf_map.items()):
+                if current_time >= next_update_time:
+                    try:
+                        sub_info = self.subscriptions.get(symbol, {}).get(tf)
+                        if sub_info and "ohlc" in sub_info.data_types:
+                            # Refresh cache from MT5 at boundary to include zero-tick flat minutes
+                            update_ohlc_cache(symbol, tf)
+                            # Get current OHLC data from cache (now authoritative and closed)
+                            cached_data = get_cached_ohlc(symbol, tf, 1)
+                            if cached_data:
+                                current_ohlc = cached_data[-1]
+                                # Guarantee closed flag for boundary emissions
+                                try:
+                                    current_ohlc.is_closed = True
+                                except Exception:
+                                    pass
+                                ok = await self._try_send_json({
+                                    "type": "ohlc_update",
+                                    "data": self._format_ohlc_for_subscription(current_ohlc, symbol, tf)
+                                })
+                                if not ok:
+                                    return
+                            # Schedule next update for this symbol×timeframe
+                            self.next_ohlc_updates.setdefault(symbol, {})[tf] = calculate_next_update_time(
+                                current_time, tf
+                            )
+                    except Exception as e:
+                        print(f"❌ Error sending OHLC update for {symbol} {tf.value}: {e}")
+                        # Remove problematic symbol×timeframe subscription
+                        try:
+                            if symbol in self.subscriptions and tf in self.subscriptions[symbol]:
+                                del self.subscriptions[symbol][tf]
+                                if not self.subscriptions[symbol]:
+                                    del self.subscriptions[symbol]
+                            if symbol in self.next_ohlc_updates and tf in self.next_ohlc_updates[symbol]:
+                                del self.next_ohlc_updates[symbol][tf]
+                                if not self.next_ohlc_updates[symbol]:
+                                    del self.next_ohlc_updates[symbol]
+                        except Exception:
+                            pass
 
     async def handle_message(self, message: dict):
         action = message.get("action")
@@ -888,7 +948,10 @@ class WSClient:
                     ohlc_schema=schema,
                 )
                 
-                self.subscriptions[symbol] = sub_info
+                # Persist subscription (allow multiple TFs per symbol)
+                if symbol not in self.subscriptions:
+                    self.subscriptions[symbol] = {}
+                self.subscriptions[symbol][tf] = sub_info
                 
                 # Send initial OHLC data if requested
                 if "ohlc" in data_types:
@@ -900,7 +963,7 @@ class WSClient:
                                 "type": "initial_ohlc",
                                 "symbol": symbol,
                                 "timeframe": timeframe,
-                                "data": [self._format_ohlc_for_subscription(ohlc, symbol) for ohlc in ohlc_data]
+                                "data": [self._format_ohlc_for_subscription(ohlc, symbol, tf) for ohlc in ohlc_data]
                             })
                         else:
                             # Only log at debug level to reduce noise
@@ -908,8 +971,8 @@ class WSClient:
                             logger = logging.getLogger(__name__)
                             logger.debug(f"⚠️ No OHLC data available for {symbol}")
                         
-                        # Schedule next OHLC update
-                        self.next_ohlc_updates[symbol] = calculate_next_update_time(
+                        # Schedule next OHLC update for this symbol×timeframe
+                        self.next_ohlc_updates.setdefault(symbol, {})[tf] = calculate_next_update_time(
                             sub_info.subscription_time, tf
                         )
                         
@@ -949,13 +1012,36 @@ class WSClient:
             
         elif action == "unsubscribe":
             symbol = message.get("symbol", "")
+            timeframe_str = message.get("timeframe")
             if symbol:
-                if symbol in self.subscriptions:
-                    del self.subscriptions[symbol]
-                if symbol in self.next_ohlc_updates:
-                    del self.next_ohlc_updates[symbol]
-                self.symbols.discard(symbol)
-                await self.websocket.send_json({"type": "unsubscribed", "symbol": symbol})
+                if timeframe_str:
+                    # Unsubscribe only this symbol×timeframe
+                    try:
+                        try:
+                            tf = Timeframe(timeframe_str)
+                        except ValueError:
+                            tf = Timeframe[timeframe_str]
+                    except Exception:
+                        await self.websocket.send_json({"type": "error", "error": f"invalid_timeframe: {timeframe_str}"})
+                        return
+                    if symbol in self.subscriptions and tf in self.subscriptions[symbol]:
+                        del self.subscriptions[symbol][tf]
+                        if not self.subscriptions[symbol]:
+                            del self.subscriptions[symbol]
+                    if symbol in self.next_ohlc_updates and tf in self.next_ohlc_updates[symbol]:
+                        del self.next_ohlc_updates[symbol][tf]
+                        if not self.next_ohlc_updates[symbol]:
+                            del self.next_ohlc_updates[symbol]
+                    self.symbols.discard(symbol)
+                    await self.websocket.send_json({"type": "unsubscribed", "symbol": symbol, "timeframe": tf.value})
+                else:
+                    # Unsubscribe all timeframes for this symbol
+                    if symbol in self.subscriptions:
+                        del self.subscriptions[symbol]
+                    if symbol in self.next_ohlc_updates:
+                        del self.next_ohlc_updates[symbol]
+                    self.symbols.discard(symbol)
+                    await self.websocket.send_json({"type": "unsubscribed", "symbol": symbol})
             else:
                 # Legacy unsubscribe
                 syms = message.get("symbols", [])
