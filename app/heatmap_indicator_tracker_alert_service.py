@@ -257,22 +257,94 @@ class HeatmapIndicatorTrackerAlertService:
             )
 
     async def _compute_indicator_signal(self, symbol: str, timeframe: str, indicator: str) -> str:
+        """Compute indicator signal using real OHLC where feasible.
+
+        Supported:
+        - ema21/ema50/ema200: cross of close vs EMA -> buy/sell; otherwise neutral
+        - rsi: cross of RSI(14) vs 50 -> buy/sell; otherwise neutral
+        Unknown indicators return neutral.
+        """
         try:
-            # Placeholder rules; plug in real computations as needed
-            if indicator in ("ema21", "ema50", "ema200"):
-                # Simplified: flip to buy or sell randomly per call (deterministic seed)
-                import random
-                seed = sum(ord(c) for c in (symbol + timeframe + indicator)) % 1000
-                random.seed(seed)
-                return random.choice(["neutral", "buy", "sell"])
-            if indicator == "macd":
-                return "buy"
-            if indicator == "rsi":
-                return "sell"
-            if indicator == "utbot":
+            from .models import Timeframe as TF
+            from .mt5_utils import get_ohlc_data
+
+            tf_map = {
+                "5M": TF.M5,
+                "15M": TF.M15,
+                "30M": TF.M30,
+                "1H": TF.H1,
+                "4H": TF.H4,
+                "1D": TF.D1,
+                "1W": TF.W1,
+            }
+            mtf = tf_map.get(timeframe)
+            if not mtf:
                 return "neutral"
-            if indicator == "ichimokuclone":
-                return "buy"
+
+            ind = (indicator or "").lower()
+            ohlc = get_ohlc_data(symbol, mtf, 260)
+            closes = [b.close for b in ohlc] if ohlc else []
+            if len(closes) < 5:
+                return "neutral"
+
+            def ema_series(cl: list, period: int) -> list:
+                if len(cl) < period:
+                    return []
+                k = 2.0 / (period + 1)
+                ema_vals = [sum(cl[:period]) / float(period)]
+                for price in cl[period:]:
+                    ema_vals.append(price * k + ema_vals[-1] * (1 - k))
+                return ema_vals
+
+            def rsi_series(cl: list, period: int = 14) -> list:
+                n = len(cl)
+                if n < period + 1:
+                    return []
+                deltas = [cl[i] - cl[i - 1] for i in range(1, n)]
+                gains = [max(d, 0.0) for d in deltas]
+                losses = [max(-d, 0.0) for d in deltas]
+                avg_gain = sum(gains[:period]) / period
+                avg_loss = sum(losses[:period]) / period
+                rsis: list = []
+                rsis.append(100.0 if avg_loss == 0 else 100 - (100 / (1 + (avg_gain / avg_loss))))
+                for i in range(period, len(deltas)):
+                    avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+                    avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+                    rsis.append(100.0 if avg_loss == 0 else 100 - (100 / (1 + (avg_gain / avg_loss))))
+                return rsis
+
+            if ind in ("ema21", "ema50", "ema200"):
+                p = int(ind.replace("ema", ""))
+                if p < 2:
+                    return "neutral"
+                ema_vals = ema_series(closes, p)
+                if len(ema_vals) < 2:
+                    return "neutral"
+                # Align EMA with closes (ema_vals starts at index p-1)
+                idx = len(closes) - 1
+                prev_idx = idx - 1
+                ema_curr = ema_vals[-1]
+                ema_prev = ema_vals[-2]
+                close_curr = closes[idx]
+                close_prev = closes[prev_idx]
+                if close_prev <= ema_prev and close_curr > ema_curr:
+                    return "buy"
+                if close_prev >= ema_prev and close_curr < ema_curr:
+                    return "sell"
+                return "neutral"
+
+            if ind == "rsi":
+                rsis = rsi_series(closes, 14)
+                if len(rsis) < 2:
+                    return "neutral"
+                r_prev, r_curr = rsis[-2], rsis[-1]
+                if r_prev <= 50.0 and r_curr > 50.0:
+                    return "buy"
+                if r_prev >= 50.0 and r_curr < 50.0:
+                    return "sell"
+                return "neutral"
+
+            # Unknown indicator
             return "neutral"
         except Exception:
             return "neutral"

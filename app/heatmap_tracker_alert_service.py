@@ -267,23 +267,60 @@ class HeatmapTrackerAlertService:
             )
 
     async def _compute_buy_sell_percent(self, symbol: str, style: str) -> (float, float, float):
+        """Compute Buy%/Sell% using real OHLC-derived RSI on a style-mapped TF.
+
+        Mapping:
+        - scalper -> 15M
+        - swingtrader -> 4H
+        - default -> 1H
+
+        Buy% := RSI(14)
+        Sell% := 100 - RSI(14)
+        final_score := Buy% - Sell%
+        """
         try:
-            # Try using the existing heatmap calculation code path if available would be ideal,
-            # but we keep a simplified stand-in here (final_score in [-100..100])
-            # Simulate Buy%/Sell% using a simple proxy around 50 with minor variance.
-            import random
-            # A deterministic but simple mapping using symbol hash
-            seed = sum(ord(c) for c in symbol) % 1000
-            random.seed(seed)
-            base = 50.0 + (random.random() - 0.5) * 20.0
-            # style influence
-            if style == "scalper":
-                base += 2.0
-            elif style == "swingtrader":
-                base -= 2.0
-            buy_pct = max(0.0, min(100.0, base + 5.0))
-            sell_pct = max(0.0, min(100.0, 100.0 - buy_pct))
-            final_score = (buy_pct - sell_pct)
+            from .models import Timeframe as TF
+            from .mt5_utils import get_ohlc_data
+
+            tf = {
+                "scalper": TF.M15,
+                "swingtrader": TF.H4,
+            }.get((style or "").lower(), TF.H1)
+
+            ohlc = get_ohlc_data(symbol, tf, 14 + 50)
+            closes = [b.close for b in ohlc] if ohlc else []
+            if len(closes) < 15:
+                return 50.0, 50.0, 0.0
+
+            # RSI (Wilder) helper
+            def rsi_from_closes(cl: list, period: int = 14) -> float:
+                n = len(cl)
+                if n < period + 1:
+                    return 50.0
+                deltas = [cl[i] - cl[i - 1] for i in range(1, n)]
+                gains = [max(d, 0.0) for d in deltas]
+                losses = [max(-d, 0.0) for d in deltas]
+                avg_gain = sum(gains[:period]) / period
+                avg_loss = sum(losses[:period]) / period
+                if avg_loss == 0:
+                    rsi_val = 100.0
+                else:
+                    rs = avg_gain / avg_loss
+                    rsi_val = 100 - (100 / (1 + rs))
+                for i in range(period, len(deltas)):
+                    avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+                    avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+                    if avg_loss == 0:
+                        rsi_val = 100.0
+                    else:
+                        rs = avg_gain / avg_loss
+                        rsi_val = 100 - (100 / (1 + rs))
+                return float(rsi_val)
+
+            rsi_val = max(0.0, min(100.0, rsi_from_closes(closes)))
+            buy_pct = rsi_val
+            sell_pct = 100.0 - rsi_val
+            final_score = buy_pct - sell_pct
             return float(buy_pct), float(sell_pct), float(final_score)
         except Exception:
             return 50.0, 50.0, 0.0

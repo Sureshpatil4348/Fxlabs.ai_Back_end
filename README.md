@@ -455,6 +455,10 @@ Notes:
   - Scalper: 1M(0.2), 5M(0.4), 15M(0.3), 30M(0.1)
   - Swing: 1H(0.25), 4H(0.45), 1D(0.3)
 - Final Score = weighted average of per‑TF scores; Buy Now % = (Final Score + 100)/2.
+
+Note (current backend simplification):
+- The Heatmap/Quantum tracker currently derives Buy%/Sell% from RSI(14) on a style‑mapped timeframe (scalper→15M, swing→4H, default→1H). Buy% := RSI, Sell% := 100 − RSI. This ensures real, time‑varying signals until the full style‑weighted model is reintroduced.
+- The Custom Indicator tracker computes real flips for EMA21/EMA50/EMA200 (close vs EMA cross) and RSI(14) (cross of 50). Other indicators resolve to neutral.
 - Triggers:
   - BUY if Buy Now % ≥ `buy_threshold_min` (and ≤ `buy_threshold_max` when provided)
   - SELL if Buy Now % ≤ `sell_threshold_max` (and ≥ `sell_threshold_min`)
@@ -485,6 +489,12 @@ See `ALERTS.md` for canonical Supabase table schemas and exact frontend implemen
 - Cooldowns, concurrency, and alert frequency (once/hourly/daily) apply consistently across alert types. Per-user rate limits and digest have been removed.
 
 See `ALERTS.md` for the consolidated alerts product & tech spec.
+
+### Troubleshooting: Only RSI Tracker and Daily emails arrive
+- No active alerts: Ensure you have rows in Supabase for `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`, or `rsi_correlation_tracker_alerts` with `is_active=true` and non‑empty `pairs` (max 3).
+- Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. On higher TFs, RSI may hover mid‑band for long periods.
+- Arm/disarm gating: After a trigger, that side disarms and rearms only after leaving the zone (threshold−5).
+- Correlation triggers: Fire only on transitions into a mismatch state; steady regimes won’t re‑trigger.
 
 ### 📰 News API Usage (External Source + Internal Endpoints)
 

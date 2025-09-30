@@ -135,6 +135,22 @@ Configuration:
 Supabase Schema: `supabase_heatmap_indicator_tracker_alerts_schema.sql`
 - `heatmap_indicator_tracker_alerts` and `heatmap_indicator_tracker_alert_triggers` with owner RLS
 
+Implementation details (current backend):
+- Heatmap/Quantum Buy%/Sell% computation now uses real MT5 OHLC data:
+  - Style-to-timeframe mapping: scalper → 15M, swingTrader → 4H, default → 1H.
+  - Buy% := RSI(14), Sell% := 100 − RSI(14). Thresholds at 70/30 typically work well.
+  - Armed re-entry requires falling below threshold minus 5 to rearm that side.
+- Indicator Tracker signals now derive from real OHLC:
+  - EMA21/EMA50/EMA200: BUY on close crossing above EMA; SELL on crossing below.
+  - RSI: BUY on RSI(14) crossing up through 50; SELL on crossing down through 50.
+  - Unknown indicators resolve to neutral (no trigger).
+
+Why you might not see non-RSI triggers yet
+- No active alerts: Ensure rows exist in Supabase for `heatmap_tracker_alerts` and `heatmap_indicator_tracker_alerts` with `is_active=true` and non-empty `pairs` (max 3).
+- Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≥30. With RSI-based Buy%, some symbols may sit mid-band for long periods on higher TFs.
+- Arm/disarm gating: A side disarms after a crossing trigger and only rearms after leaving the zone (below threshold−5).
+- Closed-bar cadence: Evaluation runs every 5 minutes but uses closed bars per TF; low TFs see more opportunities.
+
  
 
 ## News Reminder Alerts
