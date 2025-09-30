@@ -934,7 +934,7 @@ class WSClient:
             ohlc_schema_str = message.get("ohlc_schema", "parallel")
             
             if not symbol:
-                await self.websocket.send_json({"type": "error", "error": "symbol_required"})
+                await self._try_send_json({"type": "error", "error": "symbol_required"})
                 return
             
             try:
@@ -979,12 +979,14 @@ class WSClient:
                         ohlc_data = get_cached_ohlc(symbol, tf, 250)
                         
                         if ohlc_data:
-                            await self.websocket.send_json({
+                            ok = await self._try_send_json({
                                 "type": "initial_ohlc",
                                 "symbol": symbol,
                                 "timeframe": timeframe,
                                 "data": [self._format_ohlc_for_subscription(ohlc, symbol, tf) for ohlc in ohlc_data]
                             })
+                            if not ok:
+                                return
                         else:
                             # Only log at debug level to reduce noise
                             import logging
@@ -1000,13 +1002,13 @@ class WSClient:
                         print(f"❌ Error getting initial OHLC for {symbol}: {e}")
                         import traceback
                         traceback.print_exc()
-                        await self.websocket.send_json({
-                            "type": "error", 
+                        await self._try_send_json({
+                            "type": "error",
                             "error": f"failed_to_get_ohlc: {str(e)}"
                         })
                         return
                 
-                await self.websocket.send_json({
+                ok = await self._try_send_json({
                     "type": "subscribed",
                     "symbol": symbol,
                     "timeframe": timeframe,
@@ -1014,13 +1016,15 @@ class WSClient:
                     "price_basis": sub_info.price_basis.value,
                     "ohlc_schema": sub_info.ohlc_schema.value,
                 })
+                if not ok:
+                    return
                 
             except ValueError:
-                await self.websocket.send_json({"type": "error", "error": f"invalid_timeframe: {timeframe}"})
+                await self._try_send_json({"type": "error", "error": f"invalid_timeframe: {timeframe}"})
             except HTTPException as e:
-                await self.websocket.send_json({"type": "error", "error": str(e.detail)})
+                await self._try_send_json({"type": "error", "error": str(e.detail)})
             except Exception as e:
-                await self.websocket.send_json({"type": "error", "error": str(e)})
+                await self._try_send_json({"type": "error", "error": str(e)})
                 
         elif action == "subscribe_legacy":
             # Legacy tick-only subscription
@@ -1028,7 +1032,7 @@ class WSClient:
             for s in syms:
                 ensure_symbol_selected(s)
                 self.symbols.add(s)
-            await self.websocket.send_json({"type": "subscribed", "symbols": sorted(self.symbols)})
+            await self._try_send_json({"type": "subscribed", "symbols": sorted(self.symbols)})
             
         elif action == "unsubscribe":
             symbol = message.get("symbol", "")
@@ -1042,7 +1046,7 @@ class WSClient:
                         except ValueError:
                             tf = Timeframe[timeframe_str]
                     except Exception:
-                        await self.websocket.send_json({"type": "error", "error": f"invalid_timeframe: {timeframe_str}"})
+                        await self._try_send_json({"type": "error", "error": f"invalid_timeframe: {timeframe_str}"})
                         return
                     if symbol in self.subscriptions and tf in self.subscriptions[symbol]:
                         del self.subscriptions[symbol][tf]
@@ -1053,7 +1057,7 @@ class WSClient:
                         if not self.next_ohlc_updates[symbol]:
                             del self.next_ohlc_updates[symbol]
                     self.symbols.discard(symbol)
-                    await self.websocket.send_json({"type": "unsubscribed", "symbol": symbol, "timeframe": tf.value})
+                    await self._try_send_json({"type": "unsubscribed", "symbol": symbol, "timeframe": tf.value})
                 else:
                     # Unsubscribe all timeframes for this symbol
                     if symbol in self.subscriptions:
@@ -1061,7 +1065,7 @@ class WSClient:
                     if symbol in self.next_ohlc_updates:
                         del self.next_ohlc_updates[symbol]
                     self.symbols.discard(symbol)
-                    await self.websocket.send_json({"type": "unsubscribed", "symbol": symbol})
+                    await self._try_send_json({"type": "unsubscribed", "symbol": symbol})
             else:
                 # Legacy unsubscribe
                 syms = message.get("symbols", [])
@@ -1071,12 +1075,12 @@ class WSClient:
                         del self.subscriptions[s]
                     if s in self.next_ohlc_updates:
                         del self.next_ohlc_updates[s]
-                await self.websocket.send_json({"type": "unsubscribed", "symbols": sorted(syms)})
+                await self._try_send_json({"type": "unsubscribed", "symbols": sorted(syms)})
                 
         elif action == "ping":
-            await self.websocket.send_json({"type": "pong"})
+            await self._try_send_json({"type": "pong"})
         else:
-            await self.websocket.send_json({"type": "error", "error": "unknown_action"})
+            await self._try_send_json({"type": "error", "error": "unknown_action"})
 
 # Keep legacy endpoint for backward compatibility
 @app.websocket("/ws/ticks")
@@ -1086,7 +1090,10 @@ async def ws_ticks_legacy(websocket: WebSocket):
     
     try:
         await websocket.accept()
-        await websocket.send_json({"type": "connected", "message": "Legacy tick WebSocket connected"})
+        try:
+            await websocket.send_json({"type": "connected", "message": "Legacy tick WebSocket connected"})
+        except Exception:
+            pass
         
         client = WSClient(websocket, "")
         await client.start()
@@ -1100,7 +1107,10 @@ async def ws_ticks_legacy(websocket: WebSocket):
                     message["action"] = "subscribe_legacy"
                 await client.handle_message(message)
             except Exception as parse_error:
-                await websocket.send_json({"type": "error", "error": str(parse_error)})
+                try:
+                    await websocket.send_json({"type": "error", "error": str(parse_error)})
+                except Exception:
+                    break
                 
     except WebSocketDisconnect:
         print("🔌 Legacy WebSocket disconnected")
@@ -1118,7 +1128,8 @@ async def ws_market(websocket: WebSocket):
         await websocket.accept()
         
         # Send a welcome message
-        await websocket.send_json({
+        try:
+            await websocket.send_json({
             "type": "connected", 
             "message": "WebSocket connected successfully",
             "supported_timeframes": [tf.value for tf in Timeframe],
@@ -1126,6 +1137,9 @@ async def ws_market(websocket: WebSocket):
             "supported_price_bases": ["last", "bid", "ask"],
             "ohlc_schema": "parallel"
         })
+        except Exception:
+            # Client may already have disconnected
+            pass
         
         # Create WSClient for real MT5 data
         client = WSClient(websocket, "")
@@ -1141,7 +1155,10 @@ async def ws_market(websocket: WebSocket):
                 
             except Exception as parse_error:
                 print(f"❌ Error parsing message: {parse_error}")
-                await websocket.send_json({"type": "error", "error": str(parse_error)})
+                try:
+                    await websocket.send_json({"type": "error", "error": str(parse_error)})
+                except Exception:
+                    break
                 
     except WebSocketDisconnect:
         print("Websocket Disconnected")
