@@ -170,77 +170,77 @@ class RSICorrelationTrackerAlertService:
                 prev = self._last_state.get(k, False)
                 self._last_state[k] = mismatch
                 if (not prev) and mismatch:
-                            # Derive a trigger label for logs/email; DB uses schema-compliant type below
-                            trig_type = cond_label or ("mismatch" if mode == "rsi_threshold" else "correlation_break")
-                            logger.info(
-                                f"🚨 RSI Correlation Tracker trigger: alert_id={alert_id} pair={pair_key} tf={timeframe} mode={mode} type={trig_type}"
-                            )
-                            log_info(
-                                logger,
-                                "rsi_correlation_trigger",
-                                alert_id=alert_id,
-                                pair_key=pair_key,
-                                timeframe=timeframe,
-                                mode=mode,
-                                trigger_type=trig_type,
-                                value=val if isinstance(val, (int, float)) else None,
-                            )
-                            if mode == "rsi_threshold":
-                                pair_entry = {
-                                    "symbol1": s1,
-                                    "symbol2": s2,
-                                    "timeframe": timeframe,
-                                    "trigger_condition": cond_label or "positive_mismatch",
-                                    # Optional display; template gracefully shows '-' when None
-                                    "rsi_corr_now": None,
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                }
-                            else:
-                                pair_entry = {
-                                    "symbol1": s1,
-                                    "symbol2": s2,
-                                    "timeframe": timeframe,
-                                    "trigger_condition": cond_label or "correlation_break",
-                                    "correlation_value": val if isinstance(val, (int, float)) else None,
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                }
+                    # Derive a trigger label for logs/email; DB uses schema-compliant type below
+                    trig_type = cond_label or ("mismatch" if mode == "rsi_threshold" else "correlation_break")
+                    logger.info(
+                        f"🚨 RSI Correlation Tracker trigger: alert_id={alert_id} pair={pair_key} tf={timeframe} mode={mode} type={trig_type}"
+                    )
+                    log_info(
+                        logger,
+                        "rsi_correlation_trigger",
+                        alert_id=alert_id,
+                        pair_key=pair_key,
+                        timeframe=timeframe,
+                        mode=mode,
+                        trigger_type=trig_type,
+                        value=val if isinstance(val, (int, float)) else None,
+                    )
+                    if mode == "rsi_threshold":
+                        pair_entry = {
+                            "symbol1": s1,
+                            "symbol2": s2,
+                            "timeframe": timeframe,
+                            "trigger_condition": cond_label or "positive_mismatch",
+                            # Optional display; template gracefully shows '-' when None
+                            "rsi_corr_now": None,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                    else:
+                        pair_entry = {
+                            "symbol1": s1,
+                            "symbol2": s2,
+                            "timeframe": timeframe,
+                            "trigger_condition": cond_label or "correlation_break",
+                            "correlation_value": val if isinstance(val, (int, float)) else None,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
 
-                            payload = {
-                                "alert_id": alert_id,
-                                "alert_name": alert.get("alert_name", "RSI Correlation Tracker Alert"),
-                                "user_email": user_email,
-                                "triggered_pairs": [pair_entry],
-                                "alert_config": alert,
-                                "triggered_at": datetime.now(timezone.utc).isoformat(),
-                            }
-                            triggers.append(payload)
-                            # Map to schema-compliant trigger_type for DB
-                            db_trig_type = "rsi_mismatch" if mode == "rsi_threshold" else "real_mismatch"
-                            asyncio.create_task(self._log_trigger(alert_id, timeframe, mode, db_trig_type, pair_key, val))
-                            # Optional email reusing RSI template (single card); symbol shown as pair_key
-                            methods = alert.get("notification_methods") or ["email"]
-                            if "email" in methods:
-                                logger.info(
-                                    f"📤 Queueing email send for RSI Correlation Tracker alert_id={alert_id} via background task"
-                                )
-                                log_info(
-                                    logger,
-                                    "email_queue",
-                                    alert_type="rsi_correlation_tracker",
-                                    alert_id=alert_id,
-                                )
-                                asyncio.create_task(self._send_email(user_email, payload))
-                        else:
-                            logger.info(
-                                f"🔕 Email notifications disabled for correlation alert_id={alert_id}; methods={methods}"
-                            )
-                            log_info(
-                                logger,
-                                "email_disabled",
-                                alert_type="rsi_correlation_tracker",
-                                alert_id=alert_id,
-                                methods=methods,
-                            )
+                    payload = {
+                        "alert_id": alert_id,
+                        "alert_name": alert.get("alert_name", "RSI Correlation Tracker Alert"),
+                        "user_email": user_email,
+                        "triggered_pairs": [pair_entry],
+                        "alert_config": alert,
+                        "triggered_at": datetime.now(timezone.utc).isoformat(),
+                    }
+                    triggers.append(payload)
+                    # Map to schema-compliant trigger_type for DB
+                    db_trig_type = "rsi_mismatch" if mode == "rsi_threshold" else "real_mismatch"
+                    asyncio.create_task(self._log_trigger(alert_id, timeframe, mode, db_trig_type, pair_key, val))
+                    # Optional email reusing RSI template (single card); symbol shown as pair_key
+                    methods = alert.get("notification_methods") or ["email"]
+                    if "email" in methods:
+                        logger.info(
+                            f"📤 Queueing email send for RSI Correlation Tracker alert_id={alert_id} via background task"
+                        )
+                        log_info(
+                            logger,
+                            "email_queue",
+                            alert_type="rsi_correlation_tracker",
+                            alert_id=alert_id,
+                        )
+                        asyncio.create_task(self._send_email(user_email, payload))
+                    else:
+                        logger.info(
+                            f"🔕 Email notifications disabled for correlation alert_id={alert_id}; methods={methods}"
+                        )
+                        log_info(
+                            logger,
+                            "email_disabled",
+                            alert_type="rsi_correlation_tracker",
+                            alert_id=alert_id,
+                            methods=methods,
+                        )
                 else:
                     # No new trigger; log concise reason at debug level
                     from .alert_logging import log_debug as _ld
