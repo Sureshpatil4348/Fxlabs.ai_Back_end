@@ -79,8 +79,9 @@ class HeatmapTrackerAlertService:
                     per_alert_triggers: List[Dict[str, Any]] = []
                     for symbol in pairs:
                         async with pair_locks.acquire(self._key(alert_id, symbol)):
-                            # Compute Buy%/Sell% via style weighting using real or simulated indicator strengths
+                            # Compute Buy%/Sell% via real OHLC-derived RSI mapping
                             buy_pct, sell_pct, final_score = await self._compute_buy_sell_percent(symbol, style)
+                            rsi_val = buy_pct  # In the current mapping, Buy% equals RSI(14)
                             log_debug(
                                 logger,
                                 "heatmap_eval",
@@ -95,27 +96,30 @@ class HeatmapTrackerAlertService:
                             st = self._armed.get(k)
                             if st is None:
                                 # Startup warm-up: baseline armed-state from current values.
-                                # If currently above threshold, mark that side disarmed to avoid immediate trigger.
+                                # If currently beyond thresholds, mark that side disarmed to avoid immediate trigger.
                                 st = {"buy": True, "sell": True}
-                                if buy_pct >= buy_t:
+                                if rsi_val >= buy_t:  # already in BUY zone
                                     st["buy"] = False
-                                if sell_pct >= sell_t:
+                                if rsi_val <= sell_t:  # already in SELL zone (RSI below sell threshold)
                                     st["sell"] = False
                                 self._armed[k] = st
                                 # Skip triggering on this first observation after baselining
                                 continue
 
                             # Re-arm checks
-                            if not st["buy"] and buy_pct < max(0.0, buy_t - 5):
+                            # Buy side re-arms after leaving BUY zone by a margin
+                            if not st["buy"] and rsi_val < max(0.0, buy_t - 5):
                                 st["buy"] = True
-                            if not st["sell"] and sell_pct < max(0.0, sell_t - 5):
+                            # Sell side re-arms after leaving SELL zone by a margin
+                            if not st["sell"] and rsi_val > min(100.0, sell_t + 5):
                                 st["sell"] = True
 
                             trig_type: Optional[str] = None
-                            if st["buy"] and buy_pct >= buy_t:
+                            # Trigger on RSI threshold crossings with per-side arming
+                            if st["buy"] and rsi_val >= buy_t:
                                 st["buy"] = False
                                 trig_type = "buy"
-                            elif st["sell"] and sell_pct >= sell_t:
+                            elif st["sell"] and rsi_val <= sell_t:
                                 st["sell"] = False
                                 trig_type = "sell"
 

@@ -138,8 +138,8 @@ Supabase Schema: `supabase_heatmap_indicator_tracker_alerts_schema.sql`
 Implementation details (current backend):
 - Heatmap/Quantum Buy%/Sell% computation now uses real MT5 OHLC data:
   - Style-to-timeframe mapping: scalper → 15M, swingTrader → 4H, default → 1H.
-  - Buy% := RSI(14), Sell% := 100 − RSI(14). Thresholds at 70/30 typically work well.
-  - Armed re-entry requires falling below threshold minus 5 to rearm that side.
+  - Buy% := RSI(14), Sell% := 100 − RSI(14). With this mapping, typical RSI-like thresholds are Buy≥70 and Sell≤30.
+  - Re‑arm policy: Buy side rearms after RSI drops below (buy_threshold − 5); Sell side rearms after RSI rises above (sell_threshold + 5).
 - Indicator Tracker signals now derive from real OHLC:
   - EMA21/EMA50/EMA200: BUY on close crossing above EMA; SELL on crossing below.
   - RSI: BUY on RSI(14) crossing up through 50; SELL on crossing down through 50.
@@ -147,8 +147,8 @@ Implementation details (current backend):
 
 Why you might not see non-RSI triggers yet
 - No active alerts: Ensure rows exist in Supabase for `heatmap_tracker_alerts` and `heatmap_indicator_tracker_alerts` with `is_active=true` and non-empty `pairs` (max 3).
-- Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≥30. With RSI-based Buy%, some symbols may sit mid-band for long periods on higher TFs.
-- Arm/disarm gating: A side disarms after a crossing trigger and only rearms after leaving the zone (below threshold−5).
+- Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. With RSI-based Buy%, some symbols may sit mid-band for long periods on higher TFs.
+- Arm/disarm gating: Buy disarms after a BUY trigger and rearms once RSI < (buy_threshold−5); Sell disarms after a SELL trigger and rearms once RSI > (sell_threshold+5).
 - Closed-bar cadence: Evaluation runs every 5 minutes but uses closed bars per TF; low TFs see more opportunities.
 
  
