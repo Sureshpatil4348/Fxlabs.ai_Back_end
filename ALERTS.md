@@ -8,7 +8,7 @@
 - Trigger style: crossing into overbought/oversold; not on every bar while in‑zone.
 - Closed‑bar evaluation for RSI family: evaluate RSI on the last closed candlestick only (no intrabar/tick evaluation). Minimum supported timeframe is 5M.
 - Retrigger policy: once triggered, re‑arm only after leaving the triggerable zone and trigger again only on a fresh crossing back in.
-- Timezone for display: Asia/Kolkata.
+- Timezone for display: Asia/Kolkata (tenant-aware for Daily/news: see `DAILY_TZ_NAME`).
 - System safeguards: rate limit 5 emails/user/hour (overflow → digest), per‑pair concurrency cap, warm‑up for RSI, skip stale TFs (last candle age > 2× TF length).
   - Startup warm‑up: On server start or first evaluation per key, alerts baseline current state and skip initial triggers for existing in‑zone conditions. Specifically:
     - RSI Tracker: baseline last closed bar per (symbol, timeframe) and require the next new bar for triggers.
@@ -28,11 +28,14 @@
 - Per‑pair concurrency and warm‑up enforced.
 - Skip stale TFs (last candle age > 2× TF length).
   - Note: Per-user email rate limits and digest have been removed. Alerts are sent immediately when not blocked by service-specific cooldowns (e.g., value-based email cooldown).
+ - Closed‑bar gating is tracked per alert/user (keyed by `alert_id` along with symbol/timeframe or pair_key). This ensures multiple users with identical configurations are each evaluated every cycle without suppressing later users in the same scheduler tick.
 
 **Message Structure (email)**
 - Title: RSI Alert • {PAIR} ({TF})
 - Body: zone entered (Overbought/Oversold), RSI value, price, IST time.
-- Footer: Not financial advice.
+- Footer: The disclaimer appears once at the bottom of the email (not per pair).
+  - RSI and RSI Correlation: "Not financial advice. © FxLabs AI"
+  - Heatmap/Indicator trackers and Daily: "Education only. © FxLabs AI" (or equivalent wording)
 
 **Defaults That Work**
 - RSI Tracker: timeframe `1H`, period `14`, thresholds OB=70 / OS=30.
@@ -43,7 +46,7 @@
 2) Supabase Schema
   - See `supabase_rsi_tracker_alerts_schema.sql` for `rsi_tracker_alerts` and `rsi_tracker_alert_triggers` (unique `user_id`; RLS for owner).
 3) Evaluation Cadence
-  - Every minute, server refreshes alert cache, evaluates closed‑bar RSI for subscribed pairs, records triggers, and sends email.
+  - Every 5 minutes, the server refreshes the alert cache, evaluates closed‑bar RSI for all users' active alerts across supported pairs, records triggers, and sends email.
 4) RSI Calculation
   - Wilder’s method using broker OHLC; closed‑bar only; warm‑up enforced.
 5) Trigger Logic
@@ -63,6 +66,8 @@
 
 **Supabase — Table Schemas (Canonical)**
 - See `supabase_rsi_tracker_alerts_schema.sql`.
+
+> Note on multitenancy: All alert trigger inserts now use tenant-aware Supabase via `app/config.py` and `app/tenancy.py`. Use `python fxlabs-server.py` or `python hextech-server.py` to select the tenant; set the corresponding credentials in `.env`.
 
 ### How Alerts Are Evaluated
 
@@ -98,7 +103,7 @@ Supabase Schema: `supabase_rsi_correlation_tracker_alerts_schema.sql`
 Single per-user alert for the All-in-One/Quantum Analysis heatmap. Users select up to 3 currency pairs, a mode (trading style), and thresholds. When any selected pair’s Buy% or Sell% crosses its threshold, a trigger is recorded.
 
 - Pairs: up to 3 (e.g., `EURUSD`, `GBPUSD`)
-- Mode: `scalper`, `dayTrader`, or `swingTrader`
+- Mode: `scalper` or `swingTrader`
 - Thresholds: `buy_threshold` and `sell_threshold` (0–100)
 - Behavior: triggers on upward crossings into threshold for either Buy% or Sell%.
 
@@ -129,34 +134,54 @@ Supabase Schema: `supabase_heatmap_indicator_tracker_alerts_schema.sql`
  
 
 ## News Reminder Alerts
-Automatic email 5 minutes before each scheduled news item
+Automatic email 5 minutes before each scheduled high‑impact news item
 
 
 ### ⏰ News Reminder (5 Minutes Before)
 
 - What: Sends an email with subject "News reminder" to all active users 5 minutes before each upcoming news event found in the local news cache.
-- Who: All user emails discovered by unioning `user_email` across active alert tables (`rsi_tracker_alerts`, `rsi_correlation_tracker_alerts`, `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`). No per-user config needed.
+  - Impact filter: Only items with AI‑normalized `impact == "high"` qualify. Medium/low impact items are ignored.
+- Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for news reminders and does not depend on per‑product alert tables.
+  - Primary source: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
+  - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
+  - Email extraction: Primary `email`, fallback to `user_metadata.email/email_address/preferred_email`, and `identities[].email`/`identities[].identity_data.email` for OAuth providers
+  - Fallback: If Auth returns no emails, falls back to union of alert tables (`rsi_tracker_alerts`, `rsi_correlation_tracker_alerts`, `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`)
 - When: A dedicated 1-minute scheduler runs in `server.py` and calls `app.news.check_and_send_news_reminders()`.
+  - The function filters the due window to high‑impact items only.
 - How it avoids duplicates: Each `NewsAnalysis` item has a boolean `reminder_sent`. Once sent, the item is flagged and the cache is persisted to disk, preventing repeats across restarts.
 - Template: Minimal, mobile-friendly HTML with fields: `event_title`, `event_time_local` (IST by default), `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
-- Logging: Uses human-readable logs via `app/alert_logging.py` with events `news_reminder_due_items`, `news_users_fetch_*`, and `news_reminder_completed`.
+- Logging: Uses human-readable logs via `app/alert_logging.py` with events:
+  - Auth fetch: `news_auth_fetch_start`, `news_auth_fetch_page`, `news_auth_fetch_page_emails` (debug), `news_auth_fetch_done`
+  - Fallback: `news_users_fetch_fallback_alert_tables`
+  - Send: `news_auth_emails` (full CSV), `news_reminder_recipients`, `news_reminder_completed`
 - Requirements: SendGrid configured (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`) and Supabase (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`). If either is missing, the scheduler logs and skips sending.
 
 ## Daily Morning Brief
-Automated daily email at 09:00 IST to all users
+Automated daily email to all users at a configurable local time
 
 - What: A daily brief sent to all users at 09:00 IST containing:
   - Core signals for EUR/USD, XAU/USD, BTC/USD from the All‑in‑One (Quantum) model
   - RSI(14) on 4H: lists of pairs currently Oversold (≤30) and Overbought (≥70)
-  - Today’s high/medium‑impact news from the local news cache (IST day)
-- Who: All user emails discovered by unioning `user_email` across active alert tables (same method as News Reminder).
-- When: A daily scheduler computes the next 09:00 IST and sleeps until then; after sending, it schedules for the next day.
+  - Today's high/medium‑impact news from the local news cache (IST day)
+- Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for daily emails and does not depend on per‑product alert tables.
+  - Primary source: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
+  - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
+  - Email extraction: Primary `email`, fallback to `user_metadata.email/email_address/preferred_email`, and `identities[].email`/`identities[].identity_data.email` for OAuth providers
+  - The code automatically paginates and deduplicates emails
+- When: A daily scheduler computes the next configured local send time and sleeps until then; after sending, it schedules for the next day.
+- Config:
+  - `DAILY_TZ_NAME` (default `Asia/Kolkata`) — IANA timezone used for scheduling and display label ("IST" when `Asia/Kolkata`).
+  - `DAILY_SEND_LOCAL_TIME` (default `09:00`) — local time in `HH:MM` or `HH:MM:SS`.
+  - The email header shows the same time label (e.g., `IST 09:00`).
 - Data sources:
-  - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `dayTrader` style for EURUSDm, XAUUSDm, BTCUSDm
+  - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `scalper` style for EURUSDm, XAUUSDm, BTCUSDm
   - RSI(14) 4H: uses real MT5 OHLC via `get_ohlc_data` and computes RSI locally
   - News: filters `global_news_cache` for items with IST date == today and impact in {high, medium}
 - Template: Responsive table layout; badges (BUY=#0CCC7C, SELL=#E5494D); simple lists for RSI and a compact news table.
-- Logging: `daily_sleep_until`, `daily_build_start`, `daily_build_done`, `daily_send_batch`, `daily_completed`, with error events on failures.
+- Logging: Uses human-readable logs via `app/alert_logging.py` with events:
+  - Auth fetch: `daily_auth_fetch_start`, `daily_auth_fetch_page`, `daily_auth_fetch_page_emails` (debug), `daily_auth_fetch_done`
+  - Send: `daily_auth_emails` (full CSV), `daily_send_batch`, `daily_completed`
+  - Scheduler: `daily_sleep_until`, `daily_build_start`, `daily_build_done`, with error events on failures
 
 Email HTML structure example (simplified):
 
@@ -165,3 +190,65 @@ Email HTML structure example (simplified):
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FxLabs • News Reminder</title></head>
 <body style="margin:0;background:#F5F7FB;"> ... </body></html>
 ```
+
+### Common Email Header (All alerts)
+
+- Color: `#07c05c`
+- Layout: `[FxLabs logo] FXLabs • <Alert Type> • <Local Date IST> • <Local Time IST>`
+  - The time part is rendered in a smaller font size.
+  - Logo uses the white SVG mark embedded inline for email compatibility.
+- Timezone: Defaults to `Asia/Kolkata` (IST). For Daily emails, the header shows the configured time label (e.g., `IST 09:00`).
+## Alerts Cache — Categories Summary
+
+After each alert cache refresh, the server logs a categories summary and a full list of alerts grouped by category. Example console output:
+
+```
+🔄 Refreshing alert cache...
+✅ Alert cache refreshed: 2 users, 8 total alerts
+📚 Alerts by category (post-refresh):
+  • rsi_tracker: 2
+     - id=... | name=RSI Tracker Alert | user=test@asoasis.tech
+     - id=... | name=RSI Tracker Alert | user=demo@example.com
+  • heatmap_tracker: 3
+     - id=... | name=Heatmap Tracker Alert | user=...
+  • heatmap_indicator_tracker: 2
+     - id=... | name=Indicator Tracker Alert | user=...
+  • rsi_correlation_tracker: 1
+     - id=... | name=RSI Correlation Tracker | user=...
+```
+
+Additionally, a structured log line with per-category counts is emitted as `app.alert_cache | alert_cache_categories` for observability.
+
+### REST: Alerts by Category
+
+- Endpoint: `GET /api/alerts/by-category`
+- Auth: `X-API-Key` (same as other alert endpoints)
+- Response:
+
+```json
+{
+  "total_alerts": 8,
+  "last_refresh": "2025-09-30T15:50:35+00:00",
+  "is_refreshing": false,
+  "categories": {
+    "rsi_tracker": [ { "id": "...", "alert_name": "RSI Tracker Alert", ... } ],
+    "heatmap_tracker": [ ... ],
+    "heatmap_indicator_tracker": [ ... ],
+    "rsi_correlation_tracker": [ ... ]
+  }
+}
+```
+
+Notes:
+- The `categories` lists reuse the canonical alert objects as cached per user; fields vary by alert type (e.g., `timeframe` for RSI, `pairs` for Heatmap).
+- The categories summary is also printed to the console after refresh for quick admin inspection.
+
+## Evaluation Logs (Debug)
+At DEBUG level, evaluators provide concise reasons when a trigger does not fire, clarifying how each alert was processed:
+
+- RSI Tracker: `rsi_insufficient_data`, `rsi_rearm_overbought`, `rsi_rearm_oversold`, `rsi_no_trigger` (reason and RSI values vs thresholds)
+- RSI Correlation: `corr_no_mismatch`, `corr_persisting_mismatch`
+- Heatmap Tracker: `heatmap_eval`, `heatmap_no_trigger` (Buy%/Sell%, thresholds, armed flags)
+- Indicator Tracker: `indicator_signal`, `indicator_no_trigger` (neutral or no flip)
+
+Set `LOG_LEVEL=DEBUG` to enable.

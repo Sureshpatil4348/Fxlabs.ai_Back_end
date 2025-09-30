@@ -22,8 +22,9 @@ class RSIAlertService:
     """
     
     def __init__(self):
-        self.supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
-        self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY")
+        from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+        self.supabase_url = SUPABASE_URL
+        self.supabase_service_key = SUPABASE_SERVICE_KEY
         self.last_triggered_alerts: Dict[str, datetime] = {}  # Track last trigger time per alert
         self.default_cooldown_seconds = 300  # 5 minutes default cooldown
         # Crossing policy: closed-bar only; immediate on crossing; threshold-level re-arm
@@ -34,7 +35,7 @@ class RSIAlertService:
         self.rearm_oversold = 35
         # In-memory hysteresis state: key -> { 'armed_overbought': bool, 'armed_oversold': bool }
         self._hysteresis_map: Dict[str, Dict[str, bool]] = {}
-        # Track last evaluated closed bar per (symbol, timeframe) for bar-close policy
+        # Track last evaluated closed bar per (alert_id, symbol, timeframe) for bar-close policy
         self._last_closed_bar_ts: Dict[str, int] = {}
         # Per (alert, symbol, timeframe, side) cooldown (minutes)
         self.pair_cooldown_minutes_default = 30
@@ -250,10 +251,18 @@ class RSIAlertService:
                                 timeframe=timeframe,
                             )
                             continue
-                        last_key = f"{symbol}:{timeframe}"
+                        last_key = f"{alert_id}:{symbol}:{timeframe}"
                         prev_ts = self._last_closed_bar_ts.get(last_key)
                         if prev_ts is not None and prev_ts == last_ts:
-                            # Already evaluated for current closed bar
+                            # Already evaluated this closed bar for this alert/user
+                            log_debug(
+                                logger,
+                                "closed_bar_already_evaluated",
+                                alert_id=alert_id,
+                                symbol=symbol,
+                                timeframe=timeframe,
+                                last_ts=last_ts,
+                            )
                             continue
                         self._last_closed_bar_ts[last_key] = last_ts
 

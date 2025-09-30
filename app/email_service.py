@@ -1,4 +1,5 @@
 import os
+import base64
 import asyncio
 import hashlib
 import hmac
@@ -18,18 +19,20 @@ try:
         TrackingSettings,
         ClickTracking,
         OpenTracking,
+        Attachment,
     )
 except Exception:  # Module may be missing in some environments
     SendGridAPIClient = None
     Mail = Email = To = Content = None
     TrackingSettings = ClickTracking = OpenTracking = None
+    Attachment = None
 import logging
 
 # Configure logging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL
+from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, DAILY_TZ_NAME
 from .alert_logging import log_debug, log_info, log_warning, log_error
 
 
@@ -42,6 +45,8 @@ class EmailService:
         # Prefer authenticated subdomain sender for DMARC alignment (example: alerts@alerts.fxlabs.ai)
         self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@alerts.fxlabs.ai")).strip()
         self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs Alerts")).strip()
+        # Tenant-aware timezone for all email timestamps (FXLabs → IST by default)
+        self.tz_name = (DAILY_TZ_NAME or "Asia/Kolkata")
         # Unsubscribe feature removed per spec
         
         # Smart cooldown mechanism - value-based cooldown for similar alerts
@@ -156,17 +161,91 @@ class EmailService:
         # Generate hash using secure algorithm
         return hashlib.blake2b(alert_data.encode(), digest_size=32).hexdigest()
 
+    def _unsuffix_symbol(self, symbol: str) -> str:
+        try:
+            s = str(symbol).strip()
+            return s[:-1] if s.endswith("m") else s
+        except Exception:
+            return str(symbol)
+
+    def _pair_display(self, symbol: str) -> str:
+        """Return user-facing display for a trading symbol as ABC/DEF.
+
+        Non-breaking: only affects presentation; does not alter underlying symbols.
+        """
+        raw = self._unsuffix_symbol(symbol)
+        try:
+            if len(raw) >= 6:
+                base = raw[:3]
+                quote = raw[3:6]
+                return f"{base}/{quote}"
+            return raw
+        except Exception:
+            return raw
+
+    def _zoneinfo_or_fallback(self, tz_name: str):
+        """Return tzinfo for tz_name. Fallback to fixed IST or UTC when ZoneInfo is unavailable."""
+        try:
+            from zoneinfo import ZoneInfo
+            return ZoneInfo(tz_name)
+        except Exception:
+            if tz_name == "Asia/Kolkata":
+                try:
+                    return timezone(timedelta(hours=5, minutes=30), name="IST")
+                except Exception:
+                    pass
+            return timezone.utc
+
     def _format_now_local(self, tz_name: str = "Asia/Kolkata") -> str:
         """Return current time formatted with local timezone for display (default IST)."""
         try:
-            from zoneinfo import ZoneInfo
-            dt = datetime.now(ZoneInfo(tz_name))
-            # IST label for Asia/Kolkata
+            tz = self._zoneinfo_or_fallback(tz_name)
+            dt = datetime.now(tz)
             label = "IST" if tz_name == "Asia/Kolkata" else tz_name
             return dt.strftime(f"%Y-%m-%d %H:%M {label}")
         except Exception:
-            # Fallback to UTC
+            # Final fallback to UTC string
             return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    
+    def _get_local_date_time_strings(self, tz_name: str = "Asia/Kolkata") -> Tuple[str, str, str]:
+        """Return (date_str, time_str, tz_label) for the given timezone, defaulting to IST."""
+        try:
+            tz = self._zoneinfo_or_fallback(tz_name)
+            dt = datetime.now(tz)
+            label = "IST" if tz_name == "Asia/Kolkata" else tz_name
+            return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M"), label
+        except Exception:
+            dt = datetime.now(timezone.utc)
+            return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M"), "UTC"
+
+    def _build_common_header(self, alert_type: str, tz_name: str = "Asia/Kolkata", date_override: Optional[str] = None, time_label_override: Optional[str] = None) -> str:
+        """Build a common green header bar used across all alert emails.
+
+        Layout: [Logo] FXLabs • <Alert Type> • <Local Date IST> • <Local Time IST (small)>
+        Brand color: #07c05c, text in white, time rendered slightly smaller.
+        """
+        date_str, time_str, tz_label = self._get_local_date_time_strings(tz_name)
+        date_display = (date_override or date_str)
+        if tz_label and (tz_label not in (date_display or "")):
+            date_display = f"{date_display} {tz_label}".strip()
+        time_display = time_label_override if time_label_override else f"{time_str} {tz_label}".strip()
+
+        logo_img = '<img src="cid:fx-logo" width="18" height="18" alt="FxLabs" style="vertical-align:middle;display:inline-block" />'
+
+        return (
+            f"<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" "
+            f"style=\"width:600px;background:#07c05c;color:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;\">"
+            f"<tr><td style=\"padding:14px 16px;\">"
+            f"<span style=\"display:inline-block;vertical-align:middle;\">{logo_img}</span>"
+            f"<span style=\"display:inline-block;vertical-align:middle;font-weight:700;margin-left:8px;\">FXLabs</span>"
+            f"<span style=\"display:inline-block;margin:0 6px;vertical-align:middle;\">•</span>"
+            f"<span style=\"display:inline-block;vertical-align:middle;\">{alert_type}</span>"
+            f"<span style=\"display:inline-block;margin:0 6px;vertical-align:middle;\">•</span>"
+            f"<span style=\"display:inline-block;vertical-align:middle;\">{date_display}</span>"
+            f"<span style=\"display:inline-block;margin:0 6px;vertical-align:middle;\">•</span>"
+            f"<span style=\"display:inline-block;vertical-align:middle;font-size:12px;opacity:0.95;\">{time_display}</span>"
+            f"</td></tr></table><div style=\"height:12px\"></div>"
+        )
     
     def _is_alert_in_cooldown(self, alert_hash: str, triggered_pairs: List[Dict[str, Any]] = None) -> bool:
         """Check if alert is still in cooldown period with value-based intelligence"""
@@ -273,6 +352,35 @@ class EmailService:
                 mail.add_header("X-Entity-Ref-ID", ref_id)
             except Exception:
                 pass
+        # Attach inline logo (CID) for email header if available
+        try:
+            if Attachment:
+                logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "images", "fxlabs_logo_white.png")
+                if not os.path.exists(logo_path):
+                    # Fallback to project root assets path
+                    logo_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "images", "fxlabs_logo_white.png")
+                if os.path.exists(logo_path):
+                    with open(logo_path, "rb") as f:
+                        data = base64.b64encode(f.read()).decode()
+                    attachment = Attachment()
+                    attachment.file_content = data
+                    attachment.file_type = "image/png"
+                    attachment.file_name = "fxlabs_logo_white.png"
+                    # Use Content-ID so <img src="cid:fx-logo"> can reference
+                    attachment.disposition = "inline"
+                    attachment.content_id = "fx-logo"
+                    # Some helper libs use different property names; assign defensively
+                    try:
+                        mail.add_attachment(attachment)
+                    except Exception:
+                        # Older helper version: .attachments list
+                        try:
+                            mail.attachments = getattr(mail, "attachments", []) + [attachment]
+                        except Exception:
+                            pass
+        except Exception:
+            # Non-fatal if attachment fails
+            pass
         return mail
 
     # Unsubscribe management removed per spec
@@ -292,7 +400,7 @@ class EmailService:
         os_ = cfg.get("rsi_oversold_threshold", 30)
         lines.append(f"OB>={ob} OS<={os_}")
         for p in pairs:
-            sym = p.get("symbol", "?")
+            sym = self._pair_display(p.get("symbol", "?"))
             rsi = p.get("rsi", p.get("rsi_value", "?"))
             price = p.get("current_price", "?")
             chg = p.get("price_change_percent", "?")
@@ -305,7 +413,7 @@ class EmailService:
             f"Pairs: {len(pairs)}",
         ]
         for p in pairs:
-            sym = p.get("symbol", "?")
+            sym = self._pair_display(p.get("symbol", "?"))
             strength = p.get("strength", "?")
             signal = p.get("signal", "?")
             tf = p.get("timeframe", "?")
@@ -325,17 +433,17 @@ class EmailService:
             f"Pairs: {len(pairs)}",
         ]
         for p in pairs:
-            s1 = p.get("symbol1", "?")
-            s2 = p.get("symbol2", "?")
+            s1 = self._pair_display(p.get("symbol1", "?"))
+            s2 = self._pair_display(p.get("symbol2", "?"))
             tf = p.get("timeframe", "?")
             cond = p.get("trigger_condition", "?")
             if mode == "rsi_threshold":
                 r1 = p.get("rsi1", p.get("rsi1_value", "?"))
                 r2 = p.get("rsi2", p.get("rsi2_value", "?"))
-                lines.append(f"- {s1}/{s2} [{tf}]: {cond} RSI1 {r1} RSI2 {r2}")
+                lines.append(f"- {s1} vs {s2} [{tf}]: {cond} RSI1 {r1} RSI2 {r2}")
             else:
                 corr = p.get("correlation_value", "?")
-                lines.append(f"- {s1}/{s2} [{tf}]: {cond} Corr {corr}")
+                lines.append(f"- {s1} vs {s2} [{tf}]: {cond} Corr {corr}")
         return "\n".join(lines)
 
     def _safe_float_conversion(self, value: Any) -> Optional[float]:
@@ -656,7 +764,7 @@ class EmailService:
         """Build HTML email body for heatmap alert"""
         
         # Get alert configuration details
-        trading_style = alert_config.get("trading_style", "dayTrader")
+        trading_style = alert_config.get("trading_style", "scalper")
         buy_threshold = f"{alert_config.get('buy_threshold_min', 70)}-{alert_config.get('buy_threshold_max', 100)}"
         sell_threshold = f"{alert_config.get('sell_threshold_min', 0)}-{alert_config.get('sell_threshold_max', 30)}"
         indicators = ", ".join(alert_config.get("selected_indicators", []))
@@ -664,7 +772,7 @@ class EmailService:
         # Build triggered pairs table
         pairs_table = ""
         for pair in triggered_pairs:
-            symbol = pair.get("symbol", "N/A")
+            symbol = self._pair_display(pair.get("symbol", "N/A"))
             strength = pair.get("strength", 0)
             signal = pair.get("signal", "N/A")
             timeframe = pair.get("timeframe", "N/A")
@@ -682,7 +790,7 @@ class EmailService:
             """
         
         # Current timestamp (IST display)
-        current_time = self._format_now_local("Asia/Kolkata")
+        current_time = self._format_now_local(self.tz_name)
         
         html_body = f"""
         <!DOCTYPE html>
@@ -693,12 +801,7 @@ class EmailService:
             <title>Heatmap Alert - {alert_name}</title>
         </head>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
-            
-            <!-- Header -->
-            <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 20px;">
-                <h1 style="margin: 0; font-size: 24px;">🔥 Heatmap Alert Triggered</h1>
-                <p style="margin: 10px 0 0 0; opacity: 0.9;">{alert_name}</p>
-            </div>
+            {self._build_common_header('Heatmap', self.tz_name)}
             
             <!-- Alert Details -->
             <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
@@ -771,7 +874,7 @@ class EmailService:
 
         cards: List[str] = []
         for pair in triggered_pairs:
-            symbol = pair.get("symbol", "N/A")
+            symbol = self._pair_display(pair.get("symbol", "N/A"))
             timeframe = pair.get("timeframe", "style-weighted")
             cond = str(pair.get("trigger_condition", "")).strip().upper()
             if cond == "BUY":
@@ -806,7 +909,6 @@ class EmailService:
     <div style=\"font-size:13px;color:#374151;\">Contributors: {top_inds}</div>
     <div style=\"margin-top:14px;padding:12px;background:#F9FAFB;border-radius:10px;font-size:13px;\">Your alert threshold: {threshold}%</div>
   </td></tr>
-  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>
 </table>
 <div style=\"height:12px\"></div>
             """
@@ -816,10 +918,8 @@ class EmailService:
 <!doctype html>
 <html lang=\"en\">
 <head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Probability Signal</title></head>
-<body style=\"margin:0;background:#F5F7FB;\">
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
-{''.join(cards)}
-</td></tr></table>
+<body style=\"margin:0;background:#F5F7FB;\">\n
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('Probability Signal', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
         """
 
@@ -829,7 +929,7 @@ class EmailService:
             f"Pairs: {len(pairs)}",
         ]
         for p in pairs:
-            sym = p.get("symbol", "?")
+            sym = self._pair_display(p.get("symbol", "?"))
             tf = p.get("timeframe", "style-weighted")
             cond = str(p.get("trigger_condition", "")).upper() or "N/A"
             if cond == "BUY":
@@ -865,7 +965,7 @@ class EmailService:
                     <div style="background-color: #f8f9fa; border: 1px solid #e9ecef; border-radius: 8px; padding: 24px; margin-bottom: 24px;">
                         <h2 style="color: #1a1a1a; font-size: 18px; font-weight: 600; margin: 0 0 16px 0;">System Test</h2>
                         <p style="color: #4a5568; line-height: 1.6; margin: 0 0 12px 0;">Email delivery system operational.</p>
-                        <p style="color: #718096; font-size: 14px; margin: 0;">{self._format_now_local("Asia/Kolkata")}</p>
+                        <p style="color: #718096; font-size: 14px; margin: 0;">{self._format_now_local(self.tz_name)}</p>
                     </div>
                     
                     <div style="text-align: center; padding-top: 20px; border-top: 1px solid #e9ecef;">
@@ -1038,9 +1138,9 @@ class EmailService:
 
         # Build one card (provided template) per triggered pair
         cards: List[str] = []
-        ts_local = self._format_now_local("Asia/Kolkata")
+        ts_local = self._format_now_local(self.tz_name)
         for pair in triggered_pairs:
-            symbol = pair.get("symbol", "N/A")
+            symbol = self._pair_display(pair.get("symbol", "N/A"))
             timeframe = pair.get("timeframe", "N/A")
             rsi_value = pair.get("rsi_value", 0)
             price = pair.get("current_price", 0)
@@ -1066,7 +1166,6 @@ class EmailService:
       Heads-up: Oversold/Overbought readings can precede reversals or trend continuation. Combine with your plan.
     </div>
   </td></tr>
-  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>
 </table>
 <div style=\"height:12px\"></div>
             """
@@ -1082,11 +1181,8 @@ class EmailService:
 <meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <title>FxLabs • RSI Alert</title>
 </head>
-<body style=\"margin:0;background:#F5F7FB;\">
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">
-<tr><td align=\"center\" style=\"padding:24px 12px;\">
-{cards_html}
-</td></tr></table>
+<body style=\"margin:0;background:#F5F7FB;\">\n
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI', self.tz_name)}\n{cards_html}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
         """
 
@@ -1099,10 +1195,10 @@ class EmailService:
         """Build HTML for Custom Indicator signal using provided compact template."""
 
         cards: List[str] = []
-        ts_local = self._format_now_local("Asia/Kolkata")
+        ts_local = self._format_now_local(self.tz_name)
         indicators_csv = ", ".join((alert_config.get("selected_indicators") or [])) or "-"
         for pair in triggered_pairs:
-            symbol = pair.get("symbol", "N/A")
+            symbol = self._pair_display(pair.get("symbol", "N/A"))
             timeframe = pair.get("timeframe", "N/A")
             cond = str(pair.get("trigger_condition", "")).strip().upper()
             color = "#0CCC7C" if cond == "BUY" else "#E5494D"
@@ -1124,7 +1220,6 @@ class EmailService:
     </div>
     <div style=\"font-size:13px;color:#374151;\">Generated at {ts_local} (TF: {timeframe})</div>
   </td></tr>
-  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>
 </table>
 <div style=\"height:12px\"></div>
             """
@@ -1134,10 +1229,8 @@ class EmailService:
 <!doctype html>
 <html lang=\"en\">
 <head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Custom Indicator Signal</title></head>
-<body style=\"margin:0;background:#F5F7FB;\">
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
-{''.join(cards)}
-</td></tr></table>
+<body style=\"margin:0;background:#F5F7FB;\">\n
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('Indicator Tracker', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
         """
 
@@ -1257,8 +1350,8 @@ class EmailService:
             # Build one content block per triggered pair inside the container
             pair_blocks: List[str] = []
             for pair in triggered_pairs:
-                pair_a = pair.get("symbol1", "N/A")
-                pair_b = pair.get("symbol2", "N/A")
+                pair_a = self._pair_display(pair.get("symbol1", "N/A"))
+                pair_b = self._pair_display(pair.get("symbol2", "N/A"))
                 timeframe = pair.get("timeframe", "N/A")
                 actual_corr = pair.get("correlation_value", 0)
                 expected_corr, trigger_rule = format_expected_and_rule(pair)
@@ -1289,16 +1382,10 @@ class EmailService:
             return f"""
 <!doctype html>
 <html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Correlation Alert</title></head>
-<body style=\"margin:0;background:#F5F7FB;\">
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
-<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
-  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Actual Correlation Mismatch</td></tr>
-  {blocks_html}
-  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Education only. © FxLabs AI</td></tr>
-</table>
-</td></tr></table>
+<body style=\"margin:0;background:#F5F7FB;\">\n
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI Correlation', self.tz_name)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Actual Correlation Mismatch</td></tr>\n  {blocks_html}\n</table>\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
-            """
+        """
 
     def _build_news_reminder_html(
         self,
@@ -1337,7 +1424,7 @@ class EmailService:
       Volatility risk. Consider spreads, slippage and cooldown windows.
     </div>
   </td></tr>
-  <tr><td style="padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;">Not financial advice. © FxLabs AI</td></tr>
+  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>
 </table>
 </td></tr></table>
 </body></html>
@@ -1455,8 +1542,8 @@ class EmailService:
 
             cards: List[str] = []
             for pair in triggered_pairs:
-                pair_a = pair.get("symbol1", "N/A")
-                pair_b = pair.get("symbol2", "N/A")
+                pair_a = self._pair_display(pair.get("symbol1", "N/A"))
+                pair_b = self._pair_display(pair.get("symbol2", "N/A"))
                 timeframe = pair.get("timeframe", "N/A")
                 rsi_corr_now = pair.get("rsi_corr_now")
                 expected_corr, trigger_rule = expected_and_rule(pair)
@@ -1480,7 +1567,6 @@ class EmailService:
       Note: RSI-based divergences can revert faster than price-corr; size risk accordingly.
     </div>
   </td></tr>
-  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>
 </table>
 <div style=\"height:12px\"></div>
                 """
@@ -1489,10 +1575,8 @@ class EmailService:
             return f"""
 <!doctype html>
 <html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • RSI Correlation Alert</title></head>
-<body style=\"margin:0;background:#F5F7FB;\">
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">
-{''.join(cards)}
-</td></tr></table>
+<body style=\"margin:0;background:#F5F7FB;\">\n
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI Correlation', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
             """
 
@@ -1503,7 +1587,8 @@ class EmailService:
                 return s
             except Exception:
                 return ""
-        date_local = esc(payload.get("date_local_IST", ""))
+        date_local = esc(payload.get("date_local", ""))
+        time_label = esc(payload.get("time_label", ""))
         # Core signals rows
         rows = []
         for s in payload.get("core_signals", []) or []:
@@ -1558,86 +1643,23 @@ class EmailService:
 <!doctype html>
 <html lang=\"en\">
 <head>
-<meta charset=\"utf-8\">
-<title>FxLabs • Daily Morning Brief</title>
+<meta charset=\"utf-8\">\n<title>FxLabs • Daily Morning Brief</title>
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <style>
 @media screen and (max-width:600px){{ .container{{width:100%!important}} .stack{{display:block!important;width:100%!important}}}}
 </style>
 </head>
-<body style=\"margin:0;background:#F5F7FB;\">
-  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">
-    <tr>
-      <td align=\"center\" style=\"padding:24px 12px;\">
-        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
-          <tr>
-            <td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;\">
-              <table role=\"presentation\" width=\"100%\"><tr>
-                <td align=\"left\" style=\"font-weight:700;font-size:18px;\">FxLabs Daily • {date_local}</td>
-                <td align=\"right\" style=\"font-size:12px;color:#6B7280;\">IST 09:00</td>
-              </tr></table>
-            </td>
-          </tr>
-
-          <tr>
-            <td style=\"padding:20px;\">
-              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>
-              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">
-                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">
-                  <td style=\"padding:10px 8px;\">Pair</td>
-                  <td style=\"padding:10px 8px;\">Signal</td>
-                  <td style=\"padding:10px 8px;\">Probability</td>
-                  <td style=\"padding:10px 8px;\">Timeframe</td>
-                </tr>
-                {core_html}
-              </table>
-            </td>
-          </tr>
-
-          <tr>
-            <td style=\"padding:0 20px 20px;\">
-              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>
-              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">                
-                <tr class=\"stack\">
-                  <td class=\"stack\" valign=\"top\" style=\"width:50%;padding:12px;background:#F9FAFB;border-radius:10px;\">
-                    <div style=\"font-size:12px;color:#6B7280;margin-bottom:6px;\">Oversold</div>
-                    {os_list}
-                  </td>
-                  <td class=\"stack\" valign=\"top\" style=\"width:20px;\">&nbsp;</td>
-                  <td class=\"stack\" valign=\"top\" style=\"width:50%;padding:12px;background:#F9FAFB;border-radius:10px;\">
-                    <div style=\"font-size:12px;color:#6B7280;margin-bottom:6px;\">Overbought</div>
-                    {ob_list}
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-
-          <tr>
-            <td style=\"padding:0 20px 20px;\">
-              <div style=\"font-weight:700;margin-bottom:8px;\">Today's High/Medium-Impact News</div>
-              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">
-                {news_html}
-              </table>
-            </td>
-          </tr>
-
-          <tr>
-            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">
-              This information is for education only and not financial advice. © FxLabs AI
-            </td>
-          </tr>
-        </table>
-      </td>
-    </tr>
-  </table>
-</body>
-</html>
+<body style=\"margin:0;background:#F5F7FB;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 12px;\">\n        {self._build_common_header('Daily', payload.get('tz_name', self.tz_name), date_override=date_local, time_label_override=time_label)}\n        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n          <tr>\n            <td style=\"padding:20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">\n                  <td style=\"padding:10px 8px;\">Pair</td>\n                  <td style=\"padding:10px 8px;\">Signal</td>\n                  <td style=\"padding:10px 8px;\">Probability</td>\n                  <td style=\"padding:10px 8px;\">Timeframe</td>\n                </tr>\n                {core_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {news_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">\n              This information is for education only and not financial advice. © FxLabs AI\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>
         """
 
     def _build_daily_text(self, payload: Dict[str, Any]) -> str:
         lines: List[str] = []
-        lines.append(f"FxLabs Daily • {payload.get('date_local_IST','')}")
+        header_date = payload.get('date_local','')
+        header_time = payload.get('time_label','')
+        header = f"FxLabs Daily • {header_date}"
+        if header_time:
+            header = f"{header} ({header_time})"
+        lines.append(header)
         lines.append("")
         lines.append("Signal Summary (Core Pairs):")
         for s in payload.get("core_signals", []) or []:

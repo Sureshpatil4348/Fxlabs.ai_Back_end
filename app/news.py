@@ -15,6 +15,8 @@ from .config import (
     NEWS_UPDATE_INTERVAL_HOURS,
     PERPLEXITY_API_KEY,
     NEWS_CACHE_FILE,
+    SUPABASE_URL,
+    SUPABASE_SERVICE_KEY,
 )
 from .models import NewsAnalysis, NewsItem
 from .email_service import email_service
@@ -807,17 +809,141 @@ async def news_scheduler():
 
 # ----------------------- News Reminder (5-minute) -----------------------
 
-async def _fetch_all_user_emails() -> List[str]:
-    """Return a deduplicated list of user emails by union of alert tables.
+async def _fetch_all_user_emails_from_auth() -> List[str]:
+    """Fetch all user emails from Supabase Auth admin API with verbose logs.
 
-    We use the existing alert tables that already include `user_email` to
-    collect active users across products. This avoids needing a separate
-    profiles table.
+    Uses service role key to list users. Paginates until no results.
     """
     try:
-        # Mirror configuration from alert_cache to avoid imports
-        supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
-        supabase_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+        supabase_url = SUPABASE_URL
+        supabase_key = SUPABASE_SERVICE_KEY
+        if not supabase_url or not supabase_key:
+            log_error(logger, "news_auth_users_fetch_skipped", reason="missing_supabase_credentials")
+            return []
+
+        base = supabase_url.rstrip("/")
+        url = f"{base}/auth/v1/admin/users"
+        headers = {
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Content-Type": "application/json",
+        }
+        timeout = aiohttp.ClientTimeout(connect=3, sock_read=10, total=20)
+        emails: List[str] = []
+        page = 1
+        per_page = 1000
+
+        log_info(logger, "news_auth_fetch_start", page=page, per_page=per_page)
+
+        def _extract_emails_from_user(u: dict) -> List[str]:
+            results: List[str] = []
+            try:
+                primary = (u.get("email") or "").strip()
+                if primary:
+                    results.append(primary)
+            except Exception:
+                pass
+            try:
+                meta = u.get("user_metadata") or {}
+                if isinstance(meta, dict):
+                    for k in ("email", "email_address", "preferred_email"):
+                        v = (meta.get(k) or "").strip()
+                        if v:
+                            results.append(v)
+            except Exception:
+                pass
+            try:
+                identities = u.get("identities") or []
+                if isinstance(identities, list):
+                    for ident in identities:
+                        try:
+                            v = (ident.get("email") or "").strip()
+                            if v:
+                                results.append(v)
+                            id_data = ident.get("identity_data") or {}
+                            if isinstance(id_data, dict):
+                                v2 = (id_data.get("email") or id_data.get("preferred_username") or "").strip()
+                                if v2 and "@" in v2:
+                                    results.append(v2)
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+            return [e for e in results if isinstance(e, str) and "@" in e]
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            while True:
+                params = {"page": page, "per_page": per_page, "aud": "authenticated"}
+                try:
+                    async with session.get(url, headers=headers, params=params) as resp:
+                        if resp.status != 200:
+                            txt = await resp.text()
+                            log_error(
+                                logger,
+                                "news_auth_users_fetch_failed",
+                                status=resp.status,
+                                page=page,
+                                body=(txt[:200] if isinstance(txt, str) else ""),
+                            )
+                            break
+                        data = await resp.json()
+                        users = data if isinstance(data, list) else data.get("users", []) if isinstance(data, dict) else []
+                        log_info(logger, "news_auth_fetch_page", page=page, users=len(users))
+                        if not users:
+                            break
+                        page_emails: List[str] = []
+                        for u in users:
+                            try:
+                                page_emails.extend(_extract_emails_from_user(u))
+                            except Exception:
+                                continue
+                        page_emails = sorted({e for e in page_emails})
+                        if page_emails:
+                            try:
+                                log_debug(
+                                    logger,
+                                    "news_auth_fetch_page_emails",
+                                    page=page,
+                                    count=len(page_emails),
+                                    emails_csv=",".join(page_emails),
+                                )
+                            except Exception:
+                                pass
+                            emails.extend(page_emails)
+                        if len(users) < per_page:
+                            break
+                        page += 1
+                except Exception as e:
+                    log_error(logger, "news_auth_users_fetch_error", page=page, error=str(e))
+                    break
+        final_emails = sorted({e for e in emails if isinstance(e, str) and e})
+        try:
+            log_info(
+                logger,
+                "news_auth_fetch_done",
+                users_total=len(final_emails),
+                emails_csv=",".join(final_emails),
+            )
+        except Exception:
+            pass
+        return final_emails
+    except Exception as e:
+        log_error(logger, "news_auth_users_fetch_unexpected", error=str(e))
+        return []
+
+async def _fetch_all_user_emails() -> List[str]:
+    """Fetch user emails from Auth; fallback to alert tables if empty."""
+    try:
+        auth_emails = await _fetch_all_user_emails_from_auth()
+        if auth_emails:
+            return auth_emails
+        log_info(logger, "news_users_fetch_fallback_alert_tables")
+    except Exception as e:
+        log_error(logger, "news_auth_users_fetch_wrapper_error", error=str(e))
+    try:
+        # Use centralized configuration
+        supabase_url = SUPABASE_URL
+        supabase_key = SUPABASE_SERVICE_KEY
         if not supabase_url or not supabase_key:
             log_error(logger, "news_users_fetch_skipped", reason="missing_supabase_credentials")
             return []
@@ -869,9 +995,20 @@ def _format_event_time_local(time_iso: Optional[str], tz_name: str = "Asia/Kolka
     try:
         if not time_iso:
             return ""
-        from zoneinfo import ZoneInfo
+        # robust tz handling with fallback for IST
+        try:
+            from zoneinfo import ZoneInfo
+            local_tz = ZoneInfo(tz_name)
+        except Exception:
+            if tz_name == "Asia/Kolkata":
+                try:
+                    local_tz = timezone(timedelta(hours=5, minutes=30))
+                except Exception:
+                    local_tz = timezone.utc
+            else:
+                local_tz = timezone.utc
         dt_utc = datetime.fromisoformat(time_iso.replace("Z", "+00:00")).astimezone(timezone.utc)
-        dt_local = dt_utc.astimezone(ZoneInfo(tz_name))
+        dt_local = dt_utc.astimezone(local_tz)
         label = "IST" if tz_name == "Asia/Kolkata" else tz_name
         return dt_local.strftime(f"%Y-%m-%d %H:%M {label}")
     except Exception:
@@ -894,7 +1031,7 @@ def _derive_bias(effect: Optional[str]) -> str:
 
 
 async def check_and_send_news_reminders() -> None:
-    """Check news within next 5 minutes and email all users once per event.
+    """Check high‑impact news within next 5 minutes and email all users once per event.
 
     - Scans in-memory `global_news_cache` for events with UTC time within (now, now+5m].
     - Skips items already marked `reminder_sent`.
@@ -911,7 +1048,14 @@ async def check_and_send_news_reminders() -> None:
                     continue
                 event_dt = _iso_to_dt(item.time)
                 if now < event_dt <= window_end:
-                    due_items.append(item)
+                    # Only consider high‑impact items
+                    try:
+                        impact_token = (item.analysis or {}).get("impact")
+                        impact_norm = str(impact_token).strip().lower() if impact_token is not None else ""
+                    except Exception:
+                        impact_norm = ""
+                    if impact_norm == "high":
+                        due_items.append(item)
             except Exception:
                 continue
 
@@ -934,6 +1078,15 @@ async def check_and_send_news_reminders() -> None:
             return
 
         # Send reminders per item to all users
+        try:
+            emails_csv = ",".join([e for e in emails if isinstance(e, str)])
+        except Exception:
+            emails_csv = ""
+        try:
+            log_info(logger, "news_auth_emails", users=len(emails), emails_csv=emails_csv)
+        except Exception:
+            pass
+        log_info(logger, "news_reminder_recipients", users=len(emails), emails_csv=emails_csv)
         for item in due_items:
             title = (item.headline or "News Event").strip()
             event_time_local = _format_event_time_local(item.time)

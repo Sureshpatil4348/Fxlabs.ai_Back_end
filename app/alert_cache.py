@@ -19,9 +19,10 @@ class AlertCache:
         self._refresh_interval = timedelta(minutes=5)  # align with 5-minute alert scheduler
         self._is_refreshing = False
         
-        # Supabase configuration
-        self.supabase_url = os.environ.get("SUPABASE_URL", "https://hyajwhtkwldrmlhfiuwg.supabase.co")
-        self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh5YWp3aHRrd2xkcm1saGZpdXdnIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NjI5NjUzNCwiZXhwIjoyMDcxODcyNTM0fQ.UDqYHY5Io0o-fQTswCYQmMdC6UCPQI2gf3aTb9o09SE")
+        # Supabase configuration (tenant-aware from app.config)
+        from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+        self.supabase_url = SUPABASE_URL
+        self.supabase_service_key = SUPABASE_SERVICE_KEY
         
         # HTTP timeout configuration for network requests
         self.timeout = aiohttp.ClientTimeout(
@@ -156,7 +157,7 @@ class AlertCache:
                         "user_email": alert.get("user_email"),
                         "is_active": alert.get("is_active", True),
                         "pairs": alert.get("pairs", []),
-                        "trading_style": alert.get("trading_style", "dayTrader"),
+                        "trading_style": alert.get("trading_style", "scalper"),
                         "buy_threshold": alert.get("buy_threshold", 70),
                         "sell_threshold": alert.get("sell_threshold", 30),
                         "notification_methods": alert.get("notification_methods", ["email"]),
@@ -197,6 +198,29 @@ class AlertCache:
                 users=len(new_cache),
                 total_alerts=total_alerts,
             )
+
+            # After refresh: list all alerts by category (type)
+            categories = self._group_alerts_by_type(new_cache)
+            print("📚 Alerts by category (post-refresh):")
+            for cat, items in categories.items():
+                print(f"  • {cat}: {len(items)}")
+                for a in items:
+                    aid = a.get("id")
+                    name = a.get("alert_name", a.get("name", ""))
+                    email = a.get("user_email", "")
+                    print(f"     - id={aid} | name={name} | user={email}")
+            try:
+                # Structured log with just counts to avoid noisy payloads
+                log_info(
+                    logger,
+                    "alert_cache_categories",
+                    rsi_tracker=len(categories.get("rsi_tracker", [])),
+                    rsi_correlation_tracker=len(categories.get("rsi_correlation_tracker", [])),
+                    heatmap_tracker=len(categories.get("heatmap_tracker", [])),
+                    heatmap_indicator_tracker=len(categories.get("heatmap_indicator_tracker", [])),
+                )
+            except Exception:
+                pass
             
         except Exception as e:
             print(f"❌ Error refreshing alert cache: {e}")
@@ -214,6 +238,25 @@ class AlertCache:
                 pass
         finally:
             self._is_refreshing = False
+
+    def _group_alerts_by_type(self, cache_snapshot: Optional[Dict[str, List[Dict[str, Any]]]] = None) -> Dict[str, List[Dict[str, Any]]]:
+        """Return alerts grouped by their 'type' across all users.
+
+        If cache_snapshot is provided, group that; otherwise group current cache.
+        """
+        src = cache_snapshot if cache_snapshot is not None else self._cache
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for _uid, alerts in src.items():
+            for alert in alerts:
+                atype = alert.get("type", "unknown")
+                grouped.setdefault(atype, []).append(alert)
+        return grouped
+
+    async def get_alerts_by_category(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Public accessor to get alerts grouped by category (type)."""
+        if self._should_refresh():
+            await self._refresh_cache()
+        return self._group_alerts_by_type()
     
     async def _fetch_rsi_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
         """Fetch RSI Tracker alerts from Supabase"""

@@ -26,7 +26,7 @@ async def test_websocket_connection():
             subscription = {
                 "action": "subscribe",
                 "symbol": "EURUSD",
-                "timeframe": "5M",
+                "timeframe": "1M",
                 "data_types": ["ticks", "ohlc"]
             }
             

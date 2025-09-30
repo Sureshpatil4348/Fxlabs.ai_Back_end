@@ -26,9 +26,10 @@ class HeatmapTrackerAlertService:
     def __init__(self) -> None:
         # Re-arm per (alert, symbol, side) to avoid re-firing while in-zone
         self._armed: Dict[str, Dict[str, bool]] = {}
-        # Supabase creds for trigger logging
-        self.supabase_url = os.environ.get("SUPABASE_URL", "")
-        self.supabase_service_key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+        # Supabase creds for trigger logging (tenant-aware)
+        from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY
+        self.supabase_url = SUPABASE_URL
+        self.supabase_service_key = SUPABASE_SERVICE_KEY
 
     def _key(self, alert_id: str, symbol: str) -> str:
         return f"{alert_id}:{symbol}"
@@ -45,7 +46,7 @@ class HeatmapTrackerAlertService:
 
                     alert_id = alert.get("id")
                     user_email = alert.get("user_email", "")
-                    style = (alert.get("trading_style") or "dayTrader").lower()
+                    style = (alert.get("trading_style") or "scalper").lower()
                     buy_t = float(alert.get("buy_threshold", 70))
                     sell_t = float(alert.get("sell_threshold", 30))
                     pairs: List[str] = alert.get("pairs", []) or []
@@ -124,6 +125,20 @@ class HeatmapTrackerAlertService:
                                     symbol=symbol,
                                     style=style,
                                     trigger=trig_type,
+                                )
+                            else:
+                                log_debug(
+                                    logger,
+                                    "heatmap_no_trigger",
+                                    alert_id=alert_id,
+                                    symbol=symbol,
+                                    style=style,
+                                    buy_percent=round(buy_pct, 2),
+                                    sell_percent=round(sell_pct, 2),
+                                    buy_threshold=buy_t,
+                                    sell_threshold=sell_t,
+                                    armed_buy=st.get("buy", True),
+                                    armed_sell=st.get("sell", True),
                                 )
 
                     if per_alert_triggers:
@@ -274,5 +289,4 @@ class HeatmapTrackerAlertService:
 
 
 heatmap_tracker_alert_service = HeatmapTrackerAlertService()
-
 

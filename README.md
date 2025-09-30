@@ -33,6 +33,9 @@ A high-performance, real-time financial market data streaming service built with
 - **Warm-up & Stale-Data Protection**: Skips evaluations when latest bar is stale (>2× timeframe) and enforces indicator lookback (e.g., RSI series) before triggering
 // Removed: Rate Limits + Digest (alerts send immediately subject to value-based cooldown)
 - **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
+  - FXLabs tenant: All alert emails are enforced to IST (Asia/Kolkata) regardless of host tz. If the OS tz database is missing, a robust +05:30 (IST) fallback is applied.
+- **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FXLabs • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
+- **Single Common Footer**: Disclaimers are rendered once at the bottom of each email (not per pair/card). RSI/Correlation use "Not financial advice. © FxLabs AI". Heatmap and Indicator trackers use "Education only. © FxLabs AI".
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers
   - Per-alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
 
@@ -88,8 +91,9 @@ cp config.env.example .env
 
 #### Step 5: Start the Server
 ```bash
-# Start the server
-python server.py
+# Start with convenience entrypoints (auto-set TENANT)
+python fxlabs-server.py
+python hextech-server.py
 ```
 
 ### Alternative: Using Platform Scripts
@@ -118,7 +122,7 @@ curl http://127.0.0.1:8000/health
 
 ### Configuration
 
-Create a `.env` file with the following variables:
+Create a `.env` file with the following variables (tenant-aware via entry scripts; no TENANT var needed):
 
 ```env
 # MT5 Terminal Path (optional)
@@ -143,14 +147,69 @@ JBLANKED_API_KEY=your_jblanked_key
 NEWS_UPDATE_INTERVAL_HOURS=1
 NEWS_CACHE_MAX_ITEMS=500
 
-# Alert System Configuration
-SENDGRID_API_KEY=your_sendgrid_api_key
+# Alert System Configuration (tenant-aware; base variables act as fallback)
+SENDGRID_API_KEY=
 FROM_EMAIL=alerts@fxlabs.ai
 FROM_NAME=FX Labs Alerts
-PUBLIC_BASE_URL=https://api.fxlabs.ai
+PUBLIC_BASE_URL=
 UNSUBSCRIBE_SECRET=change_me_to_a_random_secret
 UNSUBSCRIBE_STORE_FILE=/var/fxlabs/unsubscribes.json
+
+# Supabase (required for alerts and news reminders)
+SUPABASE_URL=
+SUPABASE_SERVICE_KEY=
+
+# Optional: per-tenant overrides (used by entry scripts and take precedence over base vars)
+# FXLabs
+FXLABS_SUPABASE_URL=https://your-fxlabs.supabase.co
+FXLABS_SUPABASE_SERVICE_KEY=
+FXLABS_SENDGRID_API_KEY=
+FXLABS_FROM_EMAIL=alerts@fxlabs.ai
+FXLABS_FROM_NAME=FX Labs Alerts
+FXLABS_PUBLIC_BASE_URL=https://api.fxlabs.ai
+FXLABS_DAILY_TZ_NAME=Asia/Kolkata
+FXLABS_DAILY_SEND_LOCAL_TIME=09:00
+
+# HexTech (placeholders; fill when provisioning HexTech)
+HEXTECH_SUPABASE_URL=
+HEXTECH_SUPABASE_SERVICE_KEY=
+HEXTECH_SENDGRID_API_KEY=
+HEXTECH_FROM_EMAIL=
+HEXTECH_FROM_NAME=
+HEXTECH_PUBLIC_BASE_URL=
+HEXTECH_DAILY_TZ_NAME=Asia/Dubai
+HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
 ```
+
+### Daily Morning Brief
+- Uses the same SendGrid configuration (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`).
+- Runs daily at a configurable local time via `daily_mail_scheduler()`.
+- Configure timezone and send time using env vars:
+
+```env
+# Daily brief schedule
+DAILY_TZ_NAME=Asia/Kolkata           # IANA tz (e.g., Asia/Kolkata, UTC, Europe/London)
+DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
+```
+
+- The same timezone/time label is shown at the top-right of the email header.
+- Recipients are fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for daily emails and does not depend on per‑product alert tables.
+  - Endpoint: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
+  - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
+  - The code automatically paginates and deduplicates emails.
+  - Core signals in the daily brief use `scalper` mode for Quantum analysis.
+- For observability, the batch log includes a CSV of recipient emails and count.
+
+#### News Reminder Behavior (High‑Impact Only)
+- The 5‑minute news reminder now filters to only AI‑normalized high‑impact items (`impact == "high"`). Medium/low impact items are skipped.
+- Source impact values and AI analysis are normalized to `high|medium|low`; only `high` qualifies for reminders.
+
+#### Auth Fetch Logging (Verbose)
+- Start: `daily_auth_fetch_start | page: 1 | per_page: 1000`
+- Per page: `daily_auth_fetch_page | page: <n> | users: <count>`
+- Per page emails (debug): `daily_auth_fetch_page_emails | page: <n> | count: <m> | emails_csv: a@x,b@y`
+- Final list: `daily_auth_fetch_done | users_total: <k> | emails_csv: ...`
+- Daily send mirrors the final list: `daily_auth_emails | users: <k> | emails_csv: ...`
 
 #### Environment Loading (.env)
 - The app now auto-loads `.env` via `python-dotenv` in `app/config.py`.
@@ -165,9 +224,71 @@ UNSUBSCRIBE_STORE_FILE=/var/fxlabs/unsubscribes.json
 #### Market Data WebSocket (`/ws/market`)
 - **URL**: `ws://localhost:8000/ws/market`
 - **Purpose**: Real-time tick and OHLC data streaming
-- **Features**: Selective timeframe subscriptions, intelligent caching
+- **Features**: Selective timeframe subscriptions, intelligent caching, Bid/Ask parallel OHLC fields
+
+Note on closed-bar guarantees:
+- The server emits an `is_closed=true` OHLC bar at every timeframe boundary, including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.
 
 Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services.
+Connected discovery message now includes Bid/Ask capabilities and schema:
+
+```json
+{
+  "type": "connected",
+  "message": "WebSocket connected successfully",
+  "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W"],
+  "supported_data_types": ["ticks", "ohlc"],
+  "supported_price_bases": ["last", "bid", "ask"],
+  "ohlc_schema": "parallel"
+}
+```
+
+Extended subscribe supports price basis and schema shaping (defaults: `last`, `parallel`):
+
+```json
+{
+  "action": "subscribe",
+  "symbol": "EURUSD",
+  "timeframe": "1M",
+  "data_types": ["ohlc", "ticks"],
+  "price_basis": "bid",
+  "ohlc_schema": "parallel"
+}
+```
+
+Multi-timeframe subscriptions per symbol:
+- A single WebSocket connection can subscribe to the same `symbol` across multiple `timeframe`s concurrently (e.g., `1M`, `5M`, `1H`, `4H`).
+- Send a separate `subscribe` message per timeframe; each will stream its own initial snapshot and boundary `ohlc_update`s.
+- To unsubscribe a specific symbol×timeframe, send:
+
+```json
+{ "action": "unsubscribe", "symbol": "EURUSD", "timeframe": "4H" }
+```
+
+- To unsubscribe all timeframes for a symbol, omit `timeframe`:
+
+```json
+{ "action": "unsubscribe", "symbol": "EURUSD" }
+```
+
+OHLC payloads include parallel fields when schema is `parallel`:
+
+```json
+{
+  "type": "ohlc_update",
+  "data": {
+    "symbol": "EURUSD",
+    "timeframe": "1M",
+    "time": 1738219500000,
+    "open": 1.1052, "high": 1.1056, "low": 1.1050, "close": 1.1054,
+    "openBid": 1.1051, "highBid": 1.1055, "lowBid": 1.1049, "closeBid": 1.1053,
+    "openAsk": 1.1053, "highAsk": 1.1057, "lowAsk": 1.1051, "closeAsk": 1.1055,
+    "is_closed": true
+  }
+}
+```
+
+If a client requests `ohlc_schema = "basis_only"`, payloads omit parallel fields and map the requested basis into the canonical `open/high/low/close` keys.
 
 Internal alert tick_data shape:
 
@@ -181,6 +302,19 @@ Internal alert tick_data shape:
   }
 }
 ```
+
+##### WebSocket Disconnect Errors (Expected vs. Actionable)
+- You may occasionally see stack traces like:
+  - `websockets.exceptions.ConnectionClosedError: no close frame received or sent`
+  - `ConnectionClosedOK: received 1001 (going away)`
+  - `WebSocketDisconnect(code=1006)`
+  - `Cannot call "send" once a close message has been sent.`
+- These occur when a client navigates away, a mobile device suspends the tab, or a proxy closes idle connections. The server used to attempt a send during the close handshake, surfacing noisy errors.
+- As of this version, background streaming tasks stop gracefully on disconnect and avoid sending after close. You may still see concise disconnect notices in logs; they are harmless.
+- Client best practices:
+  - Send a proper WebSocket close frame on app shutdown/navigation where possible.
+  - Use keepalive/ping if intermediaries are aggressive about idle timeouts.
+  - Reconnect with backoff on close codes 1001/1006.
 
 #### Legacy Tick WebSocket (`/ws/ticks`)
 - **URL**: `ws://localhost:8000/ws/ticks`
@@ -198,6 +332,7 @@ Internal alert tick_data shape:
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
 | `/api/news/refresh` | POST | Manual news refresh | Yes |
 | `/api/alerts/cache` | GET | In-memory alerts cache (RSI Tracker) | Yes |
+| `/api/alerts/by-category` | GET | Alerts grouped by category (type) | Yes |
 | `/api/alerts/refresh` | POST | Force refresh alerts cache | Yes |
 
 ### RSI Tracker Alert — Closed‑bar Crossing
@@ -297,7 +432,7 @@ Notes:
 #### Email Template (Real Correlation)
 - Uses a compact, mobile‑friendly HTML card per triggered pair.
 - Fields per card:
-  - **pair_a/pair_b**: Symbols (e.g., `EURUSD` vs `GBPUSD`)
+- **pair_a/pair_b**: Symbols displayed as `ABC/DEF` (e.g., `EUR/USD` vs `GBP/USD`)
   - **lookback**: `correlation_window` from alert config
   - **timeframe**: TF of the evaluation (e.g., `1H`)
   - **expected_corr**: Threshold expression derived from the triggered rule:
@@ -318,7 +453,6 @@ Notes:
 - Startup warm‑up: For the Tracker, armed state per (alert, symbol) is initialized from current Buy%/Sell% (sides already above thresholds start disarmed) and the first observation is skipped. For the Custom Indicator Tracker, the last signal per (alert, symbol, timeframe, indicator) is baselined and the first observation is skipped.
 - Style weighting aggregates across the alert’s selected timeframes:
   - Scalper: 1M(0.2), 5M(0.4), 15M(0.3), 30M(0.1)
-  - Day: 15M(0.2), 30M(0.35), 1H(0.35), 4H(0.1)
   - Swing: 1H(0.25), 4H(0.45), 1D(0.3)
 - Final Score = weighted average of per‑TF scores; Buy Now % = (Final Score + 100)/2.
 - Triggers:
@@ -343,7 +477,7 @@ Notes:
 
 ### Alert Scheduling & Re‑triggering (Global)
 
-- End‑of‑timeframe evaluation only: scheduler runs every 5 minutes; alerts are evaluated on timeframe closes (5M/15M/30M/1H/4H/1D). Tick-driven checks are disabled by default.
+- End‑of‑timeframe evaluation only: scheduler runs every 5 minutes; alerts are evaluated on timeframe closes (5M/15M/30M/1H/4H/1D). Tick-driven checks are disabled by default. Note: 1M is supported for market data streaming but alerts are restricted to 5M and higher.
 - Crossing/Flip triggers: fire when the metric crosses into the condition from the opposite side (or a regime flip occurs), not on every bar while in‑zone.
 
 See `ALERTS.md` for canonical Supabase table schemas and exact frontend implementation requirements (Type A/Type B/RSI/RSI‑Correlation), including field lists, endpoints, validation, and delivery channel setup.
@@ -397,11 +531,11 @@ Cache policy (weekly merge & dedup):
 const ws = new WebSocket('ws://localhost:8000/ws/market');
 
 ws.onopen = () => {
-    // Subscribe to EURUSD 5-minute data (minimum supported)
+    // Subscribe to EURUSD 1-minute data (alerts enforce 5M+ only)
     ws.send(JSON.stringify({
         action: 'subscribe',
         symbol: 'EURUSD',
-        timeframe: '5M',
+        timeframe: '1M',
         data_types: ['ticks', 'ohlc']
     }));
 };
@@ -575,7 +709,8 @@ The modular structure isolates responsibilities while preserving all existing be
 ## 📊 Supported Data Types
 
 ### Timeframes
-- **5M** - 5 Minutes (minimum supported)
+- **1M** - 1 Minute (streaming/data only; alerts enforce 5M minimum)
+- **5M** - 5 Minutes
 - **15M** - 15 Minutes
 - **30M** - 30 Minutes
 - **1H** - 1 Hour
@@ -646,6 +781,7 @@ Model behavior:
   - External API keys (Perplexity/Jblanked) are expected via env; missing keys will limit news analysis. Behavior unchanged.
   - News analyzer uses simple keyword extraction to derive effect; this is heuristic, as before.
   - Email per-user rate limiting and digest have been removed. Alerts are sent immediately when not blocked by the value-based cooldown.
+  - Closed-bar gating for alert evaluation is tracked per alert/user (not globally by symbol/timeframe). This ensures multiple users with identical configurations are each evaluated every cycle.
 
 - Low severity:
   - Logging is console-based; consider structured logging for production observability.
@@ -678,6 +814,29 @@ The system provides comprehensive logging for:
 - Data processing errors
 - API request/response cycles
 - Performance metrics
+
+#### Detailed Evaluation Logs (per alert, per symbol/pair)
+At DEBUG level, evaluators emit concise reasons when a trigger does not fire, so you can see exactly how each alert was evaluated:
+
+- RSI Tracker
+  - `rsi_insufficient_data` — fewer than 2 RSI points available
+  - `rsi_rearm_overbought` / `rsi_rearm_oversold` — armed state toggled after exiting threshold
+  - `rsi_no_trigger` — includes reason (`no_cross | disarmed_overbought | disarmed_oversold | already_overbought | already_oversold | within_neutral_band`) and values (`prev_rsi`, `curr_rsi`, thresholds, armed flags)
+- RSI Correlation Tracker
+  - `corr_no_mismatch` — computed condition did not indicate mismatch; includes `label` and `value`
+  - `corr_persisting_mismatch` — mismatch persisted from previous bar (no new trigger)
+- Heatmap Tracker
+  - `heatmap_eval` — Buy%/Sell%/Final Score for each symbol
+  - `heatmap_no_trigger` — includes Buy%/Sell%, thresholds, and armed flags when no trigger
+- Indicator Tracker
+  - `indicator_signal` — current and previous signal
+  - `indicator_no_trigger` — includes reason (`neutral_signal | no_flip`) when no trigger occurs
+
+At INFO level, the scheduler emits compact batch summaries after each evaluation cycle:
+- `rsi_tracker_eval | triggers: <n>`
+- `rsi_correlation_eval | triggers: <n>`
+- `heatmap_tracker_eval | triggers: <n>`
+- `indicator_tracker_eval | triggers: <n>`
 
 #### Human‑Readable Emoji Logging (v2.2.0)
 Alert evaluations and actions are now logged in a clean, human‑readable format with emojis using `app/alert_logging.py`.
