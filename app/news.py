@@ -801,10 +801,10 @@ async def news_scheduler():
             if news_cache_metadata["next_update_time"] is None or current_time >= news_cache_metadata["next_update_time"]:
                 print("⏰ [scheduler] Triggering update_news_cache()")
                 await update_news_cache()
-            await asyncio.sleep(3600)
+            await asyncio.sleep(1800)
         except Exception as e:
             print(f"❌ [scheduler] Error in news scheduler: {e}")
-            await asyncio.sleep(3600)
+            await asyncio.sleep(1800)
 
 
 # ----------------------- News Reminder (5-minute) -----------------------
@@ -1144,5 +1144,4 @@ async def news_reminder_scheduler():
         except Exception as e:
             log_error(logger, "news_reminder_scheduler_error", error=str(e))
         await asyncio.sleep(60)
-
 
