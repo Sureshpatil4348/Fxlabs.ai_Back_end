@@ -136,7 +136,7 @@ curl http://127.0.0.1:8000/health
 
 ### Configuration
 
-Create a `.env` file with the following variables (tenant-aware via entry scripts; no TENANT var needed):
+Create a `.env` file with the following variables. Email credentials are tenant-specific only (no global defaults). Use `fxlabs-server.py` or `hextech-server.py` to select the tenant; you do not need to set `TENANT` manually.
 
 ```env
 # MT5 Terminal Path (optional)
@@ -161,13 +161,19 @@ JBLANKED_API_KEY=your_jblanked_key
 NEWS_UPDATE_INTERVAL_HOURS=0.5  # 30 minutes
 NEWS_CACHE_MAX_ITEMS=500
 
-# Alert System Configuration (tenant-aware; base variables act as fallback)
-SENDGRID_API_KEY=
-FROM_EMAIL=alerts@fxlabs.ai
-FROM_NAME=FX Labs Alerts
-PUBLIC_BASE_URL=
-UNSUBSCRIBE_SECRET=change_me_to_a_random_secret
-UNSUBSCRIBE_STORE_FILE=/var/fxlabs/unsubscribes.json
+# Email Configuration (tenant-specific only; no global defaults)
+# Define only the variables for the tenant you run.
+# FXLabs
+FXLABS_SENDGRID_API_KEY=
+FXLABS_FROM_EMAIL=alerts@fxlabs.ai
+FXLABS_FROM_NAME=FX Labs Alerts
+FXLABS_PUBLIC_BASE_URL=
+
+# HexTech
+HEXTECH_SENDGRID_API_KEY=
+HEXTECH_FROM_EMAIL=
+HEXTECH_FROM_NAME=
+HEXTECH_PUBLIC_BASE_URL=
 
 # Supabase (required for alerts and news reminders)
 SUPABASE_URL=
@@ -196,7 +202,7 @@ HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
 ```
 
 ### Daily Morning Brief
-- Uses the same SendGrid configuration (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`).
+- Uses the tenant-specific SendGrid configuration (`FXLABS_*` or `HEXTECH_*`).
 - Runs daily at a configurable local time via `daily_mail_scheduler()`.
 - Configure timezone and send time using env vars:
 
@@ -1034,13 +1040,12 @@ Expected logs when working:
   - `📤 Queueing email send for RSI Correlation Tracker ...`
 
 ### "SendGrid not configured, skipping RSI alert email"
-- Cause: `EmailService` didn't initialize a SendGrid client (`self.sg is None`). This happens when either the SendGrid library isn’t installed in your environment or `SENDGRID_API_KEY` isn’t present in the process environment.
+- Cause: `EmailService` didn't initialize a SendGrid client (`self.sg is None`). This happens when either the SendGrid library isn’t installed or tenant-specific credentials are missing.
 - Fix quickly:
   - Install deps in your venv: `pip install -r requirements.txt` (includes `sendgrid`)
-  - Provide credentials via environment or `.env` (auto-loaded now):
-    - `SENDGRID_API_KEY=YOUR_REAL_SENDGRID_API_KEY`
-    - `FROM_EMAIL=verified_sender@yourdomain.com` (must be a verified single sender or a domain verified in SendGrid)
-    - `FROM_NAME=FX Labs Alerts` (optional)
+  - Provide tenant-specific credentials via environment or `.env` (auto-loaded now):
+    - FXLabs: `FXLABS_SENDGRID_API_KEY=...`, `FXLABS_FROM_EMAIL=verified@yourdomain.com`, `FXLABS_FROM_NAME=FX Labs Alerts`
+    - HexTech: `HEXTECH_SENDGRID_API_KEY=...`, `HEXTECH_FROM_EMAIL=verified@yourdomain.com`, `HEXTECH_FROM_NAME=HexTech Alerts`
   - Ensure your process actually sees the variables:
     - macOS/Linux: `.env` is auto-loaded; no manual `export` needed
     - Windows: `start.ps1`/`start.bat` also load `.env`
@@ -1050,14 +1055,14 @@ Expected logs when working:
 ### "HTTP Error 403: Forbidden" during send (intermittent)
 - Symptom: Logs show `❌ Error sending ... email: HTTP Error 403: Forbidden` while other emails sometimes succeed.
 - Most common root causes:
-  - Sender identity mismatch: `FROM_EMAIL` is not a verified Single Sender or part of an authenticated domain. If only `alerts@fxlabs.ai` is verified, sending from `alerts@alerts.fxlabs.ai` will 403. The code now defaults to `alerts@fxlabs.ai` when unset.
+  - Sender identity mismatch: `FROM_EMAIL` is not a verified Single Sender or part of an authenticated domain. If only `alerts@fxlabs.ai` is verified, sending from `alerts@alerts.fxlabs.ai` will 403. The code requires tenant-specific `FROM_EMAIL`; no default is used.
   - API key scope too narrow: The `SENDGRID_API_KEY` lacks the `Mail Send` permission. Regenerate with Full Access or include `Mail Send`.
   - IP Access Management: If enabled in SendGrid, requests from non-whitelisted IPs are blocked with 403. Whitelist the server IP(s).
   - Region mismatch: EU-only accounts must use the EU endpoint; ensure your environment uses the correct SendGrid region (contact SendGrid if unsure).
-- Why intermittent? Different processes or shells might pick up different env vars. For example, one run uses a proper `FROM_EMAIL` from `.env`, while another falls back to the code default. Ensure `.env` contains explicit `FROM_EMAIL=alerts@fxlabs.ai` and that you always start via the provided launchers.
+- Why intermittent? Different processes or shells might pick up different env files. Ensure you set the tenant-specific variables (`FXLABS_*` for FXLabs or `HEXTECH_*` for HexTech) in the active environment for that process. No code defaults are used.
 - What we log now (for failures): status, a trimmed response body, masked API key, and `from/to` addresses to speed up diagnosis without leaking secrets.
 - Quick checklist:
-  - Confirm `.env` has `SENDGRID_API_KEY`, `FROM_EMAIL=alerts@fxlabs.ai`, `FROM_NAME`.
+  - Confirm your env defines tenant-specific keys: for FXLabs use `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL`, `FXLABS_FROM_NAME`; for HexTech use `HEXTECH_SENDGRID_API_KEY`, `HEXTECH_FROM_EMAIL`, `HEXTECH_FROM_NAME`.
   - Verify the sender identity in SendGrid (Single Sender) or authenticate the `fxlabs.ai` domain.
   - If you use IP Access Management, add the server IP.
   - In SendGrid → API Keys, confirm the key includes `Mail Send`.
@@ -1069,9 +1074,9 @@ When email sending is disabled, the service now emits structured diagnostics sho
 ```
 ⚠️ Email service not configured — RSI alert email
    1) sendgrid library not installed (pip install sendgrid)
-   2) SENDGRID_API_KEY missing (set in environment or .env)
+   2) Tenant API key missing (set FXLABS_SENDGRID_API_KEY or HEXTECH_SENDGRID_API_KEY)
    Values (masked): SENDGRID_API_KEY=SG.************abcd, FROM_EMAIL=alerts@fxlabs.ai, FROM_NAME=FX Labs
-   Hint: copy config.env.example to .env and fill SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME; python-dotenv auto-loads .env
+   Hint: configure tenant-specific email credentials (FXLABS_SENDGRID_API_KEY/FXLABS_FROM_EMAIL/FXLABS_FROM_NAME or HEXTECH_*) — no global defaults
 ```
 
 Notes:
@@ -1092,11 +1097,17 @@ source .venv/bin/activate  # PowerShell: .venv\Scripts\Activate.ps1
 pip install --upgrade pip
 pip install -r requirements.txt
 ```
-- Set SendGrid credentials in `.env` (or environment):
+- Set SendGrid credentials in `.env` (tenant-specific only):
 ```env
-SENDGRID_API_KEY=your_sendgrid_api_key
-FROM_EMAIL=alerts@yourdomain.com
-FROM_NAME=FX Labs Alerts
+# For FXLabs
+FXLABS_SENDGRID_API_KEY=your_sendgrid_api_key
+FXLABS_FROM_EMAIL=alerts@fxlabs.ai
+FXLABS_FROM_NAME=FX Labs Alerts
+
+# For HexTech
+# HEXTECH_SENDGRID_API_KEY=your_sendgrid_api_key
+# HEXTECH_FROM_EMAIL=alerts@hextech.ae
+# HEXTECH_FROM_NAME=HexTech Alerts
 ```
 - Behavior without SendGrid: The server will start and log a warning; email sending is disabled but other features work.
 
@@ -1166,4 +1177,4 @@ Why Outlook flagged it:
 - Without DKIM/SPF alignment for the From domain, DMARC fails or is unverifiable. Outlook/O365 then shows the warning and often places the message in Junk.
 
 Code defaults updated:
-- Defaults now prefer `FROM_EMAIL=alerts@alerts.fxlabs.ai` and add dual-part emails with transactional headers and one-click unsubscribe. Set your actual authenticated sender in `.env` and configure `PUBLIC_BASE_URL` and `UNSUBSCRIBE_SECRET`.
+- No code defaults for email sender. Set tenant-specific sender (`FXLABS_FROM_EMAIL` or `HEXTECH_FROM_EMAIL`) and configure your domain in SendGrid.

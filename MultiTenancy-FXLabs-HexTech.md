@@ -30,7 +30,7 @@ No code changes done yet. This document maps the system to tenancy touchpoints a
 
 - Email branding (FXLabs by default; HexTech placeholders pending):
   - `app/email_service.py` still renders FXLabs brand in templates. HexTech branding swap is a TODO when HexTech goes live.
-  - `FROM_EMAIL`/`FROM_NAME` are tenant‑aware via `app/config.py`.
+- `FROM_EMAIL`/`FROM_NAME` are strictly tenant-specific via `app/config.py` (no global fallback).
 
 - CORS / API token (global today):
   - `ALLOWED_ORIGINS`, `API_TOKEN` are single values; would be per tenant in soft multi‑tenancy
@@ -77,9 +77,9 @@ API_TOKEN=fxlabs_api_token
 ALLOWED_ORIGINS=https://app.fxlabs.ai
 SUPABASE_URL=https://<fxlabs>.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...
-SENDGRID_API_KEY=SG....
-FROM_EMAIL=alerts@fxlabs.ai
-FROM_NAME=FX Labs Alerts
+FXLABS_SENDGRID_API_KEY=SG....
+FXLABS_FROM_EMAIL=alerts@fxlabs.ai
+FXLABS_FROM_NAME=FX Labs Alerts
 DAILY_TZ_NAME=Asia/Kolkata
 DAILY_SEND_LOCAL_TIME=09:00
 HOST=127.0.0.1
@@ -92,9 +92,9 @@ API_TOKEN=hextech_api_token
 ALLOWED_ORIGINS=https://app.hextech.ae
 SUPABASE_URL=https://<hextech>.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...
-SENDGRID_API_KEY=SG....
-FROM_EMAIL=alerts@hextech.ae
-FROM_NAME=HexTech Alerts
+HEXTECH_SENDGRID_API_KEY=SG....
+HEXTECH_FROM_EMAIL=alerts@hextech.ae
+HEXTECH_FROM_NAME=HexTech Alerts
 DAILY_TZ_NAME=Asia/Dubai
 DAILY_SEND_LOCAL_TIME=09:00
 HOST=127.0.0.1
@@ -174,13 +174,13 @@ WantedBy=multi-user.target
 
 - FXLabs (deployment/env)
   - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` → FXLabs project
-  - `SENDGRID_API_KEY`, `FROM_EMAIL=alerts@fxlabs.ai`, `FROM_NAME="FX Labs Alerts"`
+  - `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL=alerts@fxlabs.ai`, `FXLABS_FROM_NAME="FX Labs Alerts"`
   - `DAILY_TZ_NAME=Asia/Kolkata`, `DAILY_SEND_LOCAL_TIME=09:00`
   - `API_TOKEN=<fxlabs>`, `ALLOWED_ORIGINS=https://app.fxlabs.ai`
 
 - HexTech (deployment/env)
   - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` → HexTech project
-  - `SENDGRID_API_KEY`, `FROM_EMAIL=alerts@hextech.ae`, `FROM_NAME="HexTech Alerts"`
+  - `HEXTECH_SENDGRID_API_KEY`, `HEXTECH_FROM_EMAIL=alerts@hextech.ae`, `HEXTECH_FROM_NAME="HexTech Alerts"`
   - `DAILY_TZ_NAME=Asia/Dubai`, `DAILY_SEND_LOCAL_TIME=09:00`
   - `API_TOKEN=<hextech>`, `ALLOWED_ORIGINS=https://app.hextech.ae`
 
@@ -232,5 +232,3 @@ WantedBy=multi-user.target
 - Do we want a single SendGrid account with subusers per brand, or separate accounts?
 - Any brand‑specific feature deltas (subject prefixes, footer disclaimers, logo)?
 - Data residency or compliance differences between India and UAE to enforce at the database level?
-
-

@@ -253,12 +253,12 @@ Additionally:
 **Troubleshooting: SendGrid 403 Forbidden (intermittent)**
 - Symptom: Logs show `❌ Error sending ... email: HTTP Error 403: Forbidden` for some sends but not others.
 - Likely causes and fixes:
-  - Sender identity mismatch: Ensure `FROM_EMAIL` matches a verified Single Sender or an authenticated domain in SendGrid. Use `alerts@fxlabs.ai` unless you’ve authenticated a subdomain. The service default now aligns to `alerts@fxlabs.ai`.
-  - API key scopes: Confirm `SENDGRID_API_KEY` includes `Mail Send` permission. Regenerate the key if needed.
+  - Sender identity mismatch: Ensure the tenant-specific `FROM_EMAIL` matches a verified Single Sender or an authenticated domain in SendGrid. No default is used; set `FXLABS_FROM_EMAIL` or `HEXTECH_FROM_EMAIL` accordingly.
+  - API key scopes: Confirm the tenant-specific API key (`FXLABS_SENDGRID_API_KEY` or `HEXTECH_SENDGRID_API_KEY`) includes `Mail Send` permission. Regenerate the key if needed.
   - IP Access Management: If enabled, whitelist the server IP to avoid 403.
   - Region: If your account is EU-only, ensure your environment targets the EU endpoint (contact SendGrid support/docs for region setup). 
 - Why it appears intermittent:
-  - Different shells/processes may pick different env values. If `FROM_EMAIL` isn’t explicitly set, a fallback might be used. Set `FROM_EMAIL=alerts@fxlabs.ai` in `.env` to eliminate ambiguity.
+  - Different shells/processes may load different env files. Ensure you set the correct tenant-specific variables (`FXLABS_*` for FXLabs or `HEXTECH_*` for HexTech) in the active environment. No fallback defaults are used.
 - What the app logs on failure:
   - Status code, trimmed response body, masked API key, and from/to addresses to aid diagnosis without leaking secrets.
 - A structured log line with per-category counts is emitted as `app.alert_cache | alert_cache_categories` for observability.

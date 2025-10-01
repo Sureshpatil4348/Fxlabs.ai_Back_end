@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, DAILY_TZ_NAME
+from .tenancy import get_tenant_config
 from .alert_logging import log_debug, log_info, log_warning, log_error
 
 
@@ -40,12 +41,12 @@ class EmailService:
     """SendGrid email service for sending heatmap alerts with cooldown mechanism"""
     
     def __init__(self):
-        # Load from environment-driven config
-        self.sendgrid_api_key = (SENDGRID_API_KEY or os.environ.get("SENDGRID_API_KEY", "")).strip()
-        # Default to verified single sender unless overridden via env/tenant
-        # Aligns with config.env.example and README guidance
-        self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@fxlabs.ai")).strip()
-        self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs Alerts")).strip()
+        # Strictly tenant-scoped configuration (no global/env fallbacks)
+        ten = get_tenant_config()
+        self.tenant_name = ten.name
+        self.sendgrid_api_key = (SENDGRID_API_KEY or "").strip()
+        self.from_email = (FROM_EMAIL or "").strip()
+        self.from_name = (FROM_NAME or "").strip()
         # Tenant-aware timezone for all email timestamps (FXLabs → IST by default)
         self.tz_name = (DAILY_TZ_NAME or "Asia/Kolkata")
         # Unsubscribe feature removed per spec
@@ -71,7 +72,7 @@ class EmailService:
             if not SendGridAPIClient:
                 logger.warning("⚠️ SendGrid library not installed. Email sending is disabled.")
             elif not self.sendgrid_api_key:
-                logger.warning("⚠️ SENDGRID_API_KEY not configured. Email sending is disabled.")
+                logger.warning("⚠️ Tenant email credentials missing (API key). Email sending is disabled.")
             # Provide comprehensive diagnostics on what's missing/misaligned
             self._log_config_diagnostics(context="startup")
 
@@ -557,6 +558,16 @@ class EmailService:
         api_key = self.sendgrid_api_key or ""
         from_email = self.from_email or ""
         from_name = self.from_name or ""
+        # Determine expected tenant-specific variable names
+        ten = getattr(self, "tenant_name", "") or get_tenant_config().name
+        if ten == "FXLabs":
+            exp_key, exp_from_email, exp_from_name = (
+                "FXLABS_SENDGRID_API_KEY", "FXLABS_FROM_EMAIL", "FXLABS_FROM_NAME"
+            )
+        else:
+            exp_key, exp_from_email, exp_from_name = (
+                "HEXTECH_SENDGRID_API_KEY", "HEXTECH_FROM_EMAIL", "HEXTECH_FROM_NAME"
+            )
 
         # Library presence
         if not sg_lib:
@@ -564,19 +575,19 @@ class EmailService:
 
         # API key checks
         if not api_key:
-            issues.append("SENDGRID_API_KEY missing (set in environment or .env)")
+            issues.append(f"Tenant API key missing (set {exp_key})")
         elif not api_key.startswith("SG."):
             issues.append('SENDGRID_API_KEY does not look like a SendGrid key (expected to start with "SG.")')
 
         # From email checks
         if not from_email:
-            issues.append("FROM_EMAIL missing")
+            issues.append(f"FROM_EMAIL missing (set {exp_from_email})")
         elif not self._looks_like_email(from_email):
             issues.append("FROM_EMAIL invalid format")
 
         # From name checks
         if not from_name:
-            issues.append("FROM_NAME missing (optional but recommended)")
+            issues.append(f"FROM_NAME missing (set {exp_from_name})")
 
         configured = self.sg is not None
         return {
@@ -679,9 +690,22 @@ class EmailService:
                 logger.error("   Hint: %s", hint)
         except Exception:
             pass
-        logger.warning(
-            "   Hint: copy config.env.example to .env and fill SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME; python-dotenv auto-loads .env"
-        )
+        try:
+            ten = getattr(self, "tenant_name", "") or get_tenant_config().name
+            if ten == "FXLabs":
+                exp_key, exp_from_email, exp_from_name = (
+                    "FXLABS_SENDGRID_API_KEY", "FXLABS_FROM_EMAIL", "FXLABS_FROM_NAME"
+                )
+            else:
+                exp_key, exp_from_email, exp_from_name = (
+                    "HEXTECH_SENDGRID_API_KEY", "HEXTECH_FROM_EMAIL", "HEXTECH_FROM_NAME"
+                )
+            logger.warning(
+                "   Hint: configure tenant-specific email credentials (%s, %s, %s). No global defaults are used.",
+                exp_key, exp_from_email, exp_from_name,
+            )
+        except Exception:
+            pass
     
     def _update_alert_cooldown(self, alert_hash: str, triggered_pairs: List[Dict[str, Any]] = None):
         """Update the last sent timestamp and values for an alert"""
