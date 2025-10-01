@@ -36,8 +36,22 @@ A high-performance, real-time financial market data streaming service built with
   - FXLabs tenant: All alert emails are enforced to IST (Asia/Kolkata) regardless of host tz. If the OS tz database is missing, a robust +05:30 (IST) fallback is applied.
 - **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FXLabs • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
 - **Single Common Footer**: Disclaimers are rendered once at the bottom of each email (not per pair/card). RSI/Correlation use "Not financial advice. © FxLabs AI". Heatmap and Indicator trackers use "Education only. © FxLabs AI".
-- **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers
-  - Per-alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
+- **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers, per the Calculations Reference (EMA21/50/200, MACD, RSI, UTBot, Ichimoku; new‑signal boost; quiet‑market damping)
+  - Per‑alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
+
+## 📐 Calculations Alignment
+
+This backend aligns alert evaluations with the Calculations Reference used by the frontend widgets:
+
+- Closed‑candle policy: All RSI/correlation/heatmap evaluations use closed candles; forming candles are not used in triggers.
+- RSI (14, Wilder): Computed from MT5 OHLC (Bid‑based series), matching frontend logic.
+- RSI Correlation (Dashboard parity):
+  - Mode `rsi_threshold`: Pair‑type aware mismatch (positive: OB/OS split; negative: both OB or both OS).
+  - Mode `real_correlation`: Timestamp‑aligned log‑return Pearson correlation over the rolling window. Mismatch thresholds are pair‑type aware (positive: corr < +0.25; negative: corr > −0.15). Strength labels: strong |corr|≥0.70, moderate ≥0.30, else weak.
+- Heatmap/Quantum aggregation:
+  - Indicators: EMA21/50/200, MACD(12,26,9), RSI(14), UTBot(EMA50 ± 3×ATR10), Ichimoku Clone (9/26/52).
+  - Per‑cell scoring: buy=+1, sell=−1, neutral=0; new‑signal boost ±0.25 in last K=3; quiet‑market damping halves MACD/UTBot cell scores when ATR10 is below the 5th percentile of last 200 values; clamp to [−1.25,+1.25].
+  - Aggregation: Σ_tf Σ_ind S(tf,ind)×W_tf×W_ind; Final=100×(Raw/1.25); Buy%=(Final+100)/2; Sell%=100−Buy%.
 
 ## 🚀 Quick Start
 

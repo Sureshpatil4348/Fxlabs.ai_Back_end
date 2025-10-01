@@ -11,7 +11,7 @@ from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
-from .constants import RSI_CORRELATION_PAIR_KEYS
+from .constants import RSI_CORRELATION_PAIR_KEYS, RSI_CORRELATION_PAIR_SIGNS
 
 
 configure_logging()
@@ -133,6 +133,7 @@ class RSICorrelationTrackerAlertService:
                             )
                             continue
                         s1, s2 = parts[0], parts[1]
+                        pair_sign = RSI_CORRELATION_PAIR_SIGNS.get(pair_key)
                         k = self._state_key(alert_id, pair_key, timeframe, mode)
 
                         async with pair_locks.acquire(f"{s1}:{timeframe}"):
@@ -159,11 +160,11 @@ class RSICorrelationTrackerAlertService:
                                     # Also baseline mismatch state without firing
                                     if mode == "rsi_threshold":
                                         mismatch, _, _ = await self._evaluate_rsi_threshold_mismatch(
-                                            s1, s2, timeframe, rsi_period, rsi_ob, rsi_os
+                                            s1, s2, timeframe, rsi_period, rsi_ob, rsi_os, pair_sign
                                         )
                                     else:
                                         mismatch, _, _ = await self._evaluate_real_correlation_mismatch(
-                                            s1, s2, timeframe, corr_window
+                                            s1, s2, timeframe, corr_window, pair_sign
                                         )
                                     self._last_state[k] = bool(mismatch)
                                     continue
@@ -183,11 +184,11 @@ class RSICorrelationTrackerAlertService:
 
                     if mode == "rsi_threshold":
                         mismatch, val, cond_label = await self._evaluate_rsi_threshold_mismatch(
-                            s1, s2, timeframe, rsi_period, rsi_ob, rsi_os
+                            s1, s2, timeframe, rsi_period, rsi_ob, rsi_os, pair_sign
                         )
                     else:
                         mismatch, val, cond_label = await self._evaluate_real_correlation_mismatch(
-                            s1, s2, timeframe, corr_window
+                            s1, s2, timeframe, corr_window, pair_sign
                         )
 
                 prev = self._last_state.get(k, False)
@@ -299,7 +300,7 @@ class RSICorrelationTrackerAlertService:
             )
             return []
 
-    async def _evaluate_rsi_threshold_mismatch(self, s1: str, s2: str, timeframe: str, period: int, ob: int, os_: int) -> (bool, Optional[float], Optional[str]):
+    async def _evaluate_rsi_threshold_mismatch(self, s1: str, s2: str, timeframe: str, period: int, ob: int, os_: int, pair_sign: Optional[str]) -> (bool, Optional[float], Optional[str]):
         try:
             r1 = await self._calculate_rsi_latest(s1, timeframe, period)
             r2 = await self._calculate_rsi_latest(s2, timeframe, period)
@@ -309,33 +310,36 @@ class RSICorrelationTrackerAlertService:
             pos = (r1 >= ob and r2 <= os_) or (r2 >= ob and r1 <= os_)
             # Negative mismatch: both >= OB or both <= OS
             neg = (r1 >= ob and r2 >= ob) or (r1 <= os_ and r2 <= os_)
-            cond = "positive_mismatch" if pos else ("negative_mismatch" if neg else None)
-            return (pos or neg), float((r1 + r2) / 2.0), cond
+            if pair_sign == "negative":
+                cond = "negative_mismatch" if neg else None
+                mismatch = neg
+            else:
+                cond = "positive_mismatch" if pos else None
+                mismatch = pos
+            return mismatch, float((r1 + r2) / 2.0), cond
         except Exception:
             return False, None, None
 
-    async def _evaluate_real_correlation_mismatch(self, s1: str, s2: str, timeframe: str, window: int) -> (bool, Optional[float], Optional[str]):
+    async def _evaluate_real_correlation_mismatch(self, s1: str, s2: str, timeframe: str, window: int, pair_sign: Optional[str]) -> (bool, Optional[float], Optional[str]):
         try:
             corr = await self._calculate_returns_correlation(s1, s2, timeframe, window)
             if corr is None:
                 return False, None, None
-            # Thresholds from doc example
-            # Positive pairs: correlation < +0.25 -> mismatch (use absolute if sign unknown; here keep rule simple)
-            # Negative pairs: correlation > -0.15 -> mismatch
-            # Without prior sign classification, we treat mismatch if |corr| < 0.25 (weak/unstable relation)
-            mismatch = abs(corr) < 0.25
+            # Thresholds per Calculations Reference
+            if pair_sign == "negative":
+                mismatch = corr > -0.15
+            else:
+                mismatch = corr < 0.25
             # Classify condition label for template mapping
             cond: Optional[str]
             if corr is None:
                 cond = None
-            elif corr >= 0.70:
-                cond = "strong_positive"
-            elif corr <= -0.70:
-                cond = "strong_negative"
-            elif abs(corr) <= 0.15:
-                cond = "weak_correlation"
+            elif abs(corr) >= 0.70:
+                cond = "strong"
+            elif abs(corr) >= 0.30:
+                cond = "moderate"
             else:
-                cond = "correlation_break"
+                cond = "weak"
             val = float(corr)
             log_debug(
                 logger,
@@ -398,24 +402,28 @@ class RSICorrelationTrackerAlertService:
         try:
             from .mt5_utils import get_ohlc_data
             from .models import Timeframe as TF
+            import math
             tf_map = {"5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
             mtf = tf_map.get(timeframe)
             if not mtf:
                 return None
-            count = max(window + 5, window + 1)
+            count = max(window + 50, window + 10)
             o1 = get_ohlc_data(s1, mtf, count)
             o2 = get_ohlc_data(s2, mtf, count)
             if not o1 or not o2:
                 return None
-            c1 = [b.close for b in o1][- (window + 1):]
-            c2 = [b.close for b in o2][- (window + 1):]
-            n = min(len(c1), len(c2))
-            if n < window + 1:
+            # Align by timestamp (closed-candle closes)
+            m1 = {b.time: b.close for b in o1}
+            m2 = {b.time: b.close for b in o2}
+            common_ts = sorted(set(m1.keys()) & set(m2.keys()))
+            if len(common_ts) < window + 1:
                 return None
-            c1 = c1[-n:]
-            c2 = c2[-n:]
-            r1 = [(c1[i] / c1[i - 1] - 1.0) for i in range(1, len(c1))]
-            r2 = [(c2[i] / c2[i - 1] - 1.0) for i in range(1, len(c2))]
+            sel_ts = common_ts[-(window + 1):]
+            c1 = [m1[t] for t in sel_ts]
+            c2 = [m2[t] for t in sel_ts]
+            # Log returns
+            r1 = [math.log(c1[i] / c1[i - 1]) for i in range(1, len(c1)) if c1[i - 1] > 0]
+            r2 = [math.log(c2[i] / c2[i - 1]) for i in range(1, len(c2)) if c2[i - 1] > 0]
             m = min(len(r1), len(r2), window)
             if m < 2:
                 return None

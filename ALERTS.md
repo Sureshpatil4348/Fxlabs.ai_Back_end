@@ -77,7 +77,7 @@
 
 - Evaluation and trigger insertion are performed by the backend only. The frontend solely manages alert configuration state (CRUD, validation) and must not evaluate thresholds or insert triggers.
 
-## RSI Correlation Tracker Alert (Simplified)
+## RSI Correlation Tracker Alert
 
 Single per-user alert for the RSI Correlation dashboard. User selects `mode` and timeframe.
 
@@ -87,6 +87,13 @@ Single per-user alert for the RSI Correlation dashboard. User selects `mode` and
 - **RSI Threshold**: `rsi_period` (5–50), `rsi_overbought` (60–90), `rsi_oversold` (10–40)
 - **Real Correlation**: `correlation_window` (20, 50, 90, 120)
 - **Behavior**: Insert a trigger when a correlation pair transitions into a mismatch per rules below.
+  - RSI Threshold mode: uses pair‑type aware mismatch definitions
+    - Positive pair: mismatch if one symbol is Overbought (≥OB) and the other is Oversold (≤OS)
+    - Negative pair: mismatch if both are simultaneously Overbought (≥OB) or both Oversold (≤OS)
+  - Real Correlation mode: aligns closed‑candle closes for both symbols over the last `window+1` overlapping timestamps and computes log‑return Pearson correlation
+    - Positive pair: mismatch if correlation < +0.25
+    - Negative pair: mismatch if correlation > −0.15
+    - Strength labels: strong if |corr| ≥ 0.70; moderate if ≥ 0.30; else weak
   - Closed‑bar evaluation: evaluation runs once per closed bar for each pair/timeframe using last‑closed timestamps for both symbols; re‑triggers only after the pair leaves mismatch and then re‑enters on a subsequent closed bar.
   
 Fixed correlation pair_keys evaluated:
@@ -102,13 +109,13 @@ Configuration:
 Supabase Schema: `supabase_rsi_correlation_tracker_alerts_schema.sql`
 - `rsi_correlation_tracker_alerts` and `rsi_correlation_tracker_alert_triggers` with owner RLS
 
-## Quantum Analysis (Heatmap) Tracker Alert (Simplified)
+## Quantum Analysis (Heatmap) Tracker Alert
 
 Single per-user alert for the All-in-One/Quantum Analysis heatmap. Users select up to 3 currency pairs, a mode (trading style), and thresholds. When any selected pair’s Buy% or Sell% crosses its threshold, a trigger is recorded.
 
 - Pairs: up to 3 (e.g., `EURUSD`, `GBPUSD`)
 - Mode: `scalper` or `swingTrader`
-- Thresholds: `buy_threshold` and `sell_threshold` (0–100)
+- Thresholds: `buy_threshold` and `sell_threshold` (0–100). Internally we compute the style‑weighted Final Score and convert to Buy%/Sell% per the Calculations Reference.
 - Behavior: triggers on upward crossings into threshold for either Buy% or Sell%.
 
 Configuration:
@@ -135,21 +142,25 @@ Configuration:
 Supabase Schema: `supabase_heatmap_indicator_tracker_alerts_schema.sql`
 - `heatmap_indicator_tracker_alerts` and `heatmap_indicator_tracker_alert_triggers` with owner RLS
 
-Implementation details (current backend):
-- Heatmap/Quantum Buy%/Sell% computation now uses real MT5 OHLC data:
-  - Style-to-timeframe mapping: scalper → 15M, swingTrader → 4H, default → 1H.
-  - Buy% := RSI(14), Sell% := 100 − RSI(14). With this mapping, typical RSI-like thresholds are Buy≥70 and Sell≤30.
-  - Re‑arm policy: Buy side rearms after RSI drops below (buy_threshold − 5); Sell side rearms after RSI rises above (sell_threshold + 5).
+Implementation details (backend alignment with Calculations Reference):
+- Heatmap/Quantum Buy%/Sell% aggregation:
+  - Indicators per timeframe: EMA21, EMA50, EMA200, MACD(12,26,9), RSI(14), UTBot(EMA50 ± 3×ATR10), Ichimoku Clone (9/26/52).
+  - New‑signal boost: detection over last K=3 closed candles per indicator (close/EMA cross, MACD cross, RSI 50/30/70 crossings, UTBot flip, Ichimoku TK cross/cloud breakout).
+  - Quiet‑market safety: compute ATR10 series; if current ATR is below the 5th percentile of the last 200 values, halve MACD and UTBot cell scores on that timeframe.
+  - Per‑cell scoring: buy=+1, sell=−1, neutral=0; add ±0.25 on new signals; clamp in [−1.25,+1.25].
+  - Weights: trading‑style timeframe weights (scalper: 5M/15M/30M/1H/4H; swingTrader: 30M/1H/4H/1D) and equal indicator weights by default.
+  - Aggregation: Raw = Σ_tf Σ_ind S(tf,ind)×W_tf×W_ind; Final = 100×(Raw/1.25); Buy%=(Final+100)/2; Sell%=100−Buy%.
+  - Re‑arm policy: Buy side rearms after Buy% drops below (buy_threshold−5); Sell side rearms after Buy% rises above (sell_threshold+5). Triggers fire on crossing into thresholds.
 - Indicator Tracker signals now derive from real OHLC:
   - EMA21/EMA50/EMA200: BUY on close crossing above EMA; SELL on crossing below.
   - RSI: BUY on RSI(14) crossing up through 50; SELL on crossing down through 50.
   - Unknown indicators resolve to neutral (no trigger).
 
-Why you might not see non-RSI triggers yet
+Why you might not see triggers yet
 - No active alerts: Ensure rows exist in Supabase for `heatmap_tracker_alerts` and `heatmap_indicator_tracker_alerts` with `is_active=true` and non-empty `pairs` (max 3).
-- Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. With RSI-based Buy%, some symbols may sit mid-band for long periods on higher TFs.
+- Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. With multi‑indicator aggregation, Final can concentrate near neutral on choppy days, especially in swingTrader style.
 - Arm/disarm gating: Buy disarms after a BUY trigger and rearms once RSI < (buy_threshold−5); Sell disarms after a SELL trigger and rearms once RSI > (sell_threshold+5).
-- Closed-bar cadence: Evaluation runs every 5 minutes but uses closed bars per TF; low TFs see more opportunities.
+- Closed‑bar cadence: Evaluation runs every 5 minutes but uses closed bars per TF; low TFs see more opportunities.
 
  
 

@@ -49,3 +49,27 @@ RSI_CORRELATION_PAIR_KEYS: List[str] = [
 ]
 
 
+# Sign classification for correlation pairs as per Calculations Reference
+# Values: 'positive' or 'negative'
+RSI_CORRELATION_PAIR_SIGNS = {
+    # Negative pairs
+    "EURUSDm_USDCHFm": "negative",
+    "GBPUSDm_USDCHFm": "negative",
+    "USDJPYm_EURUSDm": "negative",
+    "USDJPYm_GBPUSDm": "negative",
+    "USDCADm_AUDUSDm": "negative",
+    "USDCHFm_AUDUSDm": "negative",
+    "XAUUSDm_USDJPYm": "negative",
+    # Positive pairs
+    "EURUSDm_GBPUSDm": "positive",
+    "EURUSDm_AUDUSDm": "positive",
+    "EURUSDm_NZDUSDm": "positive",
+    "GBPUSDm_AUDUSDm": "positive",
+    "AUDUSDm_NZDUSDm": "positive",
+    "USDCHFm_USDJPYm": "positive",
+    "XAUUSDm_XAGUSDm": "positive",
+    "XAUUSDm_EURUSDm": "positive",
+    "BTCUSDm_ETHUSDm": "positive",
+    "BTCUSDm_XAUUSDm": "positive",
+}
+
