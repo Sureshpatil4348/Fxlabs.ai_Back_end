@@ -238,6 +238,18 @@ After each alert cache refresh, the server logs a categories summary and a full 
 ```
 
 Additionally:
+
+**Troubleshooting: SendGrid 403 Forbidden (intermittent)**
+- Symptom: Logs show `❌ Error sending ... email: HTTP Error 403: Forbidden` for some sends but not others.
+- Likely causes and fixes:
+  - Sender identity mismatch: Ensure `FROM_EMAIL` matches a verified Single Sender or an authenticated domain in SendGrid. Use `alerts@fxlabs.ai` unless you’ve authenticated a subdomain. The service default now aligns to `alerts@fxlabs.ai`.
+  - API key scopes: Confirm `SENDGRID_API_KEY` includes `Mail Send` permission. Regenerate the key if needed.
+  - IP Access Management: If enabled, whitelist the server IP to avoid 403.
+  - Region: If your account is EU-only, ensure your environment targets the EU endpoint (contact SendGrid support/docs for region setup). 
+- Why it appears intermittent:
+  - Different shells/processes may pick different env values. If `FROM_EMAIL` isn’t explicitly set, a fallback might be used. Set `FROM_EMAIL=alerts@fxlabs.ai` in `.env` to eliminate ambiguity.
+- What the app logs on failure:
+  - Status code, trimmed response body, masked API key, and from/to addresses to aid diagnosis without leaking secrets.
 - A structured log line with per-category counts is emitted as `app.alert_cache | alert_cache_categories` for observability.
 - For each alert in the listing, a concise config snapshot is printed per type:
   - RSI Tracker: `tf`, `period`, `ob` (overbought), `os` (oversold)

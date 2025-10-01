@@ -42,8 +42,9 @@ class EmailService:
     def __init__(self):
         # Load from environment-driven config
         self.sendgrid_api_key = (SENDGRID_API_KEY or os.environ.get("SENDGRID_API_KEY", "")).strip()
-        # Prefer authenticated subdomain sender for DMARC alignment (example: alerts@alerts.fxlabs.ai)
-        self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@alerts.fxlabs.ai")).strip()
+        # Default to verified single sender unless overridden via env/tenant
+        # Aligns with config.env.example and README guidance
+        self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@fxlabs.ai")).strip()
         self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs Alerts")).strip()
         # Tenant-aware timezone for all email timestamps (FXLabs → IST by default)
         self.tz_name = (DAILY_TZ_NAME or "Asia/Kolkata")
@@ -622,6 +623,62 @@ class EmailService:
             "   Values (masked): SENDGRID_API_KEY=%s, FROM_EMAIL=%s, FROM_NAME=%s",
             vals.get("SENDGRID_API_KEY", ""), vals.get("FROM_EMAIL", ""), vals.get("FROM_NAME", ""),
         )
+    
+    def _log_sendgrid_exception(self, context: str, error: Exception, to_email: Optional[str] = None) -> None:
+        """Log structured details for SendGrid HTTP errors without leaking secrets."""
+        try:
+            # Try to import sendgrid's HTTPError for richer details
+            from python_http_client.exceptions import HTTPError  # type: ignore
+        except Exception:
+            HTTPError = tuple()  # fallback to never matching
+
+        status = getattr(error, "status_code", None)
+        body = getattr(error, "body", None)
+        headers = getattr(error, "headers", None)
+
+        # If the exception provides a dict view, include masked summary
+        details: Dict[str, Any] = {}
+        try:
+            to_dict = getattr(error, "to_dict", None)
+            if callable(to_dict):
+                details = to_dict()
+        except Exception:
+            pass
+
+        try:
+            masked_key = self._mask(self.sendgrid_api_key)
+            logger.error("   SendGrid diagnostics → status=%s, from=%s, to=%s, key=%s", status, self.from_email, (to_email or ""), masked_key)
+        except Exception:
+            pass
+
+        # Log response body (trimmed)
+        try:
+            if body:
+                if isinstance(body, (bytes, bytearray)):
+                    preview = body[:512].decode(errors="ignore")
+                else:
+                    preview = str(body)[:512]
+                logger.error("   SendGrid response body (trimmed): %s", preview)
+        except Exception:
+            pass
+
+        # Heuristics for common 403 causes
+        try:
+            hint = None
+            text = ""
+            if body:
+                text = body.decode(errors="ignore") if isinstance(body, (bytes, bytearray)) else str(body)
+            if (status == 403) or ("403" in str(error)):
+                if "verified Sender Identity" in text or "from address does not match" in text:
+                    hint = f"From address is not a verified Sender Identity in SendGrid. Current FROM_EMAIL={self.from_email}. Verify Single Sender or authenticate domain."
+                elif "not have permission" in text or "not authorized" in text:
+                    hint = "API key likely missing 'Mail Send' permission. Regenerate with 'Full Access' or at least 'Mail Send'."
+                elif "ip" in text and "access" in text:
+                    hint = "IP Access Management may be enabled. Whitelist the server IP in SendGrid (Settings → IP Access Management)."
+            if hint:
+                logger.error("   Hint: %s", hint)
+        except Exception:
+            pass
         logger.warning(
             "   Hint: copy config.env.example to .env and fill SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME; python-dotenv auto-loads .env"
         )
@@ -702,10 +759,19 @@ class EmailService:
                 return True
             else:
                 logger.error(f"❌ Failed to send email: status={response.status_code}")
+                try:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+                except Exception:
+                    pass
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Error sending heatmap alert email: {e}")
+            self._log_sendgrid_exception(context="heatmap", error=e, to_email=user_email)
             return False
 
     async def send_heatmap_tracker_alert(
@@ -750,9 +816,18 @@ class EmailService:
                 return True
             else:
                 logger.error(f"❌ Failed to send heatmap tracker alert email: status={response.status_code}")
+                try:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+                except Exception:
+                    pass
                 return False
         except Exception as e:
             logger.error(f"❌ Error sending heatmap tracker alert email: {e}")
+            self._log_sendgrid_exception(context="heatmap-tracker", error=e, to_email=user_email)
             return False
     
     def _build_heatmap_alert_email_body(
@@ -1059,6 +1134,16 @@ class EmailService:
             response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
             
             logger.info(f"📊 SendGrid response: Status {response.status_code}")
+            try:
+                # Log error body for non-2xx responses
+                if response.status_code not in [200, 201, 202]:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+            except Exception:
+                pass
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ RSI alert email sent successfully to {user_email}")
@@ -1080,6 +1165,7 @@ class EmailService:
             logger.error(f"❌ Error sending RSI alert email: {e}")
             logger.error(f"   User: {user_email}")
             logger.error(f"   Alert: {alert_name}")
+            self._log_sendgrid_exception(context="rsi", error=e, to_email=user_email)
             return False
 
     async def send_custom_indicator_alert(
@@ -1123,9 +1209,18 @@ class EmailService:
                 return True
             else:
                 logger.error(f"❌ Failed to send custom indicator alert email: status={response.status_code}")
+                try:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+                except Exception:
+                    pass
                 return False
         except Exception as e:
             logger.error(f"❌ Error sending custom indicator alert email: {e}")
+            self._log_sendgrid_exception(context="custom-indicator", error=e, to_email=user_email)
             return False
     
     def _build_rsi_alert_email_body(
@@ -1305,10 +1400,19 @@ class EmailService:
                 return True
             else:
                 logger.error(f"❌ Failed to send RSI correlation alert email: status={response.status_code}")
+                try:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+                except Exception:
+                    pass
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Error sending RSI correlation alert email: {e}")
+            self._log_sendgrid_exception(context="rsi-correlation", error=e, to_email=user_email)
             return False
     
     def _build_rsi_correlation_alert_email_body(

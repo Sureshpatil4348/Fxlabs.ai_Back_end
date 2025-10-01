@@ -1033,6 +1033,22 @@ Expected logs when working:
   - Verify your SendGrid sender: Single Sender verification or Domain Authentication, otherwise SendGrid returns 400/403 and emails won’t send.
 - Where to set: copy `config.env.example` to `.env` and fill values, or set env vars directly in your deployment.
 
+### "HTTP Error 403: Forbidden" during send (intermittent)
+- Symptom: Logs show `❌ Error sending ... email: HTTP Error 403: Forbidden` while other emails sometimes succeed.
+- Most common root causes:
+  - Sender identity mismatch: `FROM_EMAIL` is not a verified Single Sender or part of an authenticated domain. If only `alerts@fxlabs.ai` is verified, sending from `alerts@alerts.fxlabs.ai` will 403. The code now defaults to `alerts@fxlabs.ai` when unset.
+  - API key scope too narrow: The `SENDGRID_API_KEY` lacks the `Mail Send` permission. Regenerate with Full Access or include `Mail Send`.
+  - IP Access Management: If enabled in SendGrid, requests from non-whitelisted IPs are blocked with 403. Whitelist the server IP(s).
+  - Region mismatch: EU-only accounts must use the EU endpoint; ensure your environment uses the correct SendGrid region (contact SendGrid if unsure).
+- Why intermittent? Different processes or shells might pick up different env vars. For example, one run uses a proper `FROM_EMAIL` from `.env`, while another falls back to the code default. Ensure `.env` contains explicit `FROM_EMAIL=alerts@fxlabs.ai` and that you always start via the provided launchers.
+- What we log now (for failures): status, a trimmed response body, masked API key, and `from/to` addresses to speed up diagnosis without leaking secrets.
+- Quick checklist:
+  - Confirm `.env` has `SENDGRID_API_KEY`, `FROM_EMAIL=alerts@fxlabs.ai`, `FROM_NAME`.
+  - Verify the sender identity in SendGrid (Single Sender) or authenticate the `fxlabs.ai` domain.
+  - If you use IP Access Management, add the server IP.
+  - In SendGrid → API Keys, confirm the key includes `Mail Send`.
+  - Run `python send_test_email.py you@example.com` (in an environment where running is allowed) to verify the path end-to-end.
+
 #### Email Configuration Diagnostics (enhanced logs)
 When email sending is disabled, the service now emits structured diagnostics showing what’s missing or invalid (without leaking secrets). Example:
 
