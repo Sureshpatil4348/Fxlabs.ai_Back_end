@@ -1527,34 +1527,12 @@ class EmailService:
     ) -> str:
         return f"""
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FxLabs • News Reminder</title></head>
-<body style="margin:0;background:#F5F7FB;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FB;"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;">
-  <tr><td style="padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;">Starts in 5 Minutes</td></tr>
-  <tr><td style="padding:20px;">
-    <div style="font-size:16px;margin-bottom:6px;"><strong>{event_title}</strong></div>
-    <div style="font-size:13px;color:#374151;margin-bottom:12px;">
-      Time: {event_time_local} • Impact: <strong>{impact}</strong>
-    </div>
-    <table role="presentation" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;width:100%;">
-      <tr style="background:#F9FAFB;color:#6B7280;font-size:12px;">
-        <td style="padding:10px">Previous</td><td style="padding:10px">Forecast</td><td style="padding:10px">Expected</td><td style="padding:10px">Bias</td>
-      </tr>
-      <tr>
-        <td style="padding:10px;border-top:1px solid #E5E7EB;">{previous}</td>
-        <td style="padding:10px;border-top:1px solid #E5E7EB;">{forecast}</td>
-        <td style="padding:10px;border-top:1px solid #E5E7EB;">{expected}</td>
-        <td style="padding:10px;border-top:1px solid #E5E7EB;"><strong>{bias}</strong></td>
-      </tr>
-    </table>
-    <div style="margin-top:14px;padding:12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:10px;font-size:13px;">
-      Volatility risk. Consider spreads, slippage and cooldown windows.
-    </div>
-  </td></tr>
-  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>
-</table>
-</td></tr></table>
+<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • News Reminder</title></head>
+<body style=\"margin:0;background:#F5F7FB;\">\n
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('News', self.tz_name)}\n
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Starts in 5 Minutes</td></tr>\n  <tr><td style=\"padding:20px;\">\n    <div style=\"font-size:16px;margin-bottom:6px;\"><strong>{event_title}</strong></div>\n    <div style=\"font-size:13px;color:#374151;margin-bottom:12px;\">\n      Time: {event_time_local} • Impact: <strong>{impact}</strong>\n    </div>\n    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;width:100%;\">\n      <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">\n        <td style=\"padding:10px\">Previous</td><td style=\"padding:10px\">Forecast</td><td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">Bias</td>\n      </tr>\n      <tr>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{previous}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{forecast}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{expected}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\"><strong>{bias}</strong></td>\n      </tr>\n    </table>\n    <div style=\"margin-top:14px;padding:12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:10px;font-size:13px;\">\n      Volatility risk. Consider spreads, slippage and cooldown windows.\n    </div>\n  </td></tr>\n</table>\n
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n
+</td></tr></table>\n
 </body></html>
         """
 

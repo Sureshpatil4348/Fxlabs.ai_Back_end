@@ -223,6 +223,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 #### News Reminder Behavior (High‑Impact Only)
 - The 5‑minute news reminder now filters to only AI‑normalized high‑impact items (`impact == "high"`). Medium/low impact items are skipped.
 - Source impact values and AI analysis are normalized to `high|medium|low`; only `high` qualifies for reminders.
+ - Branding: News reminder emails now use the same unified green header and common footer as RSI/Correlation emails (logo + date/time in header; single disclaimer footer).
 
 #### Auth Fetch Logging (Verbose)
 - Start: `daily_auth_fetch_start | page: 1 | per_page: 1000`
