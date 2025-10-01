@@ -383,22 +383,45 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
     print(f"🔎 [analyze] Start analysis for: '{(news_item.headline or '')[:60]}'")
     # Ask Perplexity to respond with a strict JSON payload to avoid ambiguous wording
     prompt = (
-        "Analyze the following economic news for Forex trading impact.\n"
-        f"Currency: {news_item.currency}\n"
-        f"News: {news_item.headline}\n"
-        f"Time: {news_item.time or 'N/A'}\n"
-        f"Forecast: {news_item.forecast or 'N/A'}\n"
-        f"Previous: {news_item.previous or 'N/A'}\n"
-        f"Source impact hint: {(news_item.impact or 'N/A')}\n\n"
-        "The data I provided you might not have the actual data if the event has not happened yet (will happen or be published in future)\n"
-        "Use live internet search to get latest data, validate and augment missing info the latest market context before answering.\n"
-        "Respond ONLY with a JSON object using this exact schema (no extra text):\n"
+        "You are a Forex macro event classifier used PRE-RELEASE (before the data is published). Output a JSON object:\n"
         "{\n"
         "  \"effect\": \"bullish|bearish|neutral\",\n"
         "  \"impact\": \"high|medium|low\",\n"
         "  \"explanation\": \"<max 2 sentences>\"\n"
         "}\n"
-        "Rules: values for effect/impact must be lowercase and one of the allowed options."
+        "Rules:\n"
+        "- lowercase only\n"
+        "- effect ∈ {bullish,bearish,neutral}; impact ∈ {high,medium,low}\n"
+        "- You are evaluating BEFORE the event publishes. Do NOT guess the actual number.\n\n"
+        "INPUT\n"
+        f"Currency: {news_item.currency}\n"
+        f"News: {news_item.headline}\n"
+        f"Time: {news_item.time or 'N/A'}\n"
+        f"Forecast: {news_item.forecast or 'N/A'}\n"
+        f"Previous: {news_item.previous or 'N/A'}\n"
+        f"Source impact hint: {news_item.impact or 'N/A'}\n\n"
+        "IMPACT (magnitude, not direction)\n"
+        "1) TRUST THE SOURCE: If Source impact hint (e.g., High/Medium/Low) is present, mirror it exactly (lowercased). Do NOT downgrade CPI, PPI, Core CPI, NFP/Jobs, Unemployment Rate, Central Bank Rate/Statement/Press Conf, GDP (adv/prelim/final), Retail Sales, ISM/PMIs, or similar top-tier events based on commentary.\n"
+        "2) ALWAYS-HIGH SAFETY NET (when hint missing/unknown):\n"
+        "   Treat these families as \"high\" by default:\n"
+        "   - CPI (headline/core), PPI (headline/core), PCE (headline/core)\n"
+        "   - Central bank rate decisions/statements/pressers/minutes (FOMC/ECB/BoE/BoJ/BoC/RBA/RBNZ/SNB, etc.)\n"
+        "   - Labor market: NFP/Employment Change, Unemployment Rate, Average/Hourly Earnings\n"
+        "   - GDP (QoQ/YoY; any vintage), Retail Sales (headline/core/control), ISM/Markit PMIs (Manuf/Services/Composite)\n"
+        "3) DEFAULTS: If not covered above, classify as:\n"
+        "   - \"medium\" for tier-2 macro (e.g., durable goods ex-transport, housing starts, trade balance, consumer confidence)\n"
+        "   - \"low\" for tertiary/regional/small surveys, auctions, minor reports\n"
+        "   Time proximity and media hype DO NOT change impact.\n\n"
+        "EFFECT (direction for the listed Currency only)\n"
+        "4) PRE-RELEASE MODE: If actual is not yet published (your default context), set effect=\"neutral\".\n"
+        "   - Rationale belongs only in the explanation (e.g., \"Pre-release: direction depends on surprise vs forecast.\")\n"
+        "5) NEVER infer the actual or claim a directional move before the release.\n"
+        "   - If you see speculative previews or analyst chatter, still keep effect=\"neutral\".\n\n"
+        "DATA HYGIENE (pre-release)\n"
+        "6) You may validate schedule, forecast/consensus, and event type from reliable calendars or official publishers, but do NOT treat previews as actuals.\n"
+        "7) Output ONLY the JSON object—no extra text.\n\n"
+        "EXPLANATION WRITING\n"
+        "8) ≤2 sentences. Mention why the impact tier is chosen (FF hint or \"always-high\" family). If pre-release, explicitly note that direction is neutral pending the surprise.\n"
     )
     url = "https://api.perplexity.ai/chat/completions"
     headers = {
@@ -533,15 +556,18 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                         explanation = None
 
                         parsed = _extract_json_block(analysis_text)
+                        got_effect_from_json = False
                         if parsed and isinstance(parsed, dict):
-                            effect = _normalize_effect(parsed.get("effect"))
+                            eff_raw = parsed.get("effect")
+                            if eff_raw is not None:
+                                effect = _normalize_effect(eff_raw)
+                                got_effect_from_json = True
                             impact_value = _normalize_impact(parsed.get("impact"))
                             explanation = parsed.get("explanation")
 
-                        if impact_value is None or effect == "neutral":
-                            # Fallback: regex extraction from free text
-                            lt = analysis_text.lower()
-                            # Effect
+                        # Fallback: only when field missing from JSON or JSON absent
+                        lt = analysis_text.lower()
+                        if not got_effect_from_json:
                             m_eff = re.search(r"effect\s*[:\-]\s*\"?([a-z]+)\"?", lt)
                             if m_eff:
                                 effect = _normalize_effect(m_eff.group(1)) or effect
@@ -551,12 +577,12 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                                 elif "bearish" in lt:
                                     effect = "bearish"
 
-                            # Impact
+                        # Impact fallback independent of effect neutrality
+                        if impact_value is None:
                             m_imp = re.search(r"impact\s*[:\-]\s*\"?([a-z ]+)\"?", lt)
                             if m_imp:
                                 impact_value = _normalize_impact(m_imp.group(1)) or impact_value
                             if impact_value is None:
-                                # synonym sweep
                                 if any(w in lt for w in [
                                     "high impact", "significant", "strong impact", "highly volatile",
                                     "highly impactful", "very high", "major", "substantial"
@@ -1144,4 +1170,3 @@ async def news_reminder_scheduler():
         except Exception as e:
             log_error(logger, "news_reminder_scheduler_error", error=str(e))
         await asyncio.sleep(60)
-
