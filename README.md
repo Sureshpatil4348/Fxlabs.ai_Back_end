@@ -781,18 +781,17 @@ Notes:
 - Removed fields: `currencies_impacted`, `currency_pairs`
 
 Model behavior:
-- The Perplexity prompt enforces pre‑release evaluation, strict lowercase enumerations, and JSON‑only output. Full prompt used:
+- The Perplexity prompt enforces pre‑release evaluation with taxonomy‑based impact and policy‑aware directional bias. Full prompt used:
   ```
-  You are a Forex macro event classifier used PRE-RELEASE (before the data is published). Output a JSON object:
+  You are a Forex macro event classifier used BEFORE an economic release. Output exactly:
   {
     "effect": "bullish|bearish|neutral",
     "impact": "high|medium|low",
     "explanation": "<max 2 sentences>"
   }
-  Rules:
-  - lowercase only
-  - effect ∈ {bullish,bearish,neutral}; impact ∈ {high,medium,low}
-  - You are evaluating BEFORE the event publishes. Do NOT guess the actual number.
+  Constraints:
+  - Lowercase enums only.
+  - No extra fields or text.
 
   INPUT
   Currency: {news_item.currency}
@@ -802,31 +801,27 @@ Model behavior:
   Previous: {news_item.previous or 'N/A'}
   Source impact hint: {news_item.impact or 'N/A'}
 
-  IMPACT (magnitude, not direction)
-  1) TRUST THE SOURCE: If Source impact hint (e.g., High/Medium/Low) is present, mirror it exactly (lowercased). Do NOT downgrade CPI, PPI, Core CPI, NFP/Jobs, Unemployment Rate, Central Bank Rate/Statement/Press Conf, GDP (adv/prelim/final), Retail Sales, ISM/PMIs, or similar top-tier events based on commentary.
-  2) ALWAYS-HIGH SAFETY NET (when hint missing/unknown):
-     Treat these families as "high" by default:
-     - CPI (headline/core), PPI (headline/core), PCE (headline/core)
-     - Central bank rate decisions/statements/pressers/minutes (FOMC/ECB/BoE/BoJ/BoC/RBA/RBNZ/SNB, etc.)
-     - Labor market: NFP/Employment Change, Unemployment Rate, Average/Hourly Earnings
-     - GDP (QoQ/YoY; any vintage), Retail Sales (headline/core/control), ISM/Markit PMIs (Manuf/Services/Composite)
-  3) DEFAULTS: If not covered above, classify as:
-     - "medium" for tier-2 macro (e.g., durable goods ex-transport, housing starts, trade balance, consumer confidence)
-     - "low" for tertiary/regional/small surveys, auctions, minor reports
-     Time proximity and media hype DO NOT change impact.
+  A) IMPACT (magnitude tier, not direction)
+  1) If Source impact hint ∈ {High, Medium, Low}, mirror it (lowercased) UNLESS it contradicts the taxonomy below by >1 tier; in that case, prefer the taxonomy.
+  2) Taxonomy by EVENT FAMILY (based on what historically moves FX):
+     TIER-1 (default "high"):
+     - CPI (headline/core), PCE (US), central-bank rate decisions/statements/pressers/minutes, major labor (NFP/Employment Change, Unemployment Rate, Average/Hourly Earnings), GDP “advance/flash”, ISM PMIs (US), Flash PMIs (EZ/UK), Retail Sales (US/UK/CA headline; US control group). 
+     TIER-2 (default "medium"):
+     - PPI, GDP “second/final”, Retail Sales ex-autos (non-US), durable goods (ex-transport), trade balance, housing starts/building permits, consumer/business confidence, final PMIs.
+     TIER-3 (default "low"):
+     - Regional/small surveys, auctions, secondary indices with limited FX pass-through.
+  3) Currency-bloc adjustment:
+     - For G10 (USD, EUR, JPY, GBP, AUD, NZD, CAD, CHF, SEK, NOK): keep tiers as above.
+     - For non-G10/minor economies: downgrade one tier unless the pair is commonly traded against USD/EUR and the event is TIER-1.
+  4) Do NOT upgrade events due to hype or proximity in time. Color codes indicate tiers but don’t override taxonomy.
 
-  EFFECT (direction for the listed Currency only)
-  4) PRE-RELEASE MODE: If actual is not yet published (your default context), set effect="neutral".
-     - Rationale belongs only in the explanation (e.g., "Pre-release: direction depends on surprise vs forecast.")
-  5) NEVER infer the actual or claim a directional move before the release.
-     - If you see speculative previews or analyst chatter, still keep effect="neutral".
+  B) EFFECT (directional bias for the LISTED currency, pre-release)
+  5) Do NOT guess the actual. Infer bias from forecast vs prior, policy stance, and trend (inflation/labor/growth/central-bank guidance).
+  6) If genuinely mixed/flat, set effect="neutral". Direction refers to the listed currency, not the pair.
 
-  DATA HYGIENE (pre-release)
-  6) You may validate schedule, forecast/consensus, and event type from reliable calendars or official publishers, but do NOT treat previews as actuals.
-  7) Output ONLY the JSON object—no extra text.
-
-  EXPLANATION WRITING
-  8) ≤2 sentences. Mention why the impact tier is chosen (FF hint or "always-high" family). If pre-release, explicitly note that direction is neutral pending the surprise.
+  C) DATA HYGIENE (pre-release)
+  8) You may look up consensus/stance from reliable sources. Do NOT treat previews as actuals.
+  9) EXPLANATION ≤2 sentences: (i) impact tier rationale, (ii) bias rationale. No filler.
   ```
 - Parsing first attempts to load the JSON. If unavailable, it falls back to regex and synonym detection.
 - `impact` is normalized from synonyms (e.g., significant→high, moderate→medium, minor→low), then falls back to the source `impact` field if present; defaults to `medium` if still ambiguous.
