@@ -12,6 +12,7 @@ from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
 from .constants import RSI_CORRELATION_PAIR_KEYS, RSI_CORRELATION_PAIR_SIGNS
+from .rsi_utils import calculate_rsi_latest, closed_closes
 
 
 configure_logging()
@@ -365,38 +366,12 @@ class RSICorrelationTrackerAlertService:
             if not mtf:
                 return None
             ohlc = get_ohlc_data(symbol, mtf, period + 10)
-            if not ohlc or len(ohlc) < period + 1:
+            closed = closed_closes(ohlc)
+            if len(closed) < period + 1:
                 return None
-            closes = [b.close for b in ohlc]
-            series = self._rsi_series(closes, period)
-            return series[-1] if series else None
+            return calculate_rsi_latest(closed, period)
         except Exception:
             return None
-
-    def _rsi_series(self, closes: List[float], period: int) -> List[float]:
-        n = len(closes)
-        if n < period + 1:
-            return []
-        deltas = [closes[i] - closes[i - 1] for i in range(1, n)]
-        gains = [max(d, 0.0) for d in deltas]
-        losses = [max(-d, 0.0) for d in deltas]
-        avg_gain = sum(gains[:period]) / period
-        avg_loss = sum(losses[:period]) / period
-        rsis: List[float] = []
-        if avg_loss == 0:
-            rsis.append(100.0)
-        else:
-            rs = avg_gain / avg_loss
-            rsis.append(100 - (100 / (1 + rs)))
-        for i in range(period, len(deltas)):
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-            if avg_loss == 0:
-                rsis.append(100.0)
-            else:
-                rs = avg_gain / avg_loss
-                rsis.append(100 - (100 / (1 + rs)))
-        return rsis
 
     async def _calculate_returns_correlation(self, s1: str, s2: str, timeframe: str, window: int) -> Optional[float]:
         try:

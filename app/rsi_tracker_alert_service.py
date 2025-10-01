@@ -12,6 +12,7 @@ from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
 from .constants import RSI_SUPPORTED_SYMBOLS
+from .rsi_utils import calculate_rsi_series, closed_closes
 
 
 configure_logging()
@@ -99,10 +100,11 @@ class RSITrackerAlertService:
             mt5_tf = tf_map.get(timeframe)
             if not mt5_tf:
                 return None
-            bars = get_ohlc_data(symbol, mt5_tf, 2)
-            if not bars:
-                return None
-            return int(bars[-1].time)
+            bars = get_ohlc_data(symbol, mt5_tf, 3)
+            for bar in reversed(bars):
+                if getattr(bar, "is_closed", None) is not False:
+                    return int(bar.time)
+            return None
         except Exception:
             return None
 
@@ -124,44 +126,15 @@ class RSITrackerAlertService:
                 return None
             count = max(period + bars_needed + 2, period + 5)
             ohlc_data = get_ohlc_data(symbol, mt5_tf, count)
-            if not ohlc_data or len(ohlc_data) < period + 1:
+            closed = closed_closes(ohlc_data)
+            if len(closed) < period + 1:
                 return None
-            closes = [bar.close for bar in ohlc_data]
-            series = self._calculate_rsi_series(closes, period)
+            series = calculate_rsi_series(closed, period)
             if not series:
                 return None
             return series[-bars_needed:] if len(series) >= bars_needed else series
         except Exception:
             return None
-
-    def _calculate_rsi_series(self, closes: List[float], period: int) -> List[float]:
-        n = len(closes)
-        if n < period + 1:
-            return []
-        deltas = [closes[i] - closes[i - 1] for i in range(1, n)]
-        gains = [max(d, 0.0) for d in deltas]
-        losses = [max(-d, 0.0) for d in deltas]
-
-        avg_gain = sum(gains[:period]) / period
-        avg_loss = sum(losses[:period]) / period
-
-        rsis: List[float] = []
-        if avg_loss == 0:
-            rsis.append(100.0)
-        else:
-            rs = avg_gain / avg_loss
-            rsis.append(100 - (100 / (1 + rs)))
-
-        for i in range(period, len(deltas)):
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-            if avg_loss == 0:
-                rsis.append(100.0)
-            else:
-                rs = avg_gain / avg_loss
-                rsis.append(100 - (100 / (1 + rs)))
-
-        return rsis
 
     async def _detect_rsi_crossing(
         self,

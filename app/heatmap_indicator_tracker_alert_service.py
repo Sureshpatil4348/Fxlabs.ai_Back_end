@@ -11,6 +11,7 @@ from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
+from .rsi_utils import calculate_rsi_series, closed_closes
 
 
 configure_logging()
@@ -296,23 +297,6 @@ class HeatmapIndicatorTrackerAlertService:
                     ema_vals.append(price * k + ema_vals[-1] * (1 - k))
                 return ema_vals
 
-            def rsi_series(cl: list, period: int = 14) -> list:
-                n = len(cl)
-                if n < period + 1:
-                    return []
-                deltas = [cl[i] - cl[i - 1] for i in range(1, n)]
-                gains = [max(d, 0.0) for d in deltas]
-                losses = [max(-d, 0.0) for d in deltas]
-                avg_gain = sum(gains[:period]) / period
-                avg_loss = sum(losses[:period]) / period
-                rsis: list = []
-                rsis.append(100.0 if avg_loss == 0 else 100 - (100 / (1 + (avg_gain / avg_loss))))
-                for i in range(period, len(deltas)):
-                    avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-                    avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-                    rsis.append(100.0 if avg_loss == 0 else 100 - (100 / (1 + (avg_gain / avg_loss))))
-                return rsis
-
             if ind in ("ema21", "ema50", "ema200"):
                 p = int(ind.replace("ema", ""))
                 if p < 2:
@@ -334,7 +318,8 @@ class HeatmapIndicatorTrackerAlertService:
                 return "neutral"
 
             if ind == "rsi":
-                rsis = rsi_series(closes, 14)
+                closes = closed_closes(ohlc)
+                rsis = calculate_rsi_series(closes, 14)
                 if len(rsis) < 2:
                     return "neutral"
                 r_prev, r_curr = rsis[-2], rsis[-1]

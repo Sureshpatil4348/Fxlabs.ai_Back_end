@@ -11,6 +11,7 @@ from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
+from .rsi_utils import calculate_rsi_series
 
 
 configure_logging()
@@ -308,23 +309,6 @@ class HeatmapTrackerAlertService:
                     ema_vals.append(price * k + ema_vals[-1] * (1 - k))
                 return ema_vals
 
-            def rsi_series(cl: list, period: int = 14) -> list:
-                n = len(cl)
-                if n < period + 1:
-                    return []
-                deltas = [cl[i] - cl[i - 1] for i in range(1, n)]
-                gains = [max(d, 0.0) for d in deltas]
-                losses = [max(-d, 0.0) for d in deltas]
-                avg_gain = sum(gains[:period]) / period
-                avg_loss = sum(losses[:period]) / period
-                rsis: list = []
-                rsis.append(100.0 if avg_loss == 0 else 100 - (100 / (1 + (avg_gain / avg_loss))))
-                for i in range(period, len(deltas)):
-                    avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-                    avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-                    rsis.append(100.0 if avg_loss == 0 else 100 - (100 / (1 + (avg_gain / avg_loss))))
-                return rsis
-
             def macd_series(cl: list, fast: int = 12, slow: int = 26, signal: int = 9):
                 if len(cl) < slow + signal:
                     return [], [], []
@@ -388,14 +372,18 @@ class HeatmapTrackerAlertService:
                 closes = [b.close for b in bars]
                 highs = [b.high for b in bars]
                 lows = [b.low for b in bars]
+                closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
+                closed_closes_list = [b.close for b in closed_bars]
+                closed_highs = [b.high for b in closed_bars]
+                closed_lows = [b.low for b in closed_bars]
 
                 # Precompute series
                 ema21 = ema_series(closes, 21)
                 ema50 = ema_series(closes, 50)
                 ema200 = ema_series(closes, 200)
                 macd_line, macd_sig, _ = macd_series(closes)
-                rsis = rsi_series(closes, 14)
-                atrs = atr_series(highs, lows, closes, 10)
+                rsis = calculate_rsi_series(closed_closes_list, 14)
+                atrs = atr_series(closed_highs, closed_lows, closed_closes_list, 10)
 
                 def last_cross(seq_a: list, seq_b: list) -> Optional[int]:
                     # return bars ago where a crossed b (1..K); None if no cross

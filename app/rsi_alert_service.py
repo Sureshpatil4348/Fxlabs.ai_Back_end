@@ -11,6 +11,7 @@ from .alert_logging import log_debug, log_info, log_warning, log_error
 from .email_service import email_service
 from .alert_cache import alert_cache
 from .concurrency import pair_locks
+from .rsi_utils import calculate_rsi_latest, calculate_rsi_series, closed_closes
 
 # Configure logging with timestamps
 configure_logging()
@@ -500,11 +501,10 @@ class RSIAlertService:
             if not mt5_timeframe:
                 return None
             ohlc_data = get_ohlc_data(symbol, mt5_timeframe, period + 10)
-            if not ohlc_data or len(ohlc_data) < period + 1:
+            closed = closed_closes(ohlc_data)
+            if len(closed) < period + 1:
                 return None
-            closes = [bar.close for bar in ohlc_data]
-            rsi_value = self._calculate_rsi_from_closes(closes, period)
-            return rsi_value
+            return calculate_rsi_latest(closed, period)
         except Exception as e:
             log_error(
                 logger,
@@ -534,34 +534,6 @@ class RSIAlertService:
         # Allowed -> update last
         self._pair_cooldowns[key] = now
         return True
-    
-    def _calculate_rsi_from_closes(self, closes: List[float], period: int = 14) -> Optional[float]:
-        """Calculate RSI from a list of close prices"""
-        if len(closes) < period + 1:
-            return None
-        
-        gains = 0
-        losses = 0
-        
-        for i in range(1, period + 1):
-            change = closes[i] - closes[i - 1]
-            if change > 0:
-                gains += change
-            else:
-                losses -= change
-        
-        avg_gain = gains / period
-        avg_loss = losses / period
-        
-        if avg_loss == 0:
-            return 100
-        
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        return rsi
-    
-    # RFI helpers removed (stick to core RSI spec)
     
     def _calculate_price_change_percent(self, market_data: Dict[str, Any]) -> float:
         """Calculate price change percentage"""
@@ -740,10 +712,11 @@ class RSIAlertService:
             mt5_tf = tf_map.get(timeframe)
             if not mt5_tf:
                 return None
-            bars = get_ohlc_data(symbol, mt5_tf, 2)
-            if not bars:
-                return None
-            return int(bars[-1].time)
+            bars = get_ohlc_data(symbol, mt5_tf, 3)
+            for bar in reversed(bars):
+                if getattr(bar, "is_closed", None) is not False:
+                    return int(bar.time)
+            return None
         except Exception as e:
             logger.debug(f"Bar-close ts unavailable for {symbol} {timeframe}: {e}")
             return None
@@ -816,10 +789,10 @@ class RSIAlertService:
 
             count = max(period + bars_needed + 2, period + 5)
             ohlc_data = get_ohlc_data(symbol, mt5_timeframe, count)
-            if not ohlc_data or len(ohlc_data) < period + 1:
+            closed = closed_closes(ohlc_data)
+            if len(closed) < period + 1:
                 return None
-            closes = [bar.close for bar in ohlc_data]
-            series = self._calculate_rsi_series(closes, period)
+            series = calculate_rsi_series(closed, period)
             if not series:
                 return None
             return series[-bars_needed:] if len(series) >= bars_needed else series
@@ -827,36 +800,6 @@ class RSIAlertService:
             logger.debug(f"RSI series unavailable for {symbol} {timeframe}: {e}")
             return None
 
-    def _calculate_rsi_series(self, closes: List[float], period: int) -> List[float]:
-        """Return RSI series using Wilder's smoothing for each bar after warmup."""
-        n = len(closes)
-        if n < period + 1:
-            return []
-        deltas = [closes[i] - closes[i - 1] for i in range(1, n)]
-        gains = [max(d, 0.0) for d in deltas]
-        losses = [max(-d, 0.0) for d in deltas]
-
-        avg_gain = sum(gains[:period]) / period
-        avg_loss = sum(losses[:period]) / period
-
-        rsis: List[float] = []
-        if avg_loss == 0:
-            rsis.append(100.0)
-        else:
-            rs = avg_gain / avg_loss
-            rsis.append(100 - (100 / (1 + rs)))
-
-        for i in range(period, len(deltas)):
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-            if avg_loss == 0:
-                rsis.append(100.0)
-            else:
-                rs = avg_gain / avg_loss
-                rsis.append(100 - (100 / (1 + rs)))
-
-        return rsis
-    
     async def create_rsi_alert(self, alert_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new RSI alert in Supabase"""
         

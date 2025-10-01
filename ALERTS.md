@@ -7,6 +7,7 @@
 - Max tracked pairs per user: up to 3.
 - Trigger style: crossing into overbought/oversold; not on every bar while in‑zone.
 - Closed‑bar evaluation for RSI family: evaluate RSI on the last closed candlestick only (no intrabar/tick evaluation). Minimum supported timeframe is 5M.
+- MT5 OHLC fetches include the forming candle flagged with `is_closed=false`. Alert engines strip it automatically for RSI math; client dashboards can keep using it for live rendering without extra filtering.
 - Retrigger policy: once triggered, re‑arm only after leaving the triggerable zone and trigger again only on a fresh crossing back in.
 - Timezone for display: Asia/Kolkata (tenant-aware for Daily/news: see `DAILY_TZ_NAME`).
 - System safeguards: rate limit 5 emails/user/hour (overflow → digest), per‑pair concurrency cap, warm‑up for RSI, skip stale TFs (last candle age > 2× TF length).

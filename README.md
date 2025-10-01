@@ -44,6 +44,7 @@ A high-performance, real-time financial market data streaming service built with
 This backend aligns alert evaluations with the Calculations Reference used by the frontend widgets:
 
 - Closed‑candle policy: All RSI/correlation/heatmap evaluations use closed candles; forming candles are not used in triggers.
+- MT5 OHLC snapshots still include the forming candle as the final element with `is_closed=false`. Backend RSI calculations ignore it automatically, so frontend collectors can continue using the tail for live charting without custom trimming.
 - RSI (14, Wilder): Computed from MT5 OHLC (Bid‑based series), matching frontend logic.
 - RSI Correlation (Dashboard parity):
   - Mode `rsi_threshold`: Pair‑type aware mismatch (positive: OB/OS split; negative: both OB or both OS).

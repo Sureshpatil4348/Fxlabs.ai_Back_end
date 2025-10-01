@@ -15,6 +15,7 @@ from .email_service import email_service
 from .models import Timeframe
 from .mt5_utils import get_ohlc_data
 from .heatmap_tracker_alert_service import heatmap_tracker_alert_service
+from .rsi_utils import calculate_rsi_latest, closed_closes
 from . import news as news_mod
 from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY, DAILY_TZ_NAME, DAILY_SEND_LOCAL_TIME
 
@@ -35,29 +36,7 @@ def _pair_display(symbol: str) -> str:
 
 
 def _rsi_latest_from_closes(closes: List[float], period: int = 14) -> Optional[float]:
-    n = len(closes)
-    if n < period + 1:
-        return None
-    deltas = [closes[i] - closes[i - 1] for i in range(1, n)]
-    gains = [max(d, 0.0) for d in deltas]
-    losses = [max(-d, 0.0) for d in deltas]
-    avg_gain = sum(gains[:period]) / period
-    avg_loss = sum(losses[:period]) / period
-    if avg_loss == 0:
-        rsi_first = 100.0
-    else:
-        rs = avg_gain / avg_loss
-        rsi_first = 100 - (100 / (1 + rs))
-    rsi_val = rsi_first
-    for i in range(period, len(deltas)):
-        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-        if avg_loss == 0:
-            rsi_val = 100.0
-        else:
-            rs = avg_gain / avg_loss
-            rsi_val = 100 - (100 / (1 + rs))
-    return rsi_val
+    return calculate_rsi_latest(closes, period)
 
 
 async def _collect_core_signals() -> List[Dict[str, Any]]:
@@ -93,7 +72,7 @@ async def _collect_rsi_h4(period: int = 14) -> Tuple[List[Dict[str, Any]], List[
     for sym in RSI_SUPPORTED_SYMBOLS:
         try:
             ohlc = get_ohlc_data(sym, Timeframe.H4, period + 20)
-            closes = [b.close for b in ohlc]
+            closes = closed_closes(ohlc)
             rsi_val = _rsi_latest_from_closes(closes, period)
             if rsi_val is None:
                 continue
@@ -425,5 +404,3 @@ async def daily_mail_scheduler() -> None:
         except Exception as e:
             log_error(logger, "daily_scheduler_error", error=str(e))
             await asyncio.sleep(60)
-
-

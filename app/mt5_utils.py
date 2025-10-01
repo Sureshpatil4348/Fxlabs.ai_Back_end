@@ -219,5 +219,3 @@ def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 250) -> List
         global_ohlc_cache[symbol][timeframe.value] = deque(ohlc_data, maxlen=count)
         return ohlc_data
     return list(global_ohlc_cache[symbol][timeframe.value])
-
-
