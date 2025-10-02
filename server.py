@@ -1107,6 +1107,64 @@ async def ws_market(websocket: WebSocket):
         if client:
             await client.stop()
 
+@app.websocket("/market-v2")
+async def ws_market_v2(websocket: WebSocket):
+    """Versioned Market Data WebSocket (v2)
+
+    Serves tick and OHLC streams and advertises capabilities via greeting.
+    """
+    client = None
+    try:
+        await websocket.accept()
+        # Send a capabilities greeting for v2
+        try:
+            await websocket.send_json({
+                "type": "connected",
+                "message": "WebSocket connected successfully",
+                "supported_timeframes": [tf.value for tf in Timeframe],
+                # WS-V2-1: ticks + ohlc supported initially; more types arrive later
+                "supported_data_types": ["ticks", "ohlc"],
+                "supported_price_bases": ["last", "bid", "ask"],
+                "ohlc_schema": "parallel",
+            })
+        except Exception:
+            # Client may already have disconnected
+            pass
+
+        # Reuse the same WSClient implementation as /ws/market
+        client = WSClient(websocket, "")
+        await client.start()
+
+        # Main receive loop
+        while True:
+            if getattr(websocket, "client_state", None) != WebSocketState.CONNECTED:
+                break
+            try:
+                data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except RuntimeError:
+                break
+
+            try:
+                message = orjson.loads(data)
+                await client.handle_message(message)
+            except Exception as parse_error:
+                try:
+                    await websocket.send_json({"type": "error", "error": str(parse_error)})
+                except Exception:
+                    break
+    except WebSocketDisconnect:
+        print("Websocket v2 Disconnected")
+    except Exception as e:
+        if "accept" in str(e).lower() and "websocket" in str(e).lower():
+            print("🔌 WebSocket v2 disconnected (accept state)")
+        else:
+            print(f"❌ WebSocket v2 error: {e}")
+    finally:
+        if client:
+            await client.stop()
+
 def _install_sigterm_handler(loop: asyncio.AbstractEventLoop):
     def _handler():
         for task in asyncio.all_tasks(loop):
@@ -1125,6 +1183,7 @@ if __name__ == "__main__":
     import uvicorn
     print("🚀 Starting MT5 Market Data Server...")
     print("📊 Available endpoints:")
+    print("   - WebSocket (v2): ws://localhost:8000/market-v2")
     print("   - WebSocket (new): ws://localhost:8000/ws/market")
     print("   - WebSocket (legacy): ws://localhost:8000/ws/ticks")
     print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=1M&count=100")

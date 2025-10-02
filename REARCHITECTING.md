@@ -181,19 +181,19 @@ Endpoint
     "type": "connected",
     "message": "WebSocket connected successfully",
     "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
-    "supported_data_types": ["ticks","ohlc","indicators","market_summary"],
+    "supported_data_types": ["ticks","ohlc"],
     "supported_price_bases": ["last","bid","ask"],
     "ohlc_schema": "parallel"
   }
   ```
 
-Subscribe (unchanged shape, expanded `data_types`)
+Subscribe (unchanged shape; current capabilities are `ticks` and `ohlc`)
 ```json
 {
   "action": "subscribe",
   "symbol": "EURUSDm",
   "timeframe": "5M",
-  "data_types": ["ticks","ohlc","indicators","market_summary"],
+  "data_types": ["ticks","ohlc"],
   "price_basis": "last",
   "ohlc_schema": "parallel"
 }
@@ -317,7 +317,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 
 | Step | ID | Area | Task | Owner | Status | Definition of Done | Files/Modules | Dependencies | Notes |
 |---:|---|---|---|---|---|---|---|---|---|
-| 01 | WS-V2-1 | WebSocket v2 | Add `/market-v2` endpoint | Backend | TODO | Endpoint serves ticks/ohlc; advertises capabilities | `server.py` | None | No feature flag needed |
+| 01 | WS-V2-1 | WebSocket v2 | Add `/market-v2` endpoint | Backend | DONE | Endpoint serves ticks/ohlc; advertises capabilities | `server.py`,`README.md` | None | No feature flag needed |
 | 02 | WS-1 | WebSocket | Extend v2 greeting to advertise `indicators` | Backend | TODO | `connected` includes `indicators` | `server.py` | WS-V2-1 | Backward compatible |
 | 03 | IND-1 | Indicators | Create `app/indicators.py` (RSI/EMA/MACD/Ichimoku/UT Bot) | Backend | TODO | Matches tolerances; docstrings | `app/indicators.py` | None | Centralized math |
 | 04 | CACHE-1 | Indicators | Add `app/indicator_cache.py` with deque per (sym,tf) | Backend | TODO | `get_latest_*`,`update_*`; ring size cfg | `app/indicator_cache.py` | IND-1 | Async-safe usage |

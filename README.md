@@ -394,9 +394,10 @@ Internal alert tick_data shape:
 - **Features**: Legacy client support
 
 #### Market Data WebSocket v2 (`/market-v2`)
-- Use `/market-v2` for new clients. It exposes the same tick and OHLC payloads, and additionally advertises `indicators` and `market_summary` capabilities via `supported_data_types` in the greeting.
+- Use `/market-v2` for new clients. It exposes the same tick and OHLC payloads, and advertises capabilities via `supported_data_types` in the greeting.
+- Current capabilities: `supported_data_types = ["ticks","ohlc"]`. `indicators` and `market_summary` will be added in follow-up tasks (see REARCHITECTING.md).
 - During migration, `/ws/market` and `/ws/ticks` remain available; they will be removed after cutover.
-- The v2 subscribe shape is unchanged; request `data_types: ["ticks","ohlc","indicators","market_summary"]` to enable additional streams when available.
+- The v2 subscribe shape is unchanged; request `data_types: ["ticks","ohlc"]` for now.
 
 ### REST API Endpoints
 
@@ -644,7 +645,7 @@ Cache policy (weekly merge & dedup):
 
 #### WebSocket Connection (JavaScript)
 ```javascript
-const ws = new WebSocket('ws://localhost:8000/ws/market');
+const ws = new WebSocket('ws://localhost:8000/market-v2');
 
 ws.onopen = () => {
     // Subscribe to EURUSD 1-minute data (alerts enforce 5M+ only)
