@@ -43,7 +43,7 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
 
 - WebSocket (existing `/ws/market`)
   - Price stream: pushes `ticks` messages on new-tick arrival (coalesced). Daily % change streaming is planned as a periodic summary for each subscribed symbol.
-  - Indicators stream: will push `indicator_update` when new closed-bar indicators are computed (10s poll cadence; planned).
+  - Indicators stream: pushes `indicator_update` when new closed-bar indicators are computed (10s poll cadence; v2-only).
   - On subscribe, server sends `initial_ohlc` when `ohlc` is requested. `initial_indicators` will be added with the indicator pipeline.
 
 ## Data Models
@@ -109,6 +109,22 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
       "data": [ /* array of OHLC objects with parallel Bid/Ask fields and is_closed */ ]
     }
     ```
+  - Initial Indicators (latest closed-bar snapshot), when `indicators` is requested:
+    ```json
+    {
+      "type": "initial_indicators",
+      "symbol": "EURUSDm",
+      "timeframe": "5M",
+      "data": {
+        "bar_time": 1696229940000,
+        "indicators": {
+          "rsi": {"14": 51.23},
+          "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
+          "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
+        }
+      }
+    }
+    ```
 
 - Live pushes
   - Ticks (coalesced by symbol):
@@ -118,7 +134,7 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
   - OHLC updates:
     - Live forming bar on tick: `{ "type": "ohlc_live", "data": { /* single OHLC with is_closed=false */ } }`
     - Closed bar at boundary: `{ "type": "ohlc_update", "data": { /* single OHLC with is_closed=true */ } }`
-  - Indicator update (planned):
+  - Indicator update:
     ```json
     { "type": "indicator_update", "symbol": "EURUSDm", "timeframe": "5M", "data": { /* see IndicatorSnapshot */ } }
     ```
@@ -322,7 +338,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 03 | IND-1 | Indicators | Create `app/indicators.py` (RSI/EMA/MACD/Ichimoku/UT Bot) | Backend | DONE | Matches tolerances; docstrings | `app/indicators.py` | None | Centralized math |
 | 04 | CACHE-1 | Indicators | Add `app/indicator_cache.py` with deque per (sym,tf) | Backend | DONE | `get_latest_*`,`update_*`; ring size cfg | `app/indicator_cache.py` | IND-1 | Async-safe usage |
 | 05 | SCHED-1 | Scheduler | 10s closed-bar detector/poller | Backend | DONE | Detects, computes, stores, broadcasts | `server.py` | IND-1, CACHE-1 | Measured latency logged |
-| 06 | WS-2 | WebSocket | Handle `data_types` incl. `indicators` on subscribe | Backend | TODO | Accept/validate; send snapshot+updates | `server.py` | SCHED-1 | Per-client subs |
+| 06 | WS-2 | WebSocket | Handle `data_types` incl. `indicators` on subscribe | Backend | DONE | Accept/validate; send snapshot+updates | `server.py` | SCHED-1 | Per-client subs |
 | 07 | WS-3 | WebSocket | Add `initial_indicators` + `indicator_update` shapes | Backend | TODO | JSON contracts finalized | `server.py`,`REARCHITECTING.md` | IND-1,SCHED-1 | Include `bar_time` ms |
 | 08 | WS-V2-2 | WebSocket v2 | Add `market_summary` periodic sender | Backend | TODO | `{daily_change_pct}` every 10–30s | `server.py`,`app/mt5_utils.py` | D1 fetch helper | Lightweight payload |
 | 09 | DEBUG-1 | Debug | Align liveRSI to cache; single source numbers | Backend | TODO | Log when M1 indicator updates | `server.py`,`app/mt5_utils.py` | SCHED-1 | Remove dup math |

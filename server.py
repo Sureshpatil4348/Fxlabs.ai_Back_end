@@ -684,7 +684,7 @@ async def _check_alerts_safely(tick_data: Dict[str, Any]) -> None:
         print(f"❌ Error checking RSI correlation alerts: {e}")
 
 class WSClient:
-    def __init__(self, websocket: WebSocket, token: str):
+    def __init__(self, websocket: WebSocket, token: str, supported_data_types: Optional[Set[str]] = None):
         self.websocket = websocket
         self.token = token
         # Legacy tick subscriptions
@@ -698,6 +698,8 @@ class WSClient:
         self._task: Optional[asyncio.Task] = None
         self._ohlc_task: Optional[asyncio.Task] = None
         self._send_interval_s: float = 0.10  # 10 Hz for ticks
+        # Supported data types for this connection (endpoint specific)
+        self.supported_data_types: Set[str] = set(supported_data_types or {"ticks", "ohlc"})
 
     def _is_connected(self) -> bool:
         try:
@@ -983,7 +985,7 @@ class WSClient:
             # New subscription format
             symbol = message.get("symbol", "")
             timeframe = message.get("timeframe", "5M")
-            data_types = message.get("data_types", ["ticks", "ohlc"])
+            raw_data_types = message.get("data_types", ["ticks", "ohlc"])
             price_basis_str = message.get("price_basis", "last")
             ohlc_schema_str = message.get("ohlc_schema", "parallel")
             
@@ -1002,6 +1004,17 @@ class WSClient:
                         raise ValueError(f"Invalid timeframe: {timeframe}")
                 ensure_symbol_selected(symbol)
                 
+                # Normalize and validate data_types against endpoint capabilities
+                if not isinstance(raw_data_types, list):
+                    raw_data_types = ["ticks", "ohlc"]
+                cleaned: List[str] = []
+                for dt in raw_data_types:
+                    if isinstance(dt, str):
+                        dts = dt.strip().lower()
+                        if dts in self.supported_data_types:
+                            cleaned.append(dts)
+                data_types = sorted(set(cleaned)) or ["ticks", "ohlc"]
+
                 # Parse enums with safe defaults
                 try:
                     pb = PriceBasis(price_basis_str)
@@ -1061,6 +1074,91 @@ class WSClient:
                             "error": f"failed_to_get_ohlc: {str(e)}"
                         })
                         return
+
+                # Send initial indicators snapshot if requested
+                if "indicators" in data_types:
+                    try:
+                        # Try latest values from cache first
+                        latest_rsi = await indicator_cache.get_latest_rsi(symbol, tf.value, 14)
+                        latest_ema21 = await indicator_cache.get_latest_ema(symbol, tf.value, 21)
+                        latest_ema50 = await indicator_cache.get_latest_ema(symbol, tf.value, 50)
+                        latest_ema200 = await indicator_cache.get_latest_ema(symbol, tf.value, 200)
+                        latest_macd = await indicator_cache.get_latest_macd(symbol, tf.value, 12, 26, 9)
+
+                        ts_candidates: List[int] = []
+                        if latest_rsi:
+                            ts_candidates.append(int(latest_rsi[0]))
+                        for em in (latest_ema21, latest_ema50, latest_ema200):
+                            if em:
+                                ts_candidates.append(int(em[0]))
+                        if latest_macd:
+                            ts_candidates.append(int(latest_macd[0]))
+
+                        bar_time_ts: Optional[int] = max(ts_candidates) if ts_candidates else None
+
+                        # If cache is empty, compute once from closed bars and populate cache
+                        if bar_time_ts is None:
+                            try:
+                                bars = get_ohlc_data(symbol, tf, 300)
+                                closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
+                                if closed_bars:
+                                    last_closed = closed_bars[-1]
+                                    closes = [b.close for b in closed_bars]
+                                    rsi_val = ind_rsi_latest(closes, 14) if len(closes) >= 15 else None
+                                    ema_vals: Dict[int, Optional[float]] = {}
+                                    for p in (21, 50, 200):
+                                        ema_vals[p] = ind_ema_latest(closes, p) if len(closes) >= p else None
+                                    macd_trip = ind_macd_latest(closes, 12, 26, 9)
+
+                                    # Store into cache
+                                    if rsi_val is not None:
+                                        await indicator_cache.update_rsi(symbol, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
+                                    for period, v in ema_vals.items():
+                                        if v is not None:
+                                            await indicator_cache.update_ema(symbol, tf.value, int(period), float(v), ts_ms=last_closed.time)
+                                    if macd_trip is not None:
+                                        mv, sv, hv = macd_trip
+                                        await indicator_cache.update_macd(symbol, tf.value, 12, 26, 9, float(mv), float(sv), float(hv), ts_ms=last_closed.time)
+
+                                    # Refresh latest values variables for snapshot
+                                    latest_rsi = (last_closed.time, float(rsi_val)) if rsi_val is not None else None
+                                    latest_ema21 = (last_closed.time, float(ema_vals.get(21))) if ema_vals.get(21) is not None else None
+                                    latest_ema50 = (last_closed.time, float(ema_vals.get(50))) if ema_vals.get(50) is not None else None
+                                    latest_ema200 = (last_closed.time, float(ema_vals.get(200))) if ema_vals.get(200) is not None else None
+                                    if macd_trip is not None:
+                                        mv, sv, hv = macd_trip
+                                        latest_macd = (last_closed.time, float(mv), float(sv), float(hv))
+                                    bar_time_ts = last_closed.time
+                            except Exception:
+                                # Best-effort; proceed with whatever we have
+                                pass
+
+                        snapshot = {
+                            "bar_time": int(bar_time_ts) if bar_time_ts is not None else None,
+                            "indicators": {
+                                "rsi": ({14: float(latest_rsi[1])} if latest_rsi else {}),
+                                "ema": {
+                                    **({21: float(latest_ema21[1])} if latest_ema21 else {}),
+                                    **({50: float(latest_ema50[1])} if latest_ema50 else {}),
+                                    **({200: float(latest_ema200[1])} if latest_ema200 else {}),
+                                },
+                                "macd": (
+                                    {"macd": float(latest_macd[1]), "signal": float(latest_macd[2]), "hist": float(latest_macd[3])}
+                                    if latest_macd else {}
+                                ),
+                            },
+                        }
+                        ok2 = await self._try_send_json({
+                            "type": "initial_indicators",
+                            "symbol": symbol,
+                            "timeframe": timeframe,
+                            "data": snapshot,
+                        })
+                        if not ok2:
+                            return
+                    except Exception:
+                        # Never fail the subscription due to indicators snapshot issues
+                        pass
                 
                 ok = await self._try_send_json({
                     "type": "subscribed",
@@ -1148,7 +1246,7 @@ async def ws_ticks_legacy(websocket: WebSocket):
         except Exception:
             pass
 
-        client = WSClient(websocket, "")
+        client = WSClient(websocket, "", supported_data_types={"ticks", "ohlc"})
         await client.start()
         async with _connected_clients_lock:
             _connected_clients.add(client)
@@ -1216,7 +1314,7 @@ async def ws_market(websocket: WebSocket):
             pass
         
         # Create WSClient for real MT5 data
-        client = WSClient(websocket, "")
+        client = WSClient(websocket, "", supported_data_types={"ticks", "ohlc", "indicators"})
         await client.start()
         async with _connected_clients_lock:
             _connected_clients.add(client)
