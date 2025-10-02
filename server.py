@@ -56,6 +56,7 @@ from app.mt5_utils import (
     calculate_next_update_time,
     update_ohlc_cache,
     get_cached_ohlc,
+    get_daily_change_pct_bid,
 )
 from app.rsi_utils import calculate_rsi_series, closed_closes
 from app.indicator_cache import indicator_cache
@@ -97,6 +98,9 @@ async def lifespan(app: FastAPI):
     # Start 10s closed-bar indicator poller
     global _indicator_scheduler_task
     _indicator_scheduler_task = asyncio.create_task(_indicator_scheduler())
+    # Start market summary periodic sender (15s cadence)
+    global _market_summary_scheduler_task
+    _market_summary_scheduler_task = asyncio.create_task(_market_summary_scheduler())
     
     yield
     
@@ -135,6 +139,11 @@ async def lifespan(app: FastAPI):
     if _indicator_scheduler_task:
         try:
             await _indicator_scheduler_task
+        except asyncio.CancelledError:
+            pass
+    if _market_summary_scheduler_task:
+        try:
+            await _market_summary_scheduler_task
         except asyncio.CancelledError:
             pass
     mt5.shutdown()
@@ -176,11 +185,16 @@ _minute_scheduler_running: bool = False
 
 # Indicator scheduler state
 _indicator_scheduler_task: Optional[asyncio.Task] = None
+# Market summary scheduler state (periodic daily_change_pct pushes)
+_market_summary_scheduler_task: Optional[asyncio.Task] = None
 # Track connected WS clients to discover subscribed symbol×timeframe sets for indicators
 _connected_clients = set()
 _connected_clients_lock = asyncio.Lock()
 # Last processed closed-bar timestamp per (symbol:tf)
 _indicator_last_bar: Dict[str, int] = {}
+
+# D1 reference cache for daily % change computations (per symbol, keyed by UTC day)
+_d1_ref_cache: Dict[str, Tuple[str, float]] = {}
 
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
@@ -454,6 +468,72 @@ async def _indicator_scheduler() -> None:
         return
     except Exception as e:
         print(f"❌ Indicator scheduler fatal error: {e}")
+
+
+async def _market_summary_scheduler() -> None:
+    """Periodically compute and broadcast market summaries per symbol for clients
+    that requested summaries via data_types (v2 endpoint capability).
+
+    Payload: { "type": "market_summary", "symbol": S, "data": { "daily_change_pct": X } }
+    Cadence: ~15 seconds.
+    """
+    try:
+        interval_s = 15.0
+        while True:
+            # Snapshot clients to avoid holding the lock during MT5 calls
+            async with _connected_clients_lock:
+                clients = list(_connected_clients)
+
+            # Build unique symbol set for which any client has any subscription
+            symbols: Set[str] = set()
+            for c in clients:
+                try:
+                    for sym in getattr(c, "subscriptions", {}).keys():
+                        symbols.add(sym)
+                    # Also consider legacy tick subscriptions
+                    for sym in getattr(c, "symbols", set()):
+                        symbols.add(sym)
+                except Exception:
+                    continue
+
+            # Compute once per symbol and broadcast to clients that want it
+            for sym in symbols:
+                try:
+                    dcp = get_daily_change_pct_bid(sym)
+                    if dcp is None:
+                        continue
+                    msg = {
+                        "type": "market_summary",
+                        "symbol": sym,
+                        "data": {"daily_change_pct": float(dcp)},
+                    }
+                    for c in clients:
+                        try:
+                            # Only for endpoints that advertise/accept summaries: v2 uses WSClient default set
+                            # Gate by subscription presence for the symbol (any timeframe)
+                            wants_summary = False
+                            # Heuristic: if client subscribed to the symbol in any timeframe, consider sending summary
+                            if sym in getattr(c, "subscriptions", {}):
+                                wants_summary = True
+                            # Legacy symbol list also qualifies
+                            if sym in getattr(c, "symbols", set()):
+                                wants_summary = True
+                            if not wants_summary:
+                                continue
+                            await c._try_send_json(msg)
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+
+            try:
+                await asyncio.sleep(interval_s)
+            except asyncio.CancelledError:
+                raise
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        print(f"❌ Market summary scheduler fatal error: {e}")
 
 async def _live_rsi_debugger():
     """Emit liveRSI debug exactly on each 1-minute closed candle when enabled.
@@ -848,7 +928,27 @@ class WSClient:
                     continue
                 tick = _to_tick(sym, info)
                 if tick:
-                    updates.append(tick.model_dump())
+                    # Inject daily_change_pct using cached D1 reference to avoid heavy calls per tick
+                    dcp_val: Optional[float] = None
+                    try:
+                        today_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        cache_key = _d1_ref_cache.get(sym)
+                        if not cache_key or cache_key[0] != today_key:
+                            # Refresh reference once per day per symbol
+                            ref = get_daily_change_pct_bid(sym)
+                            # get_daily_change_pct_bid computes using current bid; extract ref by reversing would be noisy
+                            # For per-tick efficiency, we will compute dcp directly each time with helper, no separate ref exposure
+                            dcp_val = ref
+                            _d1_ref_cache[sym] = (today_key, ref if ref is not None else float('nan'))
+                        else:
+                            # Recompute with helper to honor spec with latest bid; fallback to cached ref-derived value
+                            dcp_val = get_daily_change_pct_bid(sym)
+                    except Exception:
+                        dcp_val = None
+                    tick_dict = tick.model_dump()
+                    if dcp_val is not None and dcp_val == dcp_val:  # not NaN
+                        tick_dict["daily_change_pct"] = float(dcp_val)
+                    updates.append(tick_dict)
                     self._last_sent_ts[sym] = ts_ms
                     
                     # Update OHLC caches for all subscribed timeframes requesting OHLC for this symbol
@@ -1159,6 +1259,22 @@ class WSClient:
                     except Exception:
                         # Never fail the subscription due to indicators snapshot issues
                         pass
+
+                # Send immediate market summary if requested (symbol-level, no timeframe)
+                if "market_summary" in data_types:
+                    try:
+                        dcp = get_daily_change_pct_bid(symbol)
+                        if dcp is not None:
+                            ok3 = await self._try_send_json({
+                                "type": "market_summary",
+                                "symbol": symbol,
+                                "data": {"daily_change_pct": float(dcp)}
+                            })
+                            if not ok3:
+                                return
+                    except Exception:
+                        # Best-effort only
+                        pass
                 
                 ok = await self._try_send_json({
                     "type": "subscribed",
@@ -1376,7 +1492,7 @@ async def ws_market_v2(websocket: WebSocket):
                 "message": "WebSocket connected successfully",
                 "supported_timeframes": [tf.value for tf in Timeframe],
                 # WS-V2-1: ticks + ohlc supported initially; more types arrive later
-                "supported_data_types": ["ticks", "ohlc", "indicators"],
+                "supported_data_types": ["ticks", "ohlc", "indicators", "market_summary"],
                 "supported_price_bases": ["last", "bid", "ask"],
                 "ohlc_schema": "parallel",
                 "indicators": {

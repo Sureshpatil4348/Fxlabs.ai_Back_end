@@ -395,7 +395,7 @@ Internal alert tick_data shape:
 
 #### Market Data WebSocket v2 (`/market-v2`)
 - Use `/market-v2` for new clients. It exposes the same tick and OHLC payloads, and advertises capabilities via `supported_data_types` in the greeting.
-- Current capabilities: `supported_data_types = ["ticks","ohlc","indicators"]`. `market_summary` will be added in a follow-up task (see `REARCHITECTING.md`).
+- Current capabilities: `supported_data_types = ["ticks","ohlc","indicators","market_summary"]`.
 - During migration, `/ws/market` and `/ws/ticks` remain available; they will be removed after cutover.
 - The v2 subscribe shape is unchanged; request `data_types: ["ticks","ohlc","indicators"]` as needed.
 
@@ -406,7 +406,7 @@ V2 greeting example (capabilities + indicators registry):
   "type": "connected",
   "message": "WebSocket connected successfully",
   "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
-  "supported_data_types": ["ticks","ohlc","indicators"],
+  "supported_data_types": ["ticks","ohlc","indicators","market_summary"],
   "supported_price_bases": ["last","bid","ask"],
   "ohlc_schema": "parallel",
   "indicators": {
@@ -418,6 +418,22 @@ V2 greeting example (capabilities + indicators registry):
   }
 }
 ```
+- When `market_summary` is requested in `data_types`, the server sends an immediate summary per symbol and periodic updates (~15s):
+
+```json
+{
+  "type": "market_summary",
+  "symbol": "EURUSDm",
+  "data": { "daily_change_pct": -0.12 }
+}
+```
+
+Tick payloads can include `daily_change_pct` (Bid vs broker D1 reference):
+
+```json
+{"type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"volume":120, "daily_change_pct": -0.12} ] }
+```
+
 
 ##### Indicator payloads (when "indicators" is requested)
 

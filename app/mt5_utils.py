@@ -195,6 +195,61 @@ def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
     return data[0] if data else None
 
 
+def _get_d1_reference_bid(symbol: str) -> Optional[float]:
+    """Return the D1 reference price on Bid basis for daily change calculation.
+
+    Strategy per spec:
+    - Fetch last 2 D1 bars.
+    - If the latest D1 bar is for today (UTC-based check), use its open (Bid).
+    - Otherwise, use the previous D1 bar's close (Bid) to handle session transitions.
+    """
+    try:
+        bars = get_ohlc_data(symbol, Timeframe.D1, 2)
+        if not bars:
+            return None
+        latest = bars[-1]
+        prev = bars[-2] if len(bars) > 1 else None
+
+        now_date = datetime.now(timezone.utc).date()
+        try:
+            latest_dt = datetime.fromisoformat(latest.time_iso)
+        except Exception:
+            latest_dt = datetime.fromtimestamp(latest.time / 1000.0, tz=timezone.utc)
+        latest_date = latest_dt.date()
+
+        # Prefer Bid-parallel fields when available
+        if latest_date == now_date:
+            ref = latest.openBid if latest.openBid is not None else latest.open
+            return float(ref) if ref is not None else None
+        # Fallback to previous D1 close on Bid basis
+        if prev is not None:
+            ref = prev.closeBid if prev.closeBid is not None else prev.close
+            return float(ref) if ref is not None else None
+        # If only one bar present, fallback to its open
+        ref = latest.openBid if latest.openBid is not None else latest.open
+        return float(ref) if ref is not None else None
+    except Exception:
+        return None
+
+
+def get_daily_change_pct_bid(symbol: str) -> Optional[float]:
+    """Compute daily percentage change on Bid basis.
+
+    daily_change_pct = 100 * (bid_now - D1_reference) / D1_reference
+    where D1_reference is today's D1 open (bid) if today; else previous D1 close (bid).
+    """
+    try:
+        ensure_symbol_selected(symbol)
+        tick = get_current_tick(symbol)
+        if tick is None or tick.bid is None:
+            return None
+        ref = _get_d1_reference_bid(symbol)
+        if ref is None or ref == 0.0:
+            return None
+        return 100.0 * (float(tick.bid) - float(ref)) / float(ref)
+    except Exception:
+        return None
+
 def _maybe_log_live_rsi() -> None:
     if not LIVE_RSI_DEBUGGING:
         return

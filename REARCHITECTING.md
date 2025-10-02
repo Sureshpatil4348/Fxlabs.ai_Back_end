@@ -3,7 +3,7 @@
 This document defines a simple, polling-only design that uses Python’s MetaTrader5 library to deliver fast tick streaming and closed-bar indicator updates on a 10-second cadence. No Expert Advisor (EA) or external bridge is required.
 
 ## Goals
-- Minimal frontend data: push only what’s needed. Ticks are pushed on new-tick arrival (coalesced; typically ~100 ms during active periods), not on a fixed 10 Hz timer. A lightweight daily % change can be added as a periodic summary update (see checklist).
+- Minimal frontend data: push only what’s needed. Ticks are pushed on new-tick arrival (coalesced; typically ~100 ms during active periods), not on a fixed 10 Hz timer. A lightweight daily % change is included within each tick payload and also pushed periodically as a `market_summary` update (see checklist).
 - Every 10 seconds, detect newly closed candles for all tracked symbols and timeframes (M1 → W1) and emit indicator updates (planned addition).
 - Indicators computed in Python for closed bars:
   - RSI (support common periods: e.g., 2, 3, 5, 7, 9, 14, 21, 50)
@@ -42,12 +42,12 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
   - `indicator_cache` (new): dictionary keyed by `symbol:timeframe`, storing the latest IndicatorSnapshot (+small ring buffer for snapshots on connect).
 
 - WebSocket (existing `/ws/market`)
-  - Price stream: pushes `ticks` messages on new-tick arrival (coalesced). Daily % change streaming is planned as a periodic summary for each subscribed symbol.
+  - Price stream: pushes `ticks` messages on new-tick arrival (coalesced). Daily % change is included in tick payloads and is also available via periodic `market_summary` for each subscribed symbol (v2).
   - Indicators stream: pushes `indicator_update` when new closed-bar indicators are computed (10s poll cadence; v2-only).
   - On subscribe, server sends `initial_ohlc` when `ohlc` is requested. `initial_indicators` will be added with the indicator pipeline.
 
 ## Data Models
-- Tick (frontend): `{symbol, time, time_iso, bid, ask, last, volume, flags}`
+- Tick (frontend): `{symbol, time, time_iso, bid, ask, last, volume, flags, daily_change_pct}`
 - IndicatorSnapshot: `{sym, tf, bar_time, indicators: { rsi: {period->value}, ema: {21,50,200}, macd: {macd, signal, hist}, ichimoku: {tenkan, kijun, senkou_a, senkou_b, chikou}, utbot: {signal, type, baseline, atr, longStop, shortStop, new, confidence} }}`
 
 Daily % change calculation (matching MT5 as closely as feasible without EA):
@@ -129,7 +129,7 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
 - Live pushes
   - Ticks (coalesced by symbol):
     ```json
-    { "type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"volume":120}, ... ] }
+    { "type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"volume":120, "daily_change_pct": -0.12}, ... ] }
     ```
   - OHLC updates:
     - Live forming bar on tick: `{ "type": "ohlc_live", "data": { /* single OHLC with is_closed=false */ } }`
@@ -210,7 +210,7 @@ Endpoint
     "type": "connected",
     "message": "WebSocket connected successfully",
     "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
-    "supported_data_types": ["ticks","ohlc"],
+    "supported_data_types": ["ticks","ohlc","indicators","market_summary"],
     "supported_price_bases": ["last","bid","ask"],
     "ohlc_schema": "parallel"
   }
@@ -237,8 +237,8 @@ Live Push Types
 - `ticks`: coalesced list, as in v1
 - `ohlc_live`: forming candle on tick
 - `ohlc_update`: closed candle at boundary (guaranteed)
-- `indicator_update`: closed‑bar indicators after 10s poller detects a new bar
-- `market_summary`: periodic payload per symbol, e.g. `{ daily_change_pct }` (Bid vs broker D1 open)
+  - `indicator_update`: closed‑bar indicators after 10s poller detects a new bar
+  - `market_summary`: periodic payload per symbol, e.g. `{ daily_change_pct }` (Bid vs broker D1 reference; also included inline with `ticks`)
 
 Validation & Safety
 - Strict symbol/timeframe allowlist; per‑connection caps on total subscriptions.
@@ -353,7 +353,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 05 | SCHED-1 | Scheduler | 10s closed-bar detector/poller | Backend | DONE | Detects, computes, stores, broadcasts | `server.py` | IND-1, CACHE-1 | Measured latency logged |
 | 06 | WS-2 | WebSocket | Handle `data_types` incl. `indicators` on subscribe | Backend | DONE | Accept/validate; send snapshot+updates | `server.py` | SCHED-1 | Per-client subs |
 | 07 | WS-3 | WebSocket | Add `initial_indicators` + `indicator_update` shapes | Backend | DONE | JSON contracts finalized | `server.py`,`REARCHITECTING.md` | IND-1,SCHED-1 | Include `bar_time` ms |
-| 08 | WS-V2-2 | WebSocket v2 | Add `market_summary` periodic sender | Backend | TODO | `{daily_change_pct}` every 10–30s | `server.py`,`app/mt5_utils.py` | D1 fetch helper | Lightweight payload |
+| 08 | WS-V2-2 | WebSocket v2 | Add `market_summary` periodic sender | Backend | DONE | `{daily_change_pct}` every 15s + included in ticks | `server.py`,`app/mt5_utils.py` | D1 fetch helper | Lightweight payload |
 | 09 | DEBUG-1 | Debug | Align liveRSI to cache; single source numbers | Backend | TODO | Log when M1 indicator updates | `server.py`,`app/mt5_utils.py` | SCHED-1 | Remove dup math |
 | 10 | OBS-1 | Observability | Add metrics + structured logs | Backend | TODO | Poll durations; items; latencies | `server.py` | SCHED-1 | JSON logs optional |
 | 11 | SEC-1 | Security | WS input validation + allowlists | Backend | TODO | Validate symbol/tf; caps; optional auth | `server.py` | None | Mirror REST auth policy |
