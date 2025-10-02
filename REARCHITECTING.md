@@ -49,6 +49,121 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
 - PriceTick: `{sym, ts, bid, ask, last?, spread?, seq?}` (unchanged)
 - IndicatorSnapshot: `{sym, tf, bar_time, indicators: { rsi: {period->value}, ema: {21,50,200}, macd: {macd, signal, hist}, ichimoku: {tenkan, kijun, senkou_a, senkou_b, chikou}, utbot: {signal, type, baseline, atr, longStop, shortStop, new, confidence} }}`
 
+## WebSocket API and Message Formats
+
+- Endpoint
+  - `/ws/market` (unified)
+
+- Server greeting
+  - On connect, server sends:
+    ```json
+    {
+      "type": "connected",
+      "message": "WebSocket connected successfully",
+      "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
+      "supported_data_types": ["ticks","ohlc","indicators"],
+      "supported_price_bases": ["last","bid","ask"],
+      "ohlc_schema": "parallel"
+    }
+    ```
+
+- Subscribe
+  - Client → server to start streaming for a symbol×timeframe:
+    ```json
+    {
+      "action": "subscribe",
+      "symbol": "EURUSDm",
+      "timeframe": "5M",
+      "data_types": ["ticks","ohlc","indicators"],
+      "price_basis": "last",
+      "ohlc_schema": "parallel"
+    }
+    ```
+  - Server → client confirmation:
+    ```json
+    {
+      "type": "subscribed",
+      "symbol": "EURUSDm",
+      "timeframe": "5M",
+      "data_types": ["ticks","ohlc","indicators"],
+      "price_basis": "last",
+      "ohlc_schema": "parallel"
+    }
+    ```
+  - Errors are returned as `{ "type": "error", "error": "..." }`.
+
+- Snapshots on subscribe
+  - Initial OHLC history (last up to 250 bars):
+    ```json
+    {
+      "type": "initial_ohlc",
+      "symbol": "EURUSDm",
+      "timeframe": "5M",
+      "data": [ { /* OHLC objects, shaped per price_basis+schema */ } ]
+    }
+    ```
+  - Initial indicators (latest closed bar), when `indicators` is requested:
+    ```json
+    {
+      "type": "initial_indicators",
+      "symbol": "EURUSDm",
+      "timeframe": "5M",
+      "data": {
+        "bar_time": 1696230000000,
+        "rsi": {"14": 53.21},
+        "ema": {"21": 1.06875, "50": 1.06712, "200": 1.06123},
+        "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002},
+        "ichimoku": {"tenkan": 1.07, "kijun": 1.069, "senkou_a": 1.068, "senkou_b": 1.067, "chikou": 1.0682},
+        "utbot": {"signal": "buy", "type": "long", "baseline": 1.06875, "atr": 0.00045, "longStop": 1.06830, "shortStop": 1.06920, "new": true, "confidence": 0.82}
+      }
+    }
+    ```
+
+- Live pushes
+  - Ticks (up to 10 Hz):
+    ```json
+    {
+      "type": "ticks",
+      "data": [
+        {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06874,"last":1.06873,"volume":12.3,"flags":0}
+      ]
+    }
+    ```
+  - Forming-candle OHLC (during ticks for `ohlc` subscribers):
+    ```json
+    { "type": "ohlc_live", "data": { /* OHLC with is_closed=false, shaped per basis/schema */ } }
+    ```
+  - Closed-candle OHLC at timeframe boundaries:
+    ```json
+    { "type": "ohlc_update", "data": { /* OHLC with is_closed=true */ } }
+    ```
+  - Indicator update (10s poller after a new closed bar is detected):
+    ```json
+    {
+      "type": "indicator_update",
+      "symbol": "EURUSDm",
+      "timeframe": "5M",
+      "data": {
+        "bar_time": 1696230000000,
+        "rsi": {"14": 53.21},
+        "ema": {"21": 1.06875, "50": 1.06712, "200": 1.06123},
+        "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002},
+        "ichimoku": {"tenkan": 1.07, "kijun": 1.069, "senkou_a": 1.068, "senkou_b": 1.067, "chikou": 1.0682},
+        "utbot": {"signal": "buy", "type": "long", "baseline": 1.06875, "atr": 0.00045, "longStop": 1.06830, "shortStop": 1.06920, "new": true, "confidence": 0.82}
+      }
+    }
+    ```
+
+- Unsubscribe and keepalive
+  - Unsubscribe a single symbol×timeframe:
+    ```json
+    { "action": "unsubscribe", "symbol": "EURUSDm", "timeframe": "5M" }
+    ```
+    Server confirms with `{ "type": "unsubscribed", "symbol": "EURUSDm", "timeframe": "5M" }`.
+  - Ping/pong:
+    - Client: `{ "action": "ping" }`
+    - Server: `{ "type": "pong" }`
+
 ## Implementation Plan (Map to Current Code)
 
 1) Indicator Helpers
