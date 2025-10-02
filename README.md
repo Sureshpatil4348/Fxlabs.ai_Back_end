@@ -397,6 +397,7 @@ Internal alert tick_data shape:
 |----------|--------|-------------|---------------|
 | `/health` | GET | Health check and MT5 status | No |
 | `/api/ohlc/{symbol}` | GET | Historical OHLC data | Yes |
+| `/api/rsi/{symbol}`  | GET | Closed‑bar RSI series (Wilder) aligned to OHLC | Yes |
 | `/api/tick/{symbol}` | GET | Current tick data | Yes |
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
@@ -417,6 +418,34 @@ Notes:
 - Single alert per user from `rsi_tracker_alerts` table.
 - Backend enforces closed‑bar evaluation.
 - Pairs are fixed in code via `app/constants.py` (no per-alert selection, no env overrides).
+
+### Closed‑bar RSI REST (`/api/rsi/{symbol}`)
+
+Parameters:
+- `timeframe` (string): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W` (default `5M`)
+- `period` (int): RSI period (default `14`)
+- `count` (int): number of OHLC bars to fetch for calculation (default `300`)
+
+Response shape:
+```json
+{
+  "symbol": "EURUSDm",
+  "timeframe": "5M",
+  "period": 14,
+  "bars_used": 300,
+  "count": 286,
+  "times_ms": [1695200100000, ...],
+  "times_iso": ["2025-09-20T12:35:00+00:00", ...],
+  "rsi": [61.04, 62.15, ...],
+  "applied_price": "close",
+  "method": "wilder"
+}
+```
+
+Notes:
+- RSI is computed on closed bars only, matching MT5’s default RSI(14) close/Wilder.
+- `times_*` arrays align 1:1 with `rsi[]` and correspond to the closed bars beginning at index `period` in the closed OHLC sequence.
+- For exact parity with MT5, request the broker‑suffixed symbol (e.g., `EURUSDm`).
 
 #### Email Template (RSI)
 - Compact, per‑pair card format.

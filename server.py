@@ -57,6 +57,7 @@ from app.mt5_utils import (
     update_ohlc_cache,
     get_cached_ohlc,
 )
+from app.rsi_utils import calculate_rsi_series, closed_closes
 
 # Ensure logging has timestamps across the app
 configure_logging()
@@ -369,6 +370,60 @@ def get_ohlc(symbol: str, timeframe: str = Query("5M"), count: int = Query(250, 
             "timeframe": timeframe,
             "count": len(ohlc_data),
             "data": [ohlc.model_dump() for ohlc in ohlc_data]
+        }
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/rsi/{symbol}")
+def get_rsi(
+    symbol: str,
+    timeframe: str = Query("5M"),
+    period: int = Query(14, ge=1, le=200),
+    count: int = Query(300, ge=50, le=1000),
+    x_api_key: Optional[str] = Depends(require_api_token_header),
+):
+    """Get closed-bar RSI series (Wilder) aligned to closed OHLC bars.
+
+    Returns RSI values for the last N closed bars, plus aligned timestamps.
+    """
+    try:
+        tf = Timeframe(timeframe)
+        sym = symbol.upper()
+        ohlc_data = get_ohlc_data(sym, tf, count)
+        # Use only closed bars
+        closed = [bar for bar in ohlc_data if getattr(bar, "is_closed", None) is not False]
+        if len(closed) < period + 1:
+            return {
+                "symbol": sym,
+                "timeframe": timeframe,
+                "period": period,
+                "bars_used": len(closed),
+                "count": 0,
+                "times_ms": [],
+                "times_iso": [],
+                "rsi": [],
+                "applied_price": "close",
+                "method": "wilder",
+            }
+        closes = [bar.close for bar in closed]
+        series = calculate_rsi_series(closes, period)
+        # Align timestamps: RSI series starts at index `period` of closed bars
+        aligned_bars = closed[period:]
+        times_ms = [int(bar.time) for bar in aligned_bars]
+        times_iso = [bar.time_iso for bar in aligned_bars]
+        return {
+            "symbol": sym,
+            "timeframe": timeframe,
+            "period": period,
+            "bars_used": len(closed),
+            "count": len(series),
+            "times_ms": times_ms,
+            "times_iso": times_iso,
+            "rsi": series,
+            "applied_price": "close",
+            "method": "wilder",
         }
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
