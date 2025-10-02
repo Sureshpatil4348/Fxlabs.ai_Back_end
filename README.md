@@ -969,11 +969,14 @@ You can control verbosity via `LOG_LEVEL` (default `INFO`).
 - `LOG_ENV_DUMP` — prints full environment snapshot at startup (default `false`; may include secrets).
 - `ALERT_VERBOSE_LOGS` — enables non‑critical alert/daily diagnostics like config echoes and no‑trigger reasons (default `false`).
 - `NEWS_VERBOSE_LOGS` — enables verbose news fetch/parse/update prints (default `false`).
+- `BYPASS_EMAIL_ALERTS` — bypasses all email alerts and logs when alerts are bypassed (default `false`).
 
 Examples:
 ```bash
 export LIVE_RSI_DEBUGGING=true
 export ALERT_VERBOSE_LOGS=true
+# Bypass all email alerts for testing:
+export BYPASS_EMAIL_ALERTS=true
 # Keep sensitive env quiet by default:
 export LOG_ENV_DUMP=false
 ```

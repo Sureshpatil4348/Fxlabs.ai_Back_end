@@ -32,7 +32,7 @@ import logging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, DAILY_TZ_NAME
+from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, DAILY_TZ_NAME, BYPASS_EMAIL_ALERTS
 from .tenancy import get_tenant_config
 from .alert_logging import log_debug, log_info, log_warning, log_error
 
@@ -739,6 +739,11 @@ class EmailService:
     ) -> bool:
         """Send heatmap alert email to user with cooldown protection"""
         
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Heatmap alert for {user_email} ({alert_name}) would have been sent")
+            return True
+        
         if not self.sg:
             self._log_config_diagnostics(context="heatmap alert email")
             return False
@@ -806,6 +811,11 @@ class EmailService:
         alert_config: Dict[str, Any]
     ) -> bool:
         """Send Heatmap/Quantum Tracker (Probability Signal) email using simplified template."""
+
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Heatmap tracker alert for {user_email} ({alert_name}) would have been sent")
+            return True
 
         if not self.sg:
             self._log_config_diagnostics(context="heatmap tracker alert email")
@@ -1043,6 +1053,11 @@ class EmailService:
     async def send_test_email(self, user_email: str) -> bool:
         """Send a test email to verify email service is working"""
         
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Test email for {user_email} would have been sent")
+            return True
+        
         if not self.sg:
             logger.warning("SendGrid not configured, cannot send test email")
             return False
@@ -1111,6 +1126,11 @@ class EmailService:
         logger.info(f"   User: {user_email}")
         logger.info(f"   Alert: {alert_name}")
         logger.info(f"   Triggered pairs: {len(triggered_pairs)}")
+        
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - RSI alert for {user_email} ({alert_name}) would have been sent")
+            return True
         
         if not self.sg:
             self._log_config_diagnostics(context="RSI alert email")
@@ -1200,6 +1220,11 @@ class EmailService:
         alert_config: Dict[str, Any]
     ) -> bool:
         """Send Custom Indicator alert email (flip to BUY/SELL) using compact template."""
+
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Custom indicator alert for {user_email} ({alert_name}) would have been sent")
+            return True
 
         if not self.sg:
             self._log_config_diagnostics(context="custom indicator alert email")
@@ -1379,6 +1404,11 @@ class EmailService:
         alert_config: Dict[str, Any]
     ) -> bool:
         """Send RSI correlation alert email to user with cooldown protection"""
+        
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - RSI correlation alert for {user_email} ({alert_name}) would have been sent")
+            return True
         
         if not self.sg:
             self._log_config_diagnostics(context="RSI correlation alert email")
@@ -1570,6 +1600,11 @@ class EmailService:
 
         No cooldown/rate-limit applies: this is a scheduled one-off per event.
         """
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - News reminder for {user_email} ({event_title}) would have been sent")
+            return True
+        
         if not self.sg:
             self._log_config_diagnostics(context="news reminder email")
             return False
@@ -1786,6 +1821,11 @@ class EmailService:
         return "\n".join(lines)
 
     async def send_daily_brief(self, user_email: str, payload: Dict[str, Any]) -> bool:
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Daily brief for {user_email} would have been sent")
+            return True
+        
         if not self.sg:
             self._log_config_diagnostics(context="daily brief email")
             return False
