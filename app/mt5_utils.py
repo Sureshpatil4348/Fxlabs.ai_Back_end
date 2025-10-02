@@ -209,7 +209,8 @@ def _maybe_log_live_rsi() -> None:
         logger.info(f"🧭 liveRSI skip — unable to select {symbol}: {exc}")
         return
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, 50)
-    if not rates:
+    # MT5 returns a NumPy array; avoid ambiguous truth checks
+    if rates is None or len(rates) == 0:
         logger.info("🧭 liveRSI skip — no MT5 rates for BTCUSDm 1M")
         return
     bars: List[OHLC] = []
