@@ -252,14 +252,20 @@ Why exact parity is hard without MT5 handles:
 - Price Basis and Time Alignment: Ensure we consistently use closes (or bid/ask if desired) and aligned broker timestamps; mismatches introduce drift.
 - Proprietary nuances: Some MT5 implementations include subtle buffering/offset logic not publicly documented.
 
-What we can match closely:
-- RSI (Wilder) and EMA: With the same period, close prices, and seeding (SMA for first value), results generally match within rounding on closed bars.
-- MACD (12,26,9): Close alignment and consistent EMA seeding keep values very close; histogram may vary by small epsilons.
-- Ichimoku (9/26/52): Deterministic given OHLC highs/lows; ensure we use midpoints for Tenkan/Kijun and correct shifts.
-- UT Bot: Parity depends on using the same EMA and ATR definitions and your flip logic (we’ll mirror your JS reference and rounding).
+Expected deviations and tolerances (closed-bar values unless noted)
+- Bid price stream (100ms): values come from `mt5.symbol_info_tick` and should match MT5 Market Watch bid exactly at the same moment; minor differences can occur due to transmission delay and local rounding. Tolerance: 0 pips ideally; up to 1 pip during fast markets.
+- Daily % change: depends on broker session convention (today’s D1 open vs prior close) and price basis (bid vs last). Using bid and D1 open yields Tolerance: ≤ 0.05% (5 bps). During session rollover or sparse-tick periods, temporary deviations up to 0.10% may appear.
+- RSI (Wilder): with SMA seeding and closed bars, typical absolute error ≤ 0.05; edge cases (low volatility, very short periods) up to 0.15.
+- EMA 21/50/200: with SMA seed, absolute difference generally ≤ 1e-4 on FX quotes; for 5-digit pairs, ≤ 1–2 pips × 1e-3 (i.e., 0.00010). Prefer reporting to 5 decimals.
+- MACD (12,26,9): MACD and signal lines close to EMA tolerances; histogram difference within ≤ 2e-4 typically. Accept up to 5e-4 in high-volatility or short-history warm-up.
+- Ichimoku (9/26/52): deterministic given OHLC highs/lows; expect identical values if the OHLC basis matches (bid). If MT5 chart uses ask/mid or custom offsets, expect ≤ 1 pip deviation on Tenkan/Kijun and derived spans.
+- UT Bot (EMA baseline + ATR Wilder):
+  - baseline/atr/stops: rounding to 5 decimals; absolute difference typically ≤ 0.00005 on majors.
+  - signal/flip: identical on closed bars except when close sits within ≤ 1e-5 of the stop; treat these as boundary-equivalent; differences should be rare and non-material.
+- Bar time (`bar_time`): sourced from MT5 broker server time; equality expected. Indicator push latency does not change the bar timestamp.
 
 Calibration plan:
-- Create parity tests that pull the last N closed bars from MT5 and compare Python outputs to target chart values within tolerances (e.g., absolute error ≤ 1e-4 for EMA/RSI/MACD lines).
+- Create parity tests that pull the last N closed bars from MT5 and compare Python outputs to target chart values within tolerances (e.g., EMA/RSI/MACD absolute error thresholds above).
 - Lock price basis (close vs bid/ask) and ensure `is_closed` filtering is applied uniformly.
 - Round outbound values consistently (e.g., 5 decimals for UT Bot numeric fields) to match UI.
 
