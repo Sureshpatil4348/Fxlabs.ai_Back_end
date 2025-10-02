@@ -48,6 +48,8 @@ class OHLC(BaseModel):
     low: float
     close: float
     volume: Optional[float] = None
+    tick_volume: Optional[float] = None
+    spread: Optional[float] = None
     # Parallel fields for bid/ask parity
     openBid: Optional[float] = None
     highBid: Optional[float] = None
@@ -224,5 +226,4 @@ class HeatmapAlertTrigger(BaseModel):
     triggered_pairs: List[Dict[str, Any]]
     trigger_time: datetime
     alert_config: Dict[str, Any]
-
 

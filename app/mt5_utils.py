@@ -2,10 +2,14 @@ from collections import deque
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 
+import logging
+
 import MetaTrader5 as mt5
 from fastapi import HTTPException
 
 from .models import Timeframe, OHLC, Tick
+from .config import LIVE_RSI_DEBUGGING
+from .rsi_utils import calculate_rsi_latest, closed_closes
 
 
 MT5_TIMEFRAMES = {
@@ -18,6 +22,9 @@ MT5_TIMEFRAMES = {
     Timeframe.D1: mt5.TIMEFRAME_D1,
     Timeframe.W1: mt5.TIMEFRAME_W1,
 }
+
+logger = logging.getLogger(__name__)
+_live_rsi_last_logged: Dict[str, int] = {}
 
 
 def ensure_symbol_selected(symbol: str) -> None:
@@ -80,6 +87,19 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
     if rate_data is None:
         return None
     try:
+        def _rate_val(key: str, idx: int) -> Optional[float]:
+            try:
+                return float(getattr(rate_data, key))  # type: ignore[arg-type]
+            except Exception:
+                pass
+            try:
+                return float(rate_data[key])  # type: ignore[index]
+            except Exception:
+                pass
+            try:
+                return float(rate_data[idx])
+            except Exception:
+                return None
         ts_ms = int(rate_data[0]) * 1000
         dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
         # Determine closed status at conversion time to support strict closed-bar consumers
@@ -105,7 +125,9 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
             high=float(rate_data[2]),
             low=float(rate_data[3]),
             close=float(rate_data[4]),
-            volume=float(rate_data[5]),
+            volume=_rate_val("real_volume", 7) or _rate_val("tick_volume", 5),
+            tick_volume=_rate_val("tick_volume", 5),
+            spread=_rate_val("spread", 6),
             is_closed=is_closed,
         )
     except (IndexError, ValueError, TypeError) as e:
@@ -122,9 +144,6 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[O
         raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, count)
     if rates is None or len(rates) == 0:
-        # Only log at debug level to reduce noise
-        import logging
-        logger = logging.getLogger(__name__)
         logger.debug(f"⚠️ No rates from MT5 for {symbol}")
         return []
     ohlc_data = []
@@ -132,12 +151,48 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[O
         ohlc = _to_ohlc(symbol, timeframe.value, rate)
         if ohlc:
             ohlc_data.append(ohlc)
+    _maybe_log_live_rsi(symbol, timeframe, ohlc_data)
     return ohlc_data
 
 
 def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
     data = get_ohlc_data(symbol, timeframe, 1)
     return data[0] if data else None
+
+
+def _maybe_log_live_rsi(symbol: str, timeframe: Timeframe, bars: List[OHLC]) -> None:
+    if not LIVE_RSI_DEBUGGING or timeframe != Timeframe.M1:
+        return
+    base_symbol = symbol.upper().rstrip("M")
+    if base_symbol != "BTCUSD":
+        return
+    closed_bars = [bar for bar in bars if getattr(bar, "is_closed", None) is not False]
+    if len(closed_bars) < 15:
+        return
+    latest_closed = closed_bars[-1]
+    key = f"{base_symbol}:{timeframe.value}"
+    if _live_rsi_last_logged.get(key) == latest_closed.time:
+        return
+    rsi_value = calculate_rsi_latest(closed_closes(bars), 14)
+    if rsi_value is None:
+        return
+    time_iso = latest_closed.time_iso
+    if "T" in time_iso:
+        date_part, time_part = time_iso.split("T", 1)
+    else:
+        date_part, time_part = time_iso, ""
+    time_part = time_part.replace("+00:00", "Z")
+    pair_display = "BTC/USD"
+    volume_str = f"{latest_closed.volume:.2f}" if latest_closed.volume is not None else "-"
+    tick_volume_str = f"{latest_closed.tick_volume:.0f}" if latest_closed.tick_volume is not None else "-"
+    spread_str = f"{latest_closed.spread:.0f}" if latest_closed.spread is not None else "-"
+    log_message = (
+        f"🧭 liveRSI {pair_display} 1 minute RSIclosed(14)={rsi_value:.2f} | date={date_part} time={time_part} "
+        f"open={latest_closed.open:.5f} high={latest_closed.high:.5f} low={latest_closed.low:.5f} "
+        f"close={latest_closed.close:.5f} volume={volume_str} tick_volume={tick_volume_str} spread={spread_str}"
+    )
+    logger.info(log_message)
+    _live_rsi_last_logged[key] = latest_closed.time
 
 
 def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe) -> datetime:
