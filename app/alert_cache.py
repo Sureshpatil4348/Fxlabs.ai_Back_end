@@ -5,9 +5,11 @@ from typing import Dict, List, Optional, Any
 import aiohttp
 import json
 import logging
+import builtins
 
 from .logging_config import configure_logging
 from .alert_logging import log_debug, log_info, log_warning, log_error
+from .config import ALERT_VERBOSE_LOGS
 
 class AlertCache:
     """Simple in-memory cache for user alert configurations"""
@@ -32,7 +34,8 @@ class AlertCache:
         )
         
         if not self.supabase_url or not self.supabase_service_key:
-            print("⚠️ Supabase credentials not found. Alert caching will be disabled.")
+            if ALERT_VERBOSE_LOGS:
+                builtins.print("⚠️ Supabase credentials not found. Alert caching will be disabled.")
     
     async def get_user_alerts(self, user_id: str) -> List[Dict[str, Any]]:
         """Get cached alerts for a user"""
@@ -70,7 +73,8 @@ class AlertCache:
         
         try:
             self._is_refreshing = True
-            print("🔄 Refreshing alert cache...")
+            if ALERT_VERBOSE_LOGS:
+                builtins.print("🔄 Refreshing alert cache...")
             configure_logging()
             logger = logging.getLogger(__name__)
             log_info(
@@ -191,7 +195,8 @@ class AlertCache:
             self._last_refresh = datetime.now(timezone.utc)
             
             total_alerts = sum(len(alerts) for alerts in new_cache.values())
-            print(f"✅ Alert cache refreshed: {len(new_cache)} users, {total_alerts} total alerts")
+            if ALERT_VERBOSE_LOGS:
+                builtins.print(f"✅ Alert cache refreshed: {len(new_cache)} users, {total_alerts} total alerts")
             log_info(
                 logger,
                 "alert_cache_refreshed",
@@ -201,45 +206,46 @@ class AlertCache:
 
             # After refresh: list all alerts by category (type)
             categories = self._group_alerts_by_type(new_cache)
-            print("📚 Alerts by category (post-refresh):")
-            for cat, items in categories.items():
-                print(f"  • {cat}: {len(items)}")
-                for a in items:
-                    aid = a.get("id")
-                    name = a.get("alert_name", a.get("name", ""))
-                    email = a.get("user_email", "")
-                    atype = a.get("type")
-                    cfg = ""
-                    try:
-                        if atype == "rsi_tracker":
-                            cfg = (
-                                f"tf={a.get('timeframe','')} | period={a.get('rsi_period', 14)} | "
-                                f"ob={a.get('rsi_overbought', a.get('rsi_overbought_threshold', 70))} | "
-                                f"os={a.get('rsi_oversold', a.get('rsi_oversold_threshold', 30))}"
-                            )
-                        elif atype == "rsi_correlation_tracker":
-                            cfg = (
-                                f"tf={a.get('timeframe','')} | mode={(a.get('mode') or 'rsi_threshold').lower()} | "
-                                f"period={a.get('rsi_period', 14)} | ob={a.get('rsi_overbought', 70)} | os={a.get('rsi_oversold', 30)} | "
-                                f"window={a.get('correlation_window', 50)}"
-                            )
-                        elif atype == "heatmap_tracker":
-                            pairs = a.get('pairs', []) or []
-                            cfg = (
-                                f"style={(a.get('trading_style') or 'scalper').lower()} | "
-                                f"buy_threshold={a.get('buy_threshold', 70)} | "
-                                f"sell_threshold={a.get('sell_threshold', 30)} | "
-                                f"pairs={len(pairs)}"
-                            )
-                        elif atype == "heatmap_indicator_tracker":
-                            pairs = a.get('pairs', []) or []
-                            cfg = (
-                                f"indicator={(a.get('indicator') or 'ema21').lower()} | "
-                                f"tf={a.get('timeframe', '1H')} | pairs={len(pairs)}"
-                            )
-                    except Exception:
+            if ALERT_VERBOSE_LOGS:
+                builtins.print("📚 Alerts by category (post-refresh):")
+                for cat, items in categories.items():
+                    builtins.print(f"  • {cat}: {len(items)}")
+                    for a in items:
+                        aid = a.get("id")
+                        name = a.get("alert_name", a.get("name", ""))
+                        email = a.get("user_email", "")
+                        atype = a.get("type")
                         cfg = ""
-                    print(f"     - id={aid} | name={name} | user={email}{(' | ' + cfg) if cfg else ''}")
+                        try:
+                            if atype == "rsi_tracker":
+                                cfg = (
+                                    f"tf={a.get('timeframe','')} | period={a.get('rsi_period', 14)} | "
+                                    f"ob={a.get('rsi_overbought', a.get('rsi_overbought_threshold', 70))} | "
+                                    f"os={a.get('rsi_oversold', a.get('rsi_oversold_threshold', 30))}"
+                                )
+                            elif atype == "rsi_correlation_tracker":
+                                cfg = (
+                                    f"tf={a.get('timeframe','')} | mode={(a.get('mode') or 'rsi_threshold').lower()} | "
+                                    f"period={a.get('rsi_period', 14)} | ob={a.get('rsi_overbought', 70)} | os={a.get('rsi_oversold', 30)} | "
+                                    f"window={a.get('correlation_window', 50)}"
+                                )
+                            elif atype == "heatmap_tracker":
+                                pairs = a.get('pairs', []) or []
+                                cfg = (
+                                    f"style={(a.get('trading_style') or 'scalper').lower()} | "
+                                    f"buy_threshold={a.get('buy_threshold', 70)} | "
+                                    f"sell_threshold={a.get('sell_threshold', 30)} | "
+                                    f"pairs={len(pairs)}"
+                                )
+                            elif atype == "heatmap_indicator_tracker":
+                                pairs = a.get('pairs', []) or []
+                                cfg = (
+                                    f"indicator={(a.get('indicator') or 'ema21').lower()} | "
+                                    f"tf={a.get('timeframe', '1H')} | pairs={len(pairs)}"
+                                )
+                        except Exception:
+                            cfg = ""
+                        builtins.print(f"     - id={aid} | name={name} | user={email}{(' | ' + cfg) if cfg else ''}")
             try:
                 # Structured log with just counts to avoid noisy payloads
                 log_info(
@@ -254,7 +260,7 @@ class AlertCache:
                 pass
             
         except Exception as e:
-            print(f"❌ Error refreshing alert cache: {e}")
+            builtins.print(f"❌ Error refreshing alert cache: {e}")
             import traceback
             traceback.print_exc()
             try:

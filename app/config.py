@@ -18,6 +18,14 @@ MT5_TERMINAL_PATH = os.environ.get("MT5_TERMINAL_PATH", "")
 # Live RSI debugging toggle (defaults off)
 LIVE_RSI_DEBUGGING = os.environ.get("LIVE_RSI_DEBUGGING", "false").lower() == "true"
 
+# Verbose logging toggles (defaults off)
+# - LOG_ENV_DUMP: print full environment snapshot at startup (potentially sensitive)
+# - ALERT_VERBOSE_LOGS: emit non-critical alert/daily diagnostics (config echoes, no-trigger reasons, etc.)
+# - NEWS_VERBOSE_LOGS: emit verbose news fetch/parse/update scheduler prints
+LOG_ENV_DUMP = os.environ.get("LOG_ENV_DUMP", "false").lower() == "true"
+ALERT_VERBOSE_LOGS = os.environ.get("ALERT_VERBOSE_LOGS", "false").lower() == "true"
+NEWS_VERBOSE_LOGS = os.environ.get("NEWS_VERBOSE_LOGS", "false").lower() == "true"
+
 # News analysis configuration
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "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")
 JBLANKED_API_URL = os.environ.get("JBLANKED_API_URL", "https://www.jblanked.com/news/api/forex-factory/calendar/week/")

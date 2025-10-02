@@ -1,7 +1,14 @@
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+import json
+
+# Optional flag imports (lazy failure-safe) to gate noisy logs
+try:
+    from .config import ALERT_VERBOSE_LOGS, NEWS_VERBOSE_LOGS  # type: ignore
+except Exception:
+    ALERT_VERBOSE_LOGS = False  # type: ignore
+    NEWS_VERBOSE_LOGS = False  # type: ignore
 
 
 def _now_iso() -> str:
@@ -62,6 +69,47 @@ def _format_human(level: int, payload: Dict[str, Any]) -> str:
 
 
 def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> None:
+    # Suppress known-noisy events unless the corresponding verbose flag is enabled
+    noisy_alert_events = {
+        "alert_eval_start",
+        "alert_eval_config",
+        "alert_eval_end",
+        "closed_bar_unknown",
+        "closed_bar_already_evaluated",
+        "rsi_no_trigger",
+        "market_data_loaded",
+        "market_data_stale",
+        "heatmap_eval",
+        "heatmap_no_trigger",
+        "corr_no_mismatch",
+        "corr_persisting_mismatch",
+        "daily_sleep_until",
+        "daily_build_start",
+        "daily_build_done",
+        "daily_completed",
+        "daily_auth_fetch_start",
+        "daily_auth_fetch_page",
+        "daily_auth_fetch_page_emails",
+        "daily_auth_fetch_done",
+        "daily_auth_emails",
+        "daily_send_batch",
+    }
+    noisy_news_events = {
+        "news_auth_fetch_start",
+        "news_auth_fetch_page",
+        "news_auth_fetch_page_emails",
+        "news_auth_fetch_done",
+        "news_users_fetch_fallback_alert_tables",
+        "news_reminder_due_items",
+        "news_auth_emails",
+        "news_reminder_recipients",
+        "news_reminder_completed",
+    }
+    if (event in noisy_alert_events and not ALERT_VERBOSE_LOGS) or (
+        event in noisy_news_events and not NEWS_VERBOSE_LOGS
+    ):
+        return
+
     payload: Dict[str, Any] = {"event": event, "ts": _now_iso(), **fields}
     # Provide default service/module name if not supplied
     payload.setdefault("service", logger.name)
@@ -82,5 +130,4 @@ def log_warning(logger: logging.Logger, event: str, **fields: Any) -> None:
 
 def log_error(logger: logging.Logger, event: str, **fields: Any) -> None:
     log_event(logger, logging.ERROR, event, **fields)
-
 

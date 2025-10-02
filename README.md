@@ -908,6 +908,20 @@ All logs include timestamps with timezone offset using the format:
 
 You can control verbosity via `LOG_LEVEL` (default `INFO`).
 
+#### Verbosity Flags (non-critical logs)
+- `LIVE_RSI_DEBUGGING` — emits periodic closed‑bar RSI for BTC/USD 1M (default `false`).
+- `LOG_ENV_DUMP` — prints full environment snapshot at startup (default `false`; may include secrets).
+- `ALERT_VERBOSE_LOGS` — enables non‑critical alert/daily diagnostics like config echoes and no‑trigger reasons (default `false`).
+- `NEWS_VERBOSE_LOGS` — enables verbose news fetch/parse/update prints (default `false`).
+
+Examples:
+```bash
+export LIVE_RSI_DEBUGGING=true
+export ALERT_VERBOSE_LOGS=true
+# Keep sensitive env quiet by default:
+export LOG_ENV_DUMP=false
+```
+
 The system provides comprehensive logging for:
 - Connection events
 - Data processing errors

@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Set
 
 import aiohttp
 import logging
+import builtins
 
 from .config import (
     JBLANKED_API_KEY,
@@ -21,6 +22,7 @@ from .config import (
 from .models import NewsAnalysis, NewsItem
 from .email_service import email_service
 from .alert_logging import log_debug, log_info, log_error
+from .config import NEWS_VERBOSE_LOGS
 
 
 def _get_field(item: dict, keys: List[str]):
@@ -114,6 +116,17 @@ news_cache_metadata: Dict[str, any] = {
 
 # Local logger for this module
 logger = logging.getLogger(__name__)
+
+
+def _vprint(*args, **kwargs) -> None:
+    if NEWS_VERBOSE_LOGS:
+        try:
+            builtins.print(*args, **kwargs)
+        except Exception:
+            pass
+
+# Gate all module-level prints behind NEWS_VERBOSE_LOGS
+print = _vprint  # type: ignore
 
 
 def _ensure_parent_dir(file_path: str) -> None:
