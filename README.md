@@ -268,7 +268,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 - The app now auto-loads `.env` via `python-dotenv` in `app/config.py`.
 - Place your `.env` at the project root (same folder as `server.py`).
 - Existing process environment variables are not overridden (safe-by-default).
-- This fixes cases where macOS/Linux sessions didn’t see `SENDGRID_API_KEY` unless exported manually.
+- This fixes cases where macOS/Linux sessions didn't see `SENDGRID_API_KEY` unless exported manually.
 
 ## 📡 API Documentation
 
@@ -395,9 +395,29 @@ Internal alert tick_data shape:
 
 #### Market Data WebSocket v2 (`/market-v2`)
 - Use `/market-v2` for new clients. It exposes the same tick and OHLC payloads, and advertises capabilities via `supported_data_types` in the greeting.
-- Current capabilities: `supported_data_types = ["ticks","ohlc"]`. `indicators` and `market_summary` will be added in follow-up tasks (see REARCHITECTING.md).
+- Current capabilities: `supported_data_types = ["ticks","ohlc","indicators"]`. `market_summary` will be added in a follow-up task (see `REARCHITECTING.md`).
 - During migration, `/ws/market` and `/ws/ticks` remain available; they will be removed after cutover.
-- The v2 subscribe shape is unchanged; request `data_types: ["ticks","ohlc"]` for now.
+- The v2 subscribe shape is unchanged; request `data_types: ["ticks","ohlc","indicators"]` as needed.
+
+V2 greeting example (capabilities + indicators registry):
+
+```json
+{
+  "type": "connected",
+  "message": "WebSocket connected successfully",
+  "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
+  "supported_data_types": ["ticks","ohlc","indicators"],
+  "supported_price_bases": ["last","bid","ask"],
+  "ohlc_schema": "parallel",
+  "indicators": {
+    "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]},
+    "ema": {"periods": [21, 50, 200]},
+    "macd": {"params": {"fast": 12, "slow": 26, "signal": 9}},
+    "ichimoku": {"params": {"tenkan": 9, "kijun": 26, "senkou_b": 52, "displacement": 26}},
+    "utbot": {"params": {"ema": 50, "atr": 10, "k": 3.0}}
+  }
+}
+```
 
 ### REST API Endpoints
 
@@ -451,7 +471,7 @@ Response shape:
 ```
 
 Notes:
-- RSI is computed on closed bars only, matching MT5’s default RSI(14) close/Wilder.
+- RSI is computed on closed bars only, matching MT5's default RSI(14) close/Wilder.
 - `times_*` arrays align 1:1 with `rsi[]` and correspond to the closed bars beginning at index `period` in the closed OHLC sequence.
 - For exact parity with MT5, request the broker‑suffixed symbol (e.g., `EURUSDm`).
 
@@ -519,7 +539,7 @@ Notes:
   - RSI Threshold: evaluate pairwise RSI combinations (e.g., positive/negative mismatches, neutral break) using per‑pair RSI settings.
   - Real Correlation: compute Pearson correlation of returns over a configurable `correlation_window` (default 50) using historical OHLC closes for both symbols.
 - Outputs include RSI values (threshold mode) or `correlation_value` (real correlation mode), with per‑pair details in emails.
-  - Email uses a compact, mobile‑friendly HTML template titled “RSI Correlation Mismatch” with columns: Expected, RSI Corr Now, Trigger.
+  - Email uses a compact, mobile‑friendly HTML template titled "RSI Correlation Mismatch" with columns: Expected, RSI Corr Now, Trigger.
 
 #### Email Template (RSI Correlation — Threshold Mode)
 - Compact per‑pair card with RSI correlation summary.
@@ -558,7 +578,7 @@ Notes:
 
 - Per‑timeframe indicator strength is normalized to a score in [−100..+100].
 - Startup warm‑up: For the Tracker, armed state per (alert, symbol) is initialized from current Buy%/Sell% (sides already above thresholds start disarmed) and the first observation is skipped. For the Custom Indicator Tracker, the last signal per (alert, symbol, timeframe, indicator) is baselined and the first observation is skipped.
-- Style weighting aggregates across the alert’s selected timeframes:
+- Style weighting aggregates across the alert's selected timeframes:
   - Scalper: 1M(0.2), 5M(0.4), 15M(0.3), 30M(0.1)
   - Swing: 1H(0.25), 4H(0.45), 1D(0.3)
 - Final Score = weighted average of per‑TF scores; Buy Now % = (Final Score + 100)/2.
@@ -601,7 +621,7 @@ See `ALERTS.md` for the consolidated alerts product & tech spec.
 - No active alerts: Ensure you have rows in Supabase for `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`, or `rsi_correlation_tracker_alerts` with `is_active=true` and non‑empty `pairs` (max 3).
 - Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. On higher TFs, RSI may hover mid‑band for long periods.
 - Arm/disarm gating: After a trigger, that side disarms and rearms only after leaving the zone (threshold−5).
-- Correlation triggers: Fire only on transitions into a mismatch state; steady regimes won’t re‑trigger.
+- Correlation triggers: Fire only on transitions into a mismatch state; steady regimes won't re‑trigger.
 
 ### 📰 News API Usage (External Source + Internal Endpoints)
 
@@ -787,7 +807,8 @@ Fxlabs.ai_Back_end/
 │   ├── email_service.py               # SendGrid email service for alerts
 │   ├── heatmap_alert_service.py       # Heatmap alert processing
 │   ├── rsi_alert_service.py           # RSI alert processing
-│   └── rsi_correlation_alert_service.py # RSI correlation alert processing
+│   ├── rsi_correlation_tracker_alert_service.py # RSI correlation alert processing
+│   └── indicators.py                  # Centralized indicator math (RSI/EMA/MACD/Ichimoku/UT Bot)
 ├── server.py                          # FastAPI app, routes & websockets (imports from app/*)
 ├── requirements.txt                   # Python dependencies
 ├── config.yml                         # Cloudflare tunnel config
@@ -897,15 +918,15 @@ Model behavior:
   1) If Source impact hint ∈ {High, Medium, Low}, mirror it (lowercased) UNLESS it contradicts the taxonomy below by >1 tier; in that case, prefer the taxonomy.
   2) Taxonomy by EVENT FAMILY (based on what historically moves FX):
      TIER-1 (default "high"):
-     - CPI (headline/core), PCE (US), central-bank rate decisions/statements/pressers/minutes, major labor (NFP/Employment Change, Unemployment Rate, Average/Hourly Earnings), GDP “advance/flash”, ISM PMIs (US), Flash PMIs (EZ/UK), Retail Sales (US/UK/CA headline; US control group). 
+     - CPI (headline/core), PCE (US), central-bank rate decisions/statements/pressers/minutes, major labor (NFP/Employment Change, Unemployment Rate, Average/Hourly Earnings), GDP "advance/flash", ISM PMIs (US), Flash PMIs (EZ/UK), Retail Sales (US/UK/CA headline; US control group). 
      TIER-2 (default "medium"):
-     - PPI, GDP “second/final”, Retail Sales ex-autos (non-US), durable goods (ex-transport), trade balance, housing starts/building permits, consumer/business confidence, final PMIs.
+     - PPI, GDP "second/final", Retail Sales ex-autos (non-US), durable goods (ex-transport), trade balance, housing starts/building permits, consumer/business confidence, final PMIs.
      TIER-3 (default "low"):
      - Regional/small surveys, auctions, secondary indices with limited FX pass-through.
   3) Currency-bloc adjustment:
      - For G10 (USD, EUR, JPY, GBP, AUD, NZD, CAD, CHF, SEK, NOK): keep tiers as above.
      - For non-G10/minor economies: downgrade one tier unless the pair is commonly traded against USD/EUR and the event is TIER-1.
-  4) Do NOT upgrade events due to hype or proximity in time. Color codes indicate tiers but don’t override taxonomy.
+  4) Do NOT upgrade events due to hype or proximity in time. Color codes indicate tiers but don't override taxonomy.
 
   B) EFFECT (directional bias for the LISTED currency, pre-release)
   5) Do NOT guess the actual. Infer bias from forecast vs prior, policy stance, and trend (inflation/labor/growth/central-bank guidance).
@@ -995,10 +1016,10 @@ The system provides comprehensive logging for:
 #### Alert Evaluation Cadence (Closed‑Bar)
 - The alert evaluator loop sleeps until the next `5M` boundary and runs immediately after it. This ensures RSI‑closed and other closed‑bar math are computed right after the candle closes (no drift). Higher timeframes (15M/30M/1H/4H/1D/W1) are also aligned since their boundaries are multiples of 5 minutes.
 
-#### Troubleshooting: WebSocket “accept” error
+#### Troubleshooting: WebSocket "accept" error
 - Symptom: RuntimeError "WebSocket is not connected. Need to call 'accept' first." in logs.
-- Meaning: The client closed or the connection wasn’t fully established when the server tried to read. This is a normal transient condition with flaky clients or quick reconnects.
-- Handling: The server now treats this as a clean disconnect and exits the read loop gracefully; no action required unless it’s frequent. If frequent, check client networking and retry logic.
+- Meaning: The client closed or the connection wasn't fully established when the server tried to read. This is a normal transient condition with flaky clients or quick reconnects.
+- Handling: The server now treats this as a clean disconnect and exits the read loop gracefully; no action required unless it's frequent. If frequent, check client networking and retry logic.
 
 #### File Logging (added)
 - Logs are written both to the terminal and to `logs/<YYYY-MM-DDTHH-mm-ssZ>.log` (UTC start time) in the repository root. A new file is created for each server start.
@@ -1161,11 +1182,11 @@ For support and questions:
 ## 🛠️ Troubleshooting
 
 ### "RSI Tracker: triggers exist in DB but no emails/logs"
-- **What it means**: Records appear in `rsi_tracker_alert_triggers`, but you don’t see corresponding console logs or emails.
-- **Why it happened previously**: The tracker didn’t log info-level messages on successful triggers, and exceptions during email scheduling could be swallowed without a visible log.
+- **What it means**: Records appear in `rsi_tracker_alert_triggers`, but you don't see corresponding console logs or emails.
+- **Why it happened previously**: The tracker didn't log info-level messages on successful triggers, and exceptions during email scheduling could be swallowed without a visible log.
 - **Fix in code**: The tracker now logs when triggers are detected and when emails are queued, and logs any exceptions during email scheduling.
 - **Quick checks**:
-  - **notification_methods**: Ensure your alert has `"notification_methods": ["email"]`. If it’s `"browser"` only, emails won’t send.
+  - **notification_methods**: Ensure your alert has `"notification_methods": ["email"]`. If it's `"browser"` only, emails won't send.
     - Supabase check example: verify the `notification_methods` column for your alert row includes `"email"`.
   - **Email service configured**: Set `SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME` in `.env`. The service logs diagnostics if not configured.
   - **Log level**: Set `LOG_LEVEL=INFO` (or `DEBUG`) so you see tracker/email logs.
@@ -1179,7 +1200,7 @@ Expected logs when working:
   - Email service logs like `📧 RSI Alert Email Service - Starting email process` and `📊 SendGrid response: Status 202`.
 
 ### "RSI Correlation Tracker: triggers exist in DB but no emails/logs"
-- **Symptom**: Rows appear in `rsi_correlation_tracker_alert_triggers` but you don’t see emails or logs.
+- **Symptom**: Rows appear in `rsi_correlation_tracker_alert_triggers` but you don't see emails or logs.
 - **Fix in code**: The correlation tracker now logs when a trigger occurs and when an email is queued; errors are logged during send.
 - **Checklist**:
   - **Pairs configured**: Set `RSI_CORR_TRACKER_DEFAULT_PAIRS` (e.g., `EURUSD_GBPUSD,USDJPY_GBPUSD`).
@@ -1191,7 +1212,7 @@ Expected logs when working:
   - `📤 Queueing email send for RSI Correlation Tracker ...`
 
 ### "SendGrid not configured, skipping RSI alert email"
-- Cause: `EmailService` didn't initialize a SendGrid client (`self.sg is None`). This happens when either the SendGrid library isn’t installed or tenant-specific credentials are missing.
+- Cause: `EmailService` didn't initialize a SendGrid client (`self.sg is None`). This happens when either the SendGrid library isn't installed or tenant-specific credentials are missing.
 - Fix quickly:
   - Install deps in your venv: `pip install -r requirements.txt` (includes `sendgrid`)
   - Provide tenant-specific credentials via environment or `.env` (auto-loaded now):
@@ -1200,7 +1221,7 @@ Expected logs when working:
   - Ensure your process actually sees the variables:
     - macOS/Linux: `.env` is auto-loaded; no manual `export` needed
     - Windows: `start.ps1`/`start.bat` also load `.env`
-  - Verify your SendGrid sender: Single Sender verification or Domain Authentication, otherwise SendGrid returns 400/403 and emails won’t send.
+  - Verify your SendGrid sender: Single Sender verification or Domain Authentication, otherwise SendGrid returns 400/403 and emails won't send.
 - Where to set: copy `config.env.example` to `.env` and fill values, or set env vars directly in your deployment.
 
 ### "HTTP Error 403: Forbidden" during send (intermittent)
@@ -1220,7 +1241,7 @@ Expected logs when working:
   - Run `python send_test_email.py you@example.com` (in an environment where running is allowed) to verify the path end-to-end.
 
 #### Email Configuration Diagnostics (enhanced logs)
-When email sending is disabled, the service now emits structured diagnostics showing what’s missing or invalid (without leaking secrets). Example:
+When email sending is disabled, the service now emits structured diagnostics showing what's missing or invalid (without leaking secrets). Example:
 
 ```
 ⚠️ Email service not configured — RSI alert email
@@ -1232,8 +1253,8 @@ When email sending is disabled, the service now emits structured diagnostics sho
 
 Notes:
 - API key is masked (prefix + last 4 chars) for safety.
-- If the key doesn’t start with `SG.`, a hint is logged to double‑check the value.
-- `rsi_alert_service` will also surface a one‑line summary under “Email diagnostics:” when an email send fails.
+- If the key doesn't start with `SG.`, a hint is logged to double‑check the value.
+- `rsi_alert_service` will also surface a one‑line summary under "Email diagnostics:".
 
 ### "AttributeError: 'RSIAlertService' object has no attribute '_allow_by_pair_cooldown'"
 - Cause: Older builds missed the per (alert, symbol, timeframe, side) cooldown helper in `app/rsi_alert_service.py` while it was referenced during RSI checks.
@@ -1287,7 +1308,7 @@ It should point to your project's `.venv` path. If not, re-run activation and re
   - Complete Domain Authentication (CNAMEs) and send from an aligned subdomain (e.g., `alerts@alerts.fxlabs.ai`).
   - Ensure SPF includes `include:sendgrid.net`, DKIM passes, and set DMARC to `p=none` during testing; move to `quarantine`/`reject` after validation.
 - Reduce spam likelihood: include both `text/plain` and `text/html` parts, avoid URL shorteners, keep images minimal, and use a consistent `FROM_EMAIL` that matches your authenticated domain.
-- Check suppression lists anyway: make sure the recipient isn’t present under Bounces/Blocks/Spam Reports; remove if found, then resend.
+- Check suppression lists anyway: make sure the recipient isn't present under Bounces/Blocks/Spam Reports; remove if found, then resend.
 - Confirm SendGrid Sandbox Mode is OFF under Mail Settings. Sandbox disables actual delivery even if the API returns 2xx.
 - A/B test: send the same message to a known Gmail/Outlook inbox to isolate whether the issue is at the sender or recipient domain.
 - Optional (code): call `_add_transactional_headers(mail)` before sending to add transactional headers like `List-Unsubscribe` and a category, which can improve inboxing.
@@ -1307,7 +1328,7 @@ Operational notes:
 - Avoid URL shorteners and excessive links in alert content.
 - DMARC alignment: after verifying inboxing, move DMARC policy from `p=none` to `quarantine`/`reject` gradually.
 
-### Outlook/Office 365: "We can’t verify this email came from the sender"
+### Outlook/Office 365: "We can't verify this email came from the sender"
 This is a DMARC alignment/authentication issue. Fix by authenticating the domain and aligning the From address.
 
 Checklist:
@@ -1321,7 +1342,7 @@ Checklist:
 - DMARC for the sending domain/subdomain: start permissive, then tighten.
   - Example: `v=DMARC1; p=none; rua=mailto:dmarc@fxlabs.ai; adkim=s; aspf=s; pct=100`
   - After validation, move to `p=quarantine` → `p=reject` to reduce spoofing.
-- From address must match the authenticated domain: send from `alerts@alerts.fxlabs.ai` if that’s the domain you authenticated (update `FROM_EMAIL`).
+- From address must match the authenticated domain: send from `alerts@alerts.fxlabs.ai` if that's the domain you authenticated (update `FROM_EMAIL`).
 - Optional: BIMI (brand logo) can help, but only after DMARC passes with enforcement and, ideally, a VMC.
 
 Why Outlook flagged it:

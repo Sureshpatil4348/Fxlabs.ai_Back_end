@@ -1123,9 +1123,16 @@ async def ws_market_v2(websocket: WebSocket):
                 "message": "WebSocket connected successfully",
                 "supported_timeframes": [tf.value for tf in Timeframe],
                 # WS-V2-1: ticks + ohlc supported initially; more types arrive later
-                "supported_data_types": ["ticks", "ohlc"],
+                "supported_data_types": ["ticks", "ohlc", "indicators"],
                 "supported_price_bases": ["last", "bid", "ask"],
                 "ohlc_schema": "parallel",
+                "indicators": {
+                    "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]},
+                    "ema": {"periods": [21, 50, 200]},
+                    "macd": {"params": {"fast": 12, "slow": 26, "signal": 9}},
+                    "ichimoku": {"params": {"tenkan": 9, "kijun": 26, "senkou_b": 52, "displacement": 26}},
+                    "utbot": {"params": {"ema": 50, "atr": 10, "k": 3.0}}
+                },
             })
         except Exception:
             # Client may already have disconnected
