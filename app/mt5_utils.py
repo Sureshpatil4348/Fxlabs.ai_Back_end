@@ -8,8 +8,7 @@ import MetaTrader5 as mt5
 from fastapi import HTTPException
 
 from .models import Timeframe, OHLC, Tick
-from .config import LIVE_RSI_DEBUGGING
-from .rsi_utils import calculate_rsi_latest, closed_closes
+ 
 
 
 MT5_TIMEFRAMES = {
@@ -178,7 +177,6 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[O
         raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, count)
     if rates is None or len(rates) == 0:
-        _maybe_log_live_rsi()
         logger.debug(f"⚠️ No rates from MT5 for {symbol}")
         return []
     ohlc_data = []
@@ -186,7 +184,6 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[O
         ohlc = _to_ohlc(symbol, timeframe.value, rate)
         if ohlc:
             ohlc_data.append(ohlc)
-    _maybe_log_live_rsi()
     return ohlc_data
 
 
@@ -250,58 +247,7 @@ def get_daily_change_pct_bid(symbol: str) -> Optional[float]:
     except Exception:
         return None
 
-def _maybe_log_live_rsi() -> None:
-    if not LIVE_RSI_DEBUGGING:
-        return
-    symbol = "BTCUSDm"
-    timeframe = Timeframe.M1
-    mt5_timeframe = MT5_TIMEFRAMES.get(timeframe)
-    if mt5_timeframe is None:
-        return
-    try:
-        ensure_symbol_selected(symbol)
-    except Exception as exc:
-        logger.info(f"🧭 liveRSI skip — unable to select {symbol}: {exc}")
-        return
-    rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, 50)
-    # MT5 returns a NumPy array; avoid ambiguous truth checks
-    if rates is None or len(rates) == 0:
-        logger.info("🧭 liveRSI skip — no MT5 rates for BTCUSDm 1M")
-        return
-    bars: List[OHLC] = []
-    for rate in rates:
-        ohlc = _to_ohlc(symbol, timeframe.value, rate)
-        if ohlc:
-            bars.append(ohlc)
-    closed_bars = [bar for bar in bars if getattr(bar, "is_closed", None) is not False]
-    if len(closed_bars) < 15:
-        logger.info("🧭 liveRSI skip — insufficient closed bars for BTCUSDm 1M")
-        return
-    latest_closed = closed_bars[-1]
-    key = "BTCUSD:1M"
-    if _live_rsi_last_logged.get(key) == latest_closed.time:
-        return
-    closes = [bar.close for bar in closed_bars]
-    rsi_value = calculate_rsi_latest(closes, 14)
-    if rsi_value is None:
-        return
-    time_iso = latest_closed.time_iso
-    if "T" in time_iso:
-        date_part, time_part = time_iso.split("T", 1)
-    else:
-        date_part, time_part = time_iso, ""
-    time_part = time_part.replace("+00:00", "Z")
-    pair_display = "BTC/USD"
-    volume_str = f"{latest_closed.volume:.2f}" if latest_closed.volume is not None else "-"
-    tick_volume_str = f"{latest_closed.tick_volume:.0f}" if latest_closed.tick_volume is not None else "-"
-    spread_str = f"{latest_closed.spread:.0f}" if latest_closed.spread is not None else "-"
-    log_message = (
-        f"🧭 liveRSI {pair_display} 1 minute RSIclosed(14)={rsi_value:.2f} | date={date_part} time={time_part} "
-        f"open={latest_closed.open:.5f} high={latest_closed.high:.5f} low={latest_closed.low:.5f} "
-        f"close={latest_closed.close:.5f} volume={volume_str} tick_volume={tick_volume_str} spread={spread_str}"
-    )
-    logger.info(log_message)
-    _live_rsi_last_logged[key] = latest_closed.time
+ 
 
 
 def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe) -> datetime:

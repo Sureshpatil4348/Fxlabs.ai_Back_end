@@ -1098,10 +1098,10 @@ The system provides comprehensive logging for:
 - API request/response cycles
 - Performance metrics
 
-#### Live RSI Debugging cadence (why not every minute?)
-- `🧭 liveRSI` logs are emitted by `app.mt5_utils._maybe_log_live_rsi()` only when `get_ohlc_data(...)` is called.
-- The alert scheduler is boundary‑aligned to 5‑minute multiples, so in a headless setup you will typically see one `liveRSI` line each scheduler cycle (usually every 5 minutes). A dedicated background task now logs exactly on each M1 close when `LIVE_RSI_DEBUGGING=true`.
-- If a WebSocket client subscribes to OHLC and triggers frequent `get_ohlc_data(...)` calls, you may see more frequent `liveRSI` lines.
+#### Live RSI Debugging cadence (M1 closed‑bar, cache‑aligned)
+- `🧭 liveRSI` logs are emitted directly from the indicator scheduler when it detects a new closed `1M` bar. Values are sourced from the same indicator pipeline and cache used by alerts and WebSocket indicator streaming (single source of truth).
+- When `LIVE_RSI_DEBUGGING=true`, logs appear shortly after each M1 close (sub‑100 ms latency target).
+- Previous helper `app.mt5_utils._maybe_log_live_rsi()` and the dedicated boundary task have been removed to prevent duplicate math and drift.
 
 #### Alert Evaluation Cadence (Closed‑Bar)
 - The alert evaluator loop sleeps until the next `5M` boundary and runs immediately after it. This ensures RSI‑closed and other closed‑bar math are computed right after the candle closes (no drift). Higher timeframes (15M/30M/1H/4H/1D/W1) are also aligned since their boundaries are multiples of 5 minutes.

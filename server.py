@@ -90,11 +90,6 @@ async def lifespan(app: FastAPI):
     _minute_scheduler_running = True
     _minute_scheduler_task = asyncio.create_task(_minute_alerts_scheduler())
     
-    # Optional: dedicated M1 live RSI debugger — logs exactly at each 1M close
-    live_rsi_task: Optional[asyncio.Task] = None
-    if LIVE_RSI_DEBUGGING:
-        live_rsi_task = asyncio.create_task(_live_rsi_debugger())
-    
     # Start 10s closed-bar indicator poller
     global _indicator_scheduler_task
     _indicator_scheduler_task = asyncio.create_task(_indicator_scheduler())
@@ -110,8 +105,6 @@ async def lifespan(app: FastAPI):
     daily_task.cancel()
     if _minute_scheduler_task:
         _minute_scheduler_task.cancel()
-    if live_rsi_task:
-        live_rsi_task.cancel()
     if _indicator_scheduler_task:
         _indicator_scheduler_task.cancel()
     try:
@@ -129,11 +122,6 @@ async def lifespan(app: FastAPI):
     if _minute_scheduler_task:
         try:
             await _minute_scheduler_task
-        except asyncio.CancelledError:
-            pass
-    if live_rsi_task:
-        try:
-            await live_rsi_task
         except asyncio.CancelledError:
             pass
     if _indicator_scheduler_task:
@@ -424,6 +412,40 @@ async def _indicator_scheduler() -> None:
                     _indicator_last_bar[key] = last_closed.time
                     processed += 1
 
+                    # Live RSI debug log for M1 closed bars using cache-aligned numbers
+                    try:
+                        if LIVE_RSI_DEBUGGING and tf == Timeframe.M1 and rsi_val is not None:
+                            time_iso = getattr(last_closed, "time_iso", "") or ""
+                            if "T" in time_iso:
+                                parts = time_iso.split("T", 1)
+                                date_part = parts[0]
+                                time_part = parts[1]
+                            else:
+                                date_part = time_iso
+                                time_part = ""
+                            time_part = time_part.replace("+00:00", "Z")
+                            volume_str = f"{last_closed.volume:.2f}" if getattr(last_closed, "volume", None) is not None else "-"
+                            tick_volume_str = f"{last_closed.tick_volume:.0f}" if getattr(last_closed, "tick_volume", None) is not None else "-"
+                            spread_str = f"{last_closed.spread:.0f}" if getattr(last_closed, "spread", None) is not None else "-"
+                            logger = logging.getLogger(__name__)
+                            logger.info(
+                                "🧭 liveRSI %s 1M RSIclosed(14)=%.2f | date=%s time=%s open=%.5f high=%.5f low=%.5f close=%.5f volume=%s tick_volume=%s spread=%s",
+                                symbol,
+                                float(rsi_val),
+                                date_part,
+                                time_part,
+                                float(getattr(last_closed, "open", 0.0)),
+                                float(getattr(last_closed, "high", 0.0)),
+                                float(getattr(last_closed, "low", 0.0)),
+                                float(getattr(last_closed, "close", 0.0)),
+                                volume_str,
+                                tick_volume_str,
+                                spread_str,
+                            )
+                    except Exception:
+                        # Debug-only logging must never break the scheduler
+                        pass
+
                     # Broadcast to interested clients (best-effort)
                     if clients:
                         snapshot = {
@@ -535,38 +557,7 @@ async def _market_summary_scheduler() -> None:
     except Exception as e:
         print(f"❌ Market summary scheduler fatal error: {e}")
 
-async def _live_rsi_debugger():
-    """Emit liveRSI debug exactly on each 1-minute closed candle when enabled.
-
-    Runs as a lightweight background task and calls app.mt5_utils._maybe_log_live_rsi()
-    right after the 1M boundary, independent of alert evaluation cadence.
-    """
-    try:
-        from app.models import Timeframe as TF
-        from app.mt5_utils import calculate_next_update_time, _maybe_log_live_rsi
-        # Compute next 1-minute boundary
-        next_run = calculate_next_update_time(datetime.now(timezone.utc), TF.M1)
-        while True:
-            now = datetime.now(timezone.utc)
-            delay = max((next_run - now).total_seconds(), 0.02)
-            try:
-                await asyncio.sleep(delay)
-            except asyncio.CancelledError:
-                raise
-            try:
-                # Tiny settle to allow MT5 to finalize the last bar buffers
-                # Keep under 100 ms total latency as per requirement
-                await asyncio.sleep(0.06)
-                _maybe_log_live_rsi()
-            except Exception:
-                # Never fail hard on debug logging
-                pass
-            next_run = calculate_next_update_time(datetime.now(timezone.utc), TF.M1)
-    except asyncio.CancelledError:
-        return
-    except Exception:
-        # Silent exit on unexpected errors (debug helper)
-        return
+# liveRSI boundary debugger removed — logs now emitted from indicator scheduler for M1
 
 @app.get("/health")
 def health():
