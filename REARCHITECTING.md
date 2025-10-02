@@ -3,7 +3,7 @@
 This document defines a simple, polling-only design that uses Python’s MetaTrader5 library to deliver fast tick streaming and closed-bar indicator updates on a 10-second cadence. No Expert Advisor (EA) or external bridge is required.
 
 ## Goals
-- Live tick pricing to frontend (target ~100ms stream cadence, best-effort) via WebSocket.
+- Minimal frontend data: every ~100ms push only `bid` price and daily % change (matching MT5), via WebSocket.
 - Every 10 seconds, detect newly closed candles for all tracked symbols and timeframes (M1 → W1) and emit indicator updates.
 - Indicators computed in Python for closed bars:
   - RSI (support common periods: e.g., 2, 3, 5, 7, 9, 14, 21, 50)
@@ -42,12 +42,18 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
   - `indicator_cache` (new): dictionary keyed by `symbol:timeframe`, storing the latest IndicatorSnapshot (+small ring buffer for snapshots on connect).
 
 - WebSocket (existing `/ws/market`)
-  - Continue sending `ticks` (10Hz) and `ohlc_update` (at TF boundaries).
-  - Add `indicator_update` messages for new closed bars and send a snapshot on connect.
+  - Price stream: every ~100ms, push compact `price_update` with `{symbol, time, bid, daily_change_pct}` only.
+  - Indicators stream: push `indicator_update` when new closed-bar indicators are computed (10s poll cadence).
+  - On subscribe, send `initial_price` and `initial_indicators` snapshots when requested.
 
 ## Data Models
-- PriceTick: `{sym, ts, bid, ask, last?, spread?, seq?}` (unchanged)
+- PriceUpdate (frontend): `{symbol, time, time_iso, bid, daily_change_pct}`
 - IndicatorSnapshot: `{sym, tf, bar_time, indicators: { rsi: {period->value}, ema: {21,50,200}, macd: {macd, signal, hist}, ichimoku: {tenkan, kijun, senkou_a, senkou_b, chikou}, utbot: {signal, type, baseline, atr, longStop, shortStop, new, confidence} }}`
+
+Daily % change calculation (matching MT5 as closely as feasible without EA):
+- Prefer the current D1 bar open for the broker’s trading day: `daily_change_pct = 100 * (bid_now - D1_open_today) / D1_open_today`.
+- Implementation: fetch last 2 D1 bars via `get_ohlc_data(symbol, Timeframe.D1, 2)`. If the latest D1 bar’s `time` belongs to today (broker server time), use its `open`; otherwise use the previous D1 bar’s `close` as fallback for session transitions.
+- Use `bid` basis consistently for both numerator and denominator to minimize drift.
 
 ## WebSocket API and Message Formats
 
@@ -61,7 +67,7 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
       "type": "connected",
       "message": "WebSocket connected successfully",
       "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
-      "supported_data_types": ["ticks","ohlc","indicators"],
+      "supported_data_types": ["price","indicators"],
       "supported_price_bases": ["last","bid","ask"],
       "ohlc_schema": "parallel"
     }
@@ -74,7 +80,7 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
       "action": "subscribe",
       "symbol": "EURUSDm",
       "timeframe": "5M",
-      "data_types": ["ticks","ohlc","indicators"],
+      "data_types": ["price","indicators"],
       "price_basis": "last",
       "ohlc_schema": "parallel"
     }
@@ -85,7 +91,7 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
       "type": "subscribed",
       "symbol": "EURUSDm",
       "timeframe": "5M",
-      "data_types": ["ticks","ohlc","indicators"],
+      "data_types": ["price","indicators"],
       "price_basis": "last",
       "ohlc_schema": "parallel"
     }
@@ -93,13 +99,12 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
   - Errors are returned as `{ "type": "error", "error": "..." }`.
 
 - Snapshots on subscribe
-  - Initial OHLC history (last up to 250 bars):
+  - Initial price (bid + daily change):
     ```json
     {
-      "type": "initial_ohlc",
+      "type": "initial_price",
       "symbol": "EURUSDm",
-      "timeframe": "5M",
-      "data": [ { /* OHLC objects, shaped per price_basis+schema */ } ]
+      "data": { "time": 1696229945123, "time_iso": "2025-10-02T14:19:05.123Z", "bid": 1.06871, "daily_change_pct": 0.21 }
     }
     ```
   - Initial indicators (latest closed bar), when `indicators` is requested:
@@ -120,22 +125,9 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
     ```
 
 - Live pushes
-  - Ticks (up to 10 Hz):
+  - Price (every ~100ms; coalesce duplicates):
     ```json
-    {
-      "type": "ticks",
-      "data": [
-        {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06874,"last":1.06873,"volume":12.3,"flags":0}
-      ]
-    }
-    ```
-  - Forming-candle OHLC (during ticks for `ohlc` subscribers):
-    ```json
-    { "type": "ohlc_live", "data": { /* OHLC with is_closed=false, shaped per basis/schema */ } }
-    ```
-  - Closed-candle OHLC at timeframe boundaries:
-    ```json
-    { "type": "ohlc_update", "data": { /* OHLC with is_closed=true */ } }
+    { "type": "price_update", "symbol": "EURUSDm", "data": { "time": 1696229945123, "time_iso": "2025-10-02T14:19:05.123Z", "bid": 1.06871, "daily_change_pct": 0.21 } }
     ```
   - Indicator update (10s poller after a new closed bar is detected):
     ```json
