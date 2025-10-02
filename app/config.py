@@ -16,7 +16,7 @@ ALLOWED_ORIGINS = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") i
 MT5_TERMINAL_PATH = os.environ.get("MT5_TERMINAL_PATH", "")
 
 # Live RSI debugging toggle (defaults off)
-LIVE_RSI_DEBUGGING = os.environ.get("liveRSIDebugging", "false").lower() == "true"
+LIVE_RSI_DEBUGGING = os.environ.get("LIVE_RSI_DEBUGGING", "false").lower() == "true"
 
 # News analysis configuration
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "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")

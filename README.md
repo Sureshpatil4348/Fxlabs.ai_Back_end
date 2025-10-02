@@ -81,7 +81,7 @@ Follow these steps to display "RSI (closed)" in the UI for any timeframe/period 
 
 Following this contract keeps frontend charts, emails, and alert triggers numerically identical.
 
-For runtime inspection of closed-bar RSI, see `LIVE_RSI_DEBUGGING.md`.
+For runtime inspection of closed-bar RSI, see `LIVE_RSI_DEBUGGING.md` and set `LIVE_RSI_DEBUGGING=true`.
 
 ## 🚀 Quick Start
 

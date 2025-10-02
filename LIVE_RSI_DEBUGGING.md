@@ -4,11 +4,11 @@ Use this optional telemetry stream when you need to inspect the backend's closed
 
 ## Enabling
 
-Set the `liveRSIDebugging` environment variable to `true` (defaults to `false`). You can visit this from your deployment configuration, `.env`, or process manager.
+Set the `LIVE_RSI_DEBUGGING` environment variable to `true` (defaults to `false`). You can visit this from your deployment configuration, `.env`, or process manager.
 
 ```bash
 # Example (bash)
-export liveRSIDebugging=true
+export LIVE_RSI_DEBUGGING=true
 ```
 
 Restart the service after changing the variable so the loader can pick it up.

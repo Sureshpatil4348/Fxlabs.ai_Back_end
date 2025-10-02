@@ -92,3 +92,13 @@ def configure_logging(level: str | int = None) -> None:
             logging.getLogger(name).setLevel(logging.WARNING)
         except Exception:
             pass
+
+    # Dump current environment for operator visibility (including secrets per request)
+    try:
+        env_snapshot = {k: v for k, v in os.environ.items()}
+        root.info("🌐 ENV DUMP START")
+        for key in sorted(env_snapshot):
+            root.info("ENV %s=%s", key, env_snapshot[key])
+        root.info("🌐 ENV DUMP END")
+    except Exception as exc:
+        root.warning("Failed to dump environment variables: %s", exc)
