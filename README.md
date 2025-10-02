@@ -761,6 +761,10 @@ The modular structure isolates responsibilities while preserving all existing be
 - **SendGrid**: Email service for alert notifications
 - **Supabase**: Database for alert configurations
 
+### MT5 Integration
+- Full MT5 integration, data fetch, WebSocket streaming, alerts math, and live RSI debugging are documented in `MT5.md`.
+- WebSocket endpoints: `/ws/market` (preferred) and `/ws/ticks` (legacy). See `test_websocket_client.py` for usage.
+
 ### New Helpers
 
 - `app/mt5_utils.py:get_current_tick(symbol: str) -> Optional[Tick]`

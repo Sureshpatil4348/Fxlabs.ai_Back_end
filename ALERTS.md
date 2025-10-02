@@ -2,6 +2,7 @@
 - Supported alerts: RSI Tracker, RSI Correlation Tracker, Quantum Analysis (Heatmap) Tracker, and Quantum Analysis: Custom Indicator Tracker. RSI/Correlation use closed-bar evaluation.
 - Delivery channel: Email (IST timestamps). Telegram is out of scope.
 - Trigger philosophy: fire on threshold crossings; use per-side cooldown and threshold‑level re‑arm.
+ - MT5 data source and closed-bar policy are described in `MT5.md` (see Data Fetch and WebSocket sections).
 
 **Global Rules**
 - Max tracked pairs per user: up to 3.
