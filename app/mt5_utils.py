@@ -168,8 +168,14 @@ def _maybe_log_live_rsi() -> None:
     mt5_timeframe = MT5_TIMEFRAMES.get(timeframe)
     if mt5_timeframe is None:
         return
+    try:
+        ensure_symbol_selected(symbol)
+    except Exception as exc:
+        logger.debug(f"🧭 liveRSI skip — unable to select {symbol}: {exc}")
+        return
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, 50)
     if not rates:
+        logger.debug("🧭 liveRSI skip — no MT5 rates for BTCUSDm 1M")
         return
     bars: List[OHLC] = []
     for rate in rates:
@@ -178,12 +184,14 @@ def _maybe_log_live_rsi() -> None:
             bars.append(ohlc)
     closed_bars = [bar for bar in bars if getattr(bar, "is_closed", None) is not False]
     if len(closed_bars) < 15:
+        logger.debug("🧭 liveRSI skip — insufficient closed bars for BTCUSDm 1M")
         return
     latest_closed = closed_bars[-1]
     key = "BTCUSD:1M"
     if _live_rsi_last_logged.get(key) == latest_closed.time:
         return
-    rsi_value = calculate_rsi_latest(closed_closes(bars), 14)
+    closes = [bar.close for bar in closed_bars]
+    rsi_value = calculate_rsi_latest(closes, 14)
     if rsi_value is None:
         return
     time_iso = latest_closed.time_iso
