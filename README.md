@@ -394,7 +394,7 @@ Internal alert tick_data shape:
 - **Features**: Legacy client support
 
 #### Market Data WebSocket v2 (`/market-v2`)
-- Use `/market-v2` for new clients. It exposes the same tick and OHLC payloads, and additionally advertises `indicators` and `market_summary` capabilities. Greeting includes `"protocol": "2.0"`.
+- Use `/market-v2` for new clients. It exposes the same tick and OHLC payloads, and additionally advertises `indicators` and `market_summary` capabilities via `supported_data_types` in the greeting.
 - During migration, `/ws/market` and `/ws/ticks` remain available; they will be removed after cutover.
 - The v2 subscribe shape is unchanged; request `data_types: ["ticks","ohlc","indicators","market_summary"]` to enable additional streams when available.
 

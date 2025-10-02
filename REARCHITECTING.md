@@ -175,11 +175,10 @@ Goals
 
 Endpoint
 - New WebSocket path: `/market-v2`
-- Greeting (includes protocol versioning and capabilities):
+- Greeting (capabilities only):
   ```json
   {
     "type": "connected",
-    "protocol": "2.0",
     "message": "WebSocket connected successfully",
     "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
     "supported_data_types": ["ticks","ohlc","indicators","market_summary"],
@@ -218,14 +217,14 @@ Validation & Safety
 
 Migration Plan
 1) Implement `/market-v2` directly (no feature flag needed as app is not live). Keep legacy endpoints available during testing.
-2) Capability discovery: v2 greeting includes `protocol: "2.0"`. Clients opting in should prefer `/market-v2` and `indicators`/`market_summary` types.
+2) Capability discovery: v2 greeting advertises `supported_data_types` and `ohlc_schema`. Clients can detect `indicators`/`market_summary` support directly from `supported_data_types`.
 3) Soak test: Mirror a subset of symbols/TFs on both endpoints; compare volumes and error rates. Add metrics for per‑type send counts and failures.
 4) Client rollout: Frontend migrates to `/market-v2` first for read‑only features; enable indicators/summary per module.
 5) Deprecation window: Emit a one‑line deprecation notice to v1 clients in the greeting (`note: "deprecated; use /market-v2"`). Announce removal date.
 6) Removal: After adoption ≥ 100%, delete `/ws/ticks` and `/ws/market` routes and related legacy glue.
 
 Breaking Changes vs v1 (none required)
-- Message envelope and OHLC payloads remain identical; v2 only adds new types (`indicator_update`, `market_summary`) and the `protocol` field in `connected`.
+- Message envelope and OHLC payloads remain identical; v2 only adds new types (`indicator_update`, `market_summary`).
 - Clients not using new types are unaffected beyond the path change.
 
 Operational Notes
@@ -318,7 +317,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 
 | Step | ID | Area | Task | Owner | Status | Definition of Done | Files/Modules | Dependencies | Notes |
 |---:|---|---|---|---|---|---|---|---|---|
-| 01 | WS-V2-1 | WebSocket v2 | Add `/market-v2` endpoint with `protocol: "2.0"` | Backend | TODO | Endpoint serves ticks/ohlc; advertises capabilities | `server.py` | None | No feature flag needed |
+| 01 | WS-V2-1 | WebSocket v2 | Add `/market-v2` endpoint | Backend | TODO | Endpoint serves ticks/ohlc; advertises capabilities | `server.py` | None | No feature flag needed |
 | 02 | WS-1 | WebSocket | Extend v2 greeting to advertise `indicators` | Backend | TODO | `connected` includes `indicators` | `server.py` | WS-V2-1 | Backward compatible |
 | 03 | IND-1 | Indicators | Create `app/indicators.py` (RSI/EMA/MACD/Ichimoku/UT Bot) | Backend | TODO | Matches tolerances; docstrings | `app/indicators.py` | None | Centralized math |
 | 04 | CACHE-1 | Indicators | Add `app/indicator_cache.py` with deque per (sym,tf) | Backend | TODO | `get_latest_*`,`update_*`; ring size cfg | `app/indicator_cache.py` | IND-1 | Async-safe usage |
