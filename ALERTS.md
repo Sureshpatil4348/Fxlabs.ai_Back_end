@@ -36,7 +36,20 @@
 - Per‑pair concurrency and warm‑up enforced.
 - Skip stale TFs (last candle age > 2× TF length).
   - Note: Per-user email rate limits and digest have been removed. Alerts are sent immediately when not blocked by service-specific cooldowns (e.g., value-based email cooldown).
- - Closed‑bar gating is tracked per alert/user (keyed by `alert_id` along with symbol/timeframe or pair_key). This ensures multiple users with identical configurations are each evaluated every cycle without suppressing later users in the same scheduler tick.
+- Closed‑bar gating is tracked per alert/user (keyed by `alert_id` along with symbol/timeframe or pair_key). This ensures multiple users with identical configurations are each evaluated every cycle without suppressing later users in the same scheduler tick.
+
+**UT Bot Signal Logic (Parity)**
+- Baseline: EMA over closes with length `EMA_LENGTH`.
+- Volatility: ATR over highs/lows/closes with length `ATR_LENGTH` and Wilder smoothing.
+- Stops: `longStop = baseline − ATR_MULTIPLIER × ATR`, `shortStop = baseline + ATR_MULTIPLIER × ATR`.
+- Position: `long` if `close > shortStop`; `short` if `close < longStop`; else `neutral`.
+- Flip Detection: within last `K=3` closed bars, if position changes between consecutive bars (ignoring neutral → X) mark `new=true`.
+- Signal: `buy` if `close > shortStop` or current position is `long`; `sell` if `close < longStop` or current position is `short`; else `neutral`.
+- Confidence: `min(ATR / MIN_ATR_THRESHOLD, 1.0)`; log low-ATR cases but do not hard block.
+- Rounding: Return `baseline`, `atr`, `longStop`, `shortStop` rounded to 5 decimals for email/UI consistency.
+- Notes:
+  - Use only closed bars for evaluation; forming bar is excluded.
+  - Parameter names should mirror frontend constants (e.g., `UT_BOT_PARAMETERS`) to keep parity simple.
 
 **Message Structure (email)**
 - Title: RSI Alert • {PAIR} ({TF})
