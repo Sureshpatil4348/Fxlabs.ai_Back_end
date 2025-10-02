@@ -54,6 +54,33 @@ This backend aligns alert evaluations with the Calculations Reference used by th
   - Per‑cell scoring: buy=+1, sell=−1, neutral=0; new‑signal boost ±0.25 in last K=3; quiet‑market damping halves MACD/UTBot cell scores when ATR10 is below the 5th percentile of last 200 values; clamp to [−1.25,+1.25].
   - Aggregation: Σ_tf Σ_ind S(tf,ind)×W_tf×W_ind; Final=100×(Raw/1.25); Buy%=(Final+100)/2; Sell%=100−Buy%.
 
+### Frontend RSI Rendering Guide
+
+Follow these steps to display "RSI (closed)" in the UI for any timeframe/period while still showing live pricing:
+
+1. **Fetch OHLC series** from the backend endpoint. The final bar in the array may have `is_closed=false`; keep it for charting but exclude it from RSI math.
+2. **Slice closed bars only:** build a closes list with `[bar.close for bar in bars if bar.is_closed is not False]`. You need at least `period + 1` closed bars before an RSI value is valid.
+3. **Apply Wilder smoothing** (same as the backend):
+   ```python
+   deltas = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
+   gains = [max(delta, 0.0) for delta in deltas]
+   losses = [max(-delta, 0.0) for delta in deltas]
+   avg_gain = sum(gains[:period]) / period
+   avg_loss = sum(losses[:period]) / period
+   rs = 100.0 if avg_loss == 0 else avg_gain / avg_loss
+   rsi_values = [100.0 if avg_loss == 0 else 100 - 100 / (1 + rs)]
+   for idx in range(period, len(deltas)):
+       avg_gain = ((period - 1) * avg_gain + gains[idx]) / period
+       avg_loss = ((period - 1) * avg_loss + losses[idx]) / period
+       rs = 100.0 if avg_loss == 0 else avg_gain / avg_loss
+       rsi_values.append(100.0 if avg_loss == 0 else 100 - 100 / (1 + rs))
+   latest_rsi = rsi_values[-1]
+   ```
+4. **Per-timeframe support:** reuse the same routine for every timeframe (`5M`, `15M`, ..., `1W`). Just ensure you request enough closed bars (backend uses `period + 10` as a safe margin).
+5. **Live price display:** show `bid`/`ask`/`last` from the tick feed or the final forming candle to give users real-time pricing while the RSI stays pinned to the last closed bar.
+
+Following this contract keeps frontend charts, emails, and alert triggers numerically identical.
+
 ## 🚀 Quick Start
 
 ### Prerequisites
