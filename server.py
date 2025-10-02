@@ -58,6 +58,8 @@ from app.mt5_utils import (
     get_cached_ohlc,
 )
 from app.rsi_utils import calculate_rsi_series, closed_closes
+from app.indicator_cache import indicator_cache
+from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest
 
 # Ensure logging has timestamps across the app
 configure_logging()
@@ -92,6 +94,10 @@ async def lifespan(app: FastAPI):
     if LIVE_RSI_DEBUGGING:
         live_rsi_task = asyncio.create_task(_live_rsi_debugger())
     
+    # Start 10s closed-bar indicator poller
+    global _indicator_scheduler_task
+    _indicator_scheduler_task = asyncio.create_task(_indicator_scheduler())
+    
     yield
     
     # Shutdown
@@ -102,6 +108,8 @@ async def lifespan(app: FastAPI):
         _minute_scheduler_task.cancel()
     if live_rsi_task:
         live_rsi_task.cancel()
+    if _indicator_scheduler_task:
+        _indicator_scheduler_task.cancel()
     try:
         await news_task
     except asyncio.CancelledError:
@@ -122,6 +130,11 @@ async def lifespan(app: FastAPI):
     if live_rsi_task:
         try:
             await live_rsi_task
+        except asyncio.CancelledError:
+            pass
+    if _indicator_scheduler_task:
+        try:
+            await _indicator_scheduler_task
         except asyncio.CancelledError:
             pass
     mt5.shutdown()
@@ -160,6 +173,14 @@ news_cache_metadata: Dict[str, any] = {
 ENABLE_TICK_TRIGGERED_ALERTS = False  # Tick-driven checks disabled
 _minute_scheduler_task: Optional[asyncio.Task] = None
 _minute_scheduler_running: bool = False
+
+# Indicator scheduler state
+_indicator_scheduler_task: Optional[asyncio.Task] = None
+# Track connected WS clients to discover subscribed symbol×timeframe sets for indicators
+_connected_clients = set()
+_connected_clients_lock = asyncio.Lock()
+# Last processed closed-bar timestamp per (symbol:tf)
+_indicator_last_bar: Dict[str, int] = {}
 
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
@@ -313,6 +334,126 @@ async def _minute_alerts_scheduler():
     except Exception as e:
         print(f"❌ Minute scheduler error: {e}")
 
+
+async def _indicator_scheduler() -> None:
+    """Every ~10 seconds detect newly closed bars for subscribed symbol×timeframe sets,
+    compute closed-bar indicators, store them in the indicator cache, and broadcast updates.
+
+    Indicators computed (latest closed bar only):
+    - RSI(14)
+    - EMA(21/50/200)
+    - MACD(12,26,9)
+    """
+    try:
+        poll_interval_s = 10.0
+        while True:
+            started_at = datetime.now(timezone.utc)
+            # Snapshot clients safely
+            async with _connected_clients_lock:
+                clients = list(_connected_clients)
+
+            # Build the unique set of (symbol, timeframe) needing indicators
+            pairs: Set[Tuple[str, Timeframe]] = set()
+            for c in clients:
+                try:
+                    for sym, tf_map in getattr(c, "subscriptions", {}).items():
+                        for tf, sub in tf_map.items():
+                            if "indicators" in getattr(sub, "data_types", []):
+                                pairs.add((sym, tf))
+                except Exception:
+                    # Ignore a client snapshot failure and continue
+                    continue
+
+            processed = 0
+            for symbol, tf in pairs:
+                try:
+                    # Fetch recent OHLC and gate on last closed bar
+                    bars = get_ohlc_data(symbol, tf, 300)
+                    if not bars:
+                        continue
+                    closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
+                    if not closed_bars:
+                        continue
+                    last_closed = closed_bars[-1]
+                    key = f"{symbol}:{tf.value}"
+                    if _indicator_last_bar.get(key) == last_closed.time:
+                        continue
+
+                    closes = [b.close for b in closed_bars]
+                    # Compute indicators for latest closed bar
+                    rsi_val = ind_rsi_latest(closes, 14) if len(closes) >= 15 else None
+                    ema_vals: Dict[int, Optional[float]] = {}
+                    for p in (21, 50, 200):
+                        ema_vals[p] = ind_ema_latest(closes, p) if len(closes) >= p else None
+                    macd_trip = ind_macd_latest(closes, 12, 26, 9)
+
+                    # Store to indicator cache (async-safe)
+                    if rsi_val is not None:
+                        await indicator_cache.update_rsi(symbol, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
+                    for period, v in ema_vals.items():
+                        if v is not None:
+                            await indicator_cache.update_ema(symbol, tf.value, int(period), float(v), ts_ms=last_closed.time)
+                    if macd_trip is not None:
+                        macd_v, sig_v, hist_v = macd_trip
+                        await indicator_cache.update_macd(
+                            symbol,
+                            tf.value,
+                            12,
+                            26,
+                            9,
+                            float(macd_v),
+                            float(sig_v),
+                            float(hist_v),
+                            ts_ms=last_closed.time,
+                        )
+
+                    _indicator_last_bar[key] = last_closed.time
+                    processed += 1
+
+                    # Broadcast to interested clients (best-effort)
+                    if clients:
+                        snapshot = {
+                            "bar_time": last_closed.time,
+                            "indicators": {
+                                "rsi": {14: rsi_val} if rsi_val is not None else {},
+                                "ema": {k: v for k, v in ema_vals.items() if v is not None},
+                                "macd": ({"macd": macd_trip[0], "signal": macd_trip[1], "hist": macd_trip[2]} if macd_trip else {}),
+                            },
+                        }
+                        msg = {
+                            "type": "indicator_update",
+                            "symbol": symbol,
+                            "timeframe": tf.value,
+                            "data": snapshot,
+                        }
+                        for c in clients:
+                            try:
+                                sub = getattr(c, "subscriptions", {}).get(symbol, {}).get(tf)
+                                if sub and "indicators" in getattr(sub, "data_types", []):
+                                    await c._try_send_json(msg)
+                            except Exception:
+                                # Never let a single client block the scheduler
+                                continue
+                except Exception as e:
+                    print(f"❌ Indicator scheduler error for {symbol} {tf.value}: {e}")
+                    continue
+
+            ended_at = datetime.now(timezone.utc)
+            try:
+                elapsed_ms = int((ended_at - started_at).total_seconds() * 1000)
+                logger = logging.getLogger(__name__)
+                logger.info("🧮 indicator_poll | pairs=%d duration_ms=%d", len(pairs), elapsed_ms)
+            except Exception:
+                pass
+
+            try:
+                await asyncio.sleep(poll_interval_s)
+            except asyncio.CancelledError:
+                raise
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        print(f"❌ Indicator scheduler fatal error: {e}")
 
 async def _live_rsi_debugger():
     """Emit liveRSI debug exactly on each 1-minute closed candle when enabled.
@@ -1009,6 +1150,8 @@ async def ws_ticks_legacy(websocket: WebSocket):
 
         client = WSClient(websocket, "")
         await client.start()
+        async with _connected_clients_lock:
+            _connected_clients.add(client)
 
         while True:
             # If client already disconnected, exit gracefully
@@ -1045,6 +1188,11 @@ async def ws_ticks_legacy(websocket: WebSocket):
     finally:
         if client:
             await client.stop()
+        try:
+            async with _connected_clients_lock:
+                _connected_clients.discard(client)
+        except Exception:
+            pass
 
 @app.websocket("/ws/market")
 async def ws_market(websocket: WebSocket):
@@ -1070,6 +1218,8 @@ async def ws_market(websocket: WebSocket):
         # Create WSClient for real MT5 data
         client = WSClient(websocket, "")
         await client.start()
+        async with _connected_clients_lock:
+            _connected_clients.add(client)
         
         # Handle incoming messages
         while True:
@@ -1106,6 +1256,11 @@ async def ws_market(websocket: WebSocket):
     finally:
         if client:
             await client.stop()
+        try:
+            async with _connected_clients_lock:
+                _connected_clients.discard(client)
+        except Exception:
+            pass
 
 @app.websocket("/market-v2")
 async def ws_market_v2(websocket: WebSocket):
@@ -1141,6 +1296,8 @@ async def ws_market_v2(websocket: WebSocket):
         # Reuse the same WSClient implementation as /ws/market
         client = WSClient(websocket, "")
         await client.start()
+        async with _connected_clients_lock:
+            _connected_clients.add(client)
 
         # Main receive loop
         while True:
@@ -1171,6 +1328,11 @@ async def ws_market_v2(websocket: WebSocket):
     finally:
         if client:
             await client.stop()
+        try:
+            async with _connected_clients_lock:
+                _connected_clients.discard(client)
+        except Exception:
+            pass
 
 def _install_sigterm_handler(loop: asyncio.AbstractEventLoop):
     def _handler():
