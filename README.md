@@ -274,7 +274,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 
 ### WebSocket Endpoints
 
-#### Market Data WebSocket (`/ws/market`)
+#### Market Data WebSocket (`/ws/market`) — deprecated soon
 - **URL**: `ws://localhost:8000/ws/market`
 - **Purpose**: Real-time tick and OHLC data streaming
 - **Features**: Selective timeframe subscriptions, intelligent caching, Bid/Ask parallel OHLC fields
@@ -283,7 +283,7 @@ Note on closed-bar guarantees:
 - The server emits an `is_closed=true` OHLC bar at every timeframe boundary (checked at ~100 ms resolution), including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.
 
 Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services.
-Connected discovery message now includes Bid/Ask capabilities and schema:
+Connected discovery message includes Bid/Ask capabilities and schema:
 
 ```json
 {
@@ -392,6 +392,11 @@ Internal alert tick_data shape:
 - **URL**: `ws://localhost:8000/ws/ticks`
 - **Purpose**: Backward-compatible tick-only streaming
 - **Features**: Legacy client support
+
+#### Market Data WebSocket v2 (`/market-v2`)
+- Use `/market-v2` for new clients. It exposes the same tick and OHLC payloads, and additionally advertises `indicators` and `market_summary` capabilities. Greeting includes `"protocol": "2.0"`.
+- During migration, `/ws/market` and `/ws/ticks` remain available; they will be removed after cutover.
+- The v2 subscribe shape is unchanged; request `data_types: ["ticks","ohlc","indicators","market_summary"]` to enable additional streams when available.
 
 ### REST API Endpoints
 

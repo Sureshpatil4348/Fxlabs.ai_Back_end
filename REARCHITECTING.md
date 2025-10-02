@@ -57,8 +57,9 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
 
 ## WebSocket API and Message Formats
 
-- Endpoint
+ - Endpoint
   - `/ws/market` (unified)
+  - `/market-v2` (new, versioned WS — runs alongside `/ws/market` during migration)
 
 - Server greeting
   - On connect, server sends:
@@ -166,6 +167,71 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
    - Start with a small set (e.g., 10 symbols × 3 TFs) and measure CPU/latency.
    - Increase coverage gradually; tune poller batch size if needed.
 
+## Market v2 WebSocket — `/market-v2` (Backwards-Compatible Rollout)
+
+Goals
+- Introduce a stable, forward‑compatible WebSocket endpoint that unifies real‑time ticks, OHLC live/closed bars, indicator streaming, and periodic market summaries.
+- Keep existing endpoints (`/ws/market`, `/ws/ticks`) operational during migration; remove them after successful client cutover.
+
+Endpoint
+- New WebSocket path: `/market-v2`
+- Greeting (includes protocol versioning and capabilities):
+  ```json
+  {
+    "type": "connected",
+    "protocol": "2.0",
+    "message": "WebSocket connected successfully",
+    "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
+    "supported_data_types": ["ticks","ohlc","indicators","market_summary"],
+    "supported_price_bases": ["last","bid","ask"],
+    "ohlc_schema": "parallel"
+  }
+  ```
+
+Subscribe (unchanged shape, expanded `data_types`)
+```json
+{
+  "action": "subscribe",
+  "symbol": "EURUSDm",
+  "timeframe": "5M",
+  "data_types": ["ticks","ohlc","indicators","market_summary"],
+  "price_basis": "last",
+  "ohlc_schema": "parallel"
+}
+```
+
+Server Snapshots on Subscribe
+- `initial_ohlc`: same as v1
+- `initial_indicators` (new when requested): latest closed‑bar snapshot for the timeframe
+- Optional: send an immediate `market_summary` for the symbol
+
+Live Push Types
+- `ticks`: coalesced list, as in v1
+- `ohlc_live`: forming candle on tick
+- `ohlc_update`: closed candle at boundary (guaranteed)
+- `indicator_update`: closed‑bar indicators after 10s poller detects a new bar
+- `market_summary`: periodic payload per symbol, e.g. `{ daily_change_pct }` (Bid vs broker D1 open)
+
+Validation & Safety
+- Strict symbol/timeframe allowlist; per‑connection caps on total subscriptions.
+- Optional API token binding at WS level (same header policy as REST, if enabled).
+
+Migration Plan
+1) Parallelize: Implement `/market-v2` behind feature flag `MARKET_V2_ENABLED` (default: true in non‑prod).
+2) Capability discovery: v2 greeting includes `protocol: "2.0"`. Clients opting in should prefer `/market-v2` and `indicators`/`market_summary` types.
+3) Soak test: Mirror a subset of symbols/TFs on both endpoints; compare volumes and error rates. Add metrics for per‑type send counts and failures.
+4) Client rollout: Frontend migrates to `/market-v2` first for read‑only features; enable indicators/summary per module.
+5) Deprecation window: Emit a one‑line deprecation notice to v1 clients in the greeting (`note: "deprecated; use /market-v2"`). Announce removal date.
+6) Removal: After adoption ≥ 100%, delete `/ws/ticks` and `/ws/market` routes and related legacy glue.
+
+Breaking Changes vs v1 (none required)
+- Message envelope and OHLC payloads remain identical; v2 only adds new types (`indicator_update`, `market_summary`) and the `protocol` field in `connected`.
+- Clients not using new types are unaffected beyond the path change.
+
+Operational Notes
+- Keep `INDICATOR_POLL_INTERVAL` and `INDICATORS_ENABLED` configurable to stage rollout safely.
+- Ensure graceful disconnect handling is preserved; do not send after close.
+
 ## Deletions and Simplifications (What to Remove/Refactor)
 
 Goal: eliminate scattered indicator math and source-of-truth duplication by centralizing indicator computation and streaming.
@@ -250,25 +316,29 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 
 ## Implementation Checklist (Source of Truth)
 
-| ID | Area | Task | Owner | Status | Definition of Done | Files/Modules | Dependencies | Notes |
-|---|---|---|---|---|---|---|---|---|
-| IND-1 | Indicators | Create `app/indicators.py` with RSI(Wilder), EMA, MACD, Ichimoku, UT Bot impls | Backend | TODO | Functions match tolerances; docstrings; no external deps | `app/indicators.py` | None | Keep math centralized |
-| IND-2 | Indicators | Add micro-bench + unit checks vs MT5 samples | Backend | TODO | 3–5 symbols×TFs parity within tolerance | `tests/` (optional) | MT5 running | No network installs |
-| CACHE-1 | Indicators | Add `app/indicator_cache.py` with deque per (sym,tf) | Backend | TODO | `get_latest_*`, `update_*`, ring buffer size configurable | `app/indicator_cache.py` | IND-1 | Thread-safe usage in asyncio |
-| SCHED-1 | Scheduler | 10s closed-bar detector/poller | Backend | TODO | Detects new closed bar, computes, stores, broadcasts | `server.py` | IND-1, CACHE-1 | Batches work; measures latency |
-| WS-1 | WebSocket | Extend greeting to advertise `indicators` | Backend | TODO | `connected` includes `indicators` in `supported_data_types` | `server.py` | SCHED-1 | Backward compatible with existing |
-| WS-2 | WebSocket | Handle `data_types` incl. `indicators` on subscribe | Backend | TODO | Accept/validate; start sending snapshot + updates | `server.py` | WS-1 | Per-client subscriptions |
-| WS-3 | WebSocket | Add `initial_indicators` + `indicator_update` shapes | Backend | TODO | JSON contracts finalized and documented | `server.py`, `REARCHITECTING.md` | IND-1, SCHED-1 | Include `bar_time` in ms |
-| WS-4 | WebSocket | Optional `market_summary` per symbol with `daily_change_pct` | Backend | TODO | Sent every 10–30s; uses D1 open (Bid) | `server.py`, `app/mt5_utils.py` | D1 fetch helper | Lightweight payload |
-| ALERT-1 | Alerts | Refactor RSI Tracker to read cache | Backend | TODO | No re-computation; strict closed-bar | `app/rsi_tracker_alert_service.py` | CACHE-1 | Keep cooldown logic |
-| ALERT-2 | Alerts | Refactor RSI Correlation to read cache | Backend | TODO | Uses ring buffers; warm-up fallback allowed | `app/rsi_correlation_tracker_alert_service.py` | CACHE-1 | Pair handling preserved |
-| ALERT-3 | Alerts | Refactor Heatmap (Quantum) to read cache | Backend | TODO | Per-cell scores from cache; aggregation only | `app/heatmap_tracker_alert_service.py` | CACHE-1 | Respect quiet-market damping |
-| ALERT-4 | Alerts | Refactor Indicator Tracker to read cache | Backend | TODO | Flip detection from cached values | `app/heatmap_indicator_tracker_alert_service.py` | CACHE-1 | K=3 flip window |
-| DEBUG-1 | Debug | Align liveRSI to cache; single source numbers | Backend | TODO | When M1 indicator updates, log RSIclosed | `server.py`, `app/mt5_utils.py` | SCHED-1 | Remove duplicate math in debug |
-| OBS-1 | Observability | Add metrics + structured logs | Backend | TODO | Poll durations, items processed, latencies | `server.py` | SCHED-1 | JSON logs optional |
-| SEC-1 | Security | WS input validation + allowlists | Backend | TODO | Validate symbol/tf; cap totals; auth optional | `server.py` | None | Mirror REST API token policy if needed |
-| DOC-1 | Docs | Keep README.md updated | Backend | DONE | README references this doc as source of truth | `README.md` | None | Clarify current vs planned |
-| DOC-2 | Docs | Keep ALERTS.md aligned to pipeline | Backend | DONE | Live RSI note reflects 1‑minute task | `ALERTS.md` | None | No duplication of math |
-| ROLL-1 | Rollout | Gradual enablement; measure CPU/latency | Backend | TODO | Start 10×3, then ramp | N/A | SCHED-1 | Feature flag `INDICATORS_ENABLED` |
-| PAR-1 | Parity | Add parity checks within tolerances | Backend | TODO | Script compares last N bars | `tests/` scripts | IND-1 | Close vs Bid basis fixed |
-| CFG-1 | Config | Add env flags: `INDICATORS_ENABLED`, `INDICATOR_POLL_INTERVAL` | Backend | TODO | Defaults: true/10s in non-prod | `app/config.py` | SCHED-1 | Safe fallbacks |
+| Step | ID | Area | Task | Owner | Status | Definition of Done | Files/Modules | Dependencies | Notes |
+|---:|---|---|---|---|---|---|---|---|---|
+| 01 | CFG-1 | Config | Add env flags: `INDICATORS_ENABLED`, `INDICATOR_POLL_INTERVAL` | Backend | TODO | Defaults: true/10s in non-prod | `app/config.py` | None | Safe fallbacks |
+| 02 | WS-V2-1 | WebSocket v2 | Add `/market-v2` endpoint with `protocol: "2.0"` | Backend | TODO | Endpoint serves ticks/ohlc; advertises capabilities | `server.py` | None | Guarded by `MARKET_V2_ENABLED` |
+| 03 | WS-1 | WebSocket | Extend v2 greeting to advertise `indicators` | Backend | TODO | `connected` includes `indicators` | `server.py` | WS-V2-1 | Backward compatible |
+| 04 | IND-1 | Indicators | Create `app/indicators.py` (RSI/EMA/MACD/Ichimoku/UT Bot) | Backend | TODO | Matches tolerances; docstrings | `app/indicators.py` | None | Centralized math |
+| 05 | CACHE-1 | Indicators | Add `app/indicator_cache.py` with deque per (sym,tf) | Backend | TODO | `get_latest_*`,`update_*`; ring size cfg | `app/indicator_cache.py` | IND-1 | Async-safe usage |
+| 06 | SCHED-1 | Scheduler | 10s closed-bar detector/poller | Backend | TODO | Detects, computes, stores, broadcasts | `server.py` | IND-1, CACHE-1 | Measure latency |
+| 07 | WS-2 | WebSocket | Handle `data_types` incl. `indicators` on subscribe | Backend | TODO | Accept/validate; send snapshot+updates | `server.py` | SCHED-1 | Per-client subs |
+| 08 | WS-3 | WebSocket | Add `initial_indicators` + `indicator_update` shapes | Backend | TODO | JSON contracts finalized | `server.py`,`REARCHITECTING.md` | IND-1,SCHED-1 | Include `bar_time` ms |
+| 09 | WS-V2-2 | WebSocket v2 | Add `market_summary` periodic sender | Backend | TODO | `{daily_change_pct}` every 10–30s | `server.py`,`app/mt5_utils.py` | D1 fetch helper | Lightweight payload |
+| 10 | DEBUG-1 | Debug | Align liveRSI to cache; single source numbers | Backend | TODO | Log when M1 indicator updates | `server.py`,`app/mt5_utils.py` | SCHED-1 | Remove dup math |
+| 11 | OBS-1 | Observability | Add metrics + structured logs | Backend | TODO | Poll durations; items; latencies | `server.py` | SCHED-1 | JSON logs optional |
+| 12 | SEC-1 | Security | WS input validation + allowlists | Backend | TODO | Validate symbol/tf; caps; optional auth | `server.py` | None | Mirror REST auth policy |
+| 13 | ALERT-1 | Alerts | Refactor RSI Tracker to read cache | Backend | TODO | No re-compute; closed-bar only | `app/rsi_tracker_alert_service.py` | CACHE-1 | Keep cooldown logic |
+| 14 | ALERT-2 | Alerts | Refactor RSI Correlation to read cache | Backend | TODO | Ring buffers; warm-up fallback | `app/rsi_correlation_tracker_alert_service.py` | CACHE-1 | Pair handling |
+| 15 | ALERT-3 | Alerts | Refactor Heatmap (Quantum) to read cache | Backend | TODO | Cache → aggregation only | `app/heatmap_tracker_alert_service.py` | CACHE-1 | Quiet-market damping |
+| 16 | ALERT-4 | Alerts | Refactor Indicator Tracker to read cache | Backend | TODO | Flip detection from cache | `app/heatmap_indicator_tracker_alert_service.py` | CACHE-1 | K=3 window |
+| 17 | IND-2 | Indicators | Add micro-bench + unit checks | Backend | TODO | 3–5 symbols×TFs parity | `tests/` (optional) | MT5 running | No net installs |
+| 18 | PAR-1 | Parity | Add parity checks within tolerances | Backend | TODO | Compare last N closed bars | `tests/` scripts | IND-1 | Close vs Bid fixed |
+| 19 | WS-V2-3 | WebSocket v2 | Dual-run + metrics/soak | Backend | TODO | Per-type counters; low error rate | `server.py` | WS-V2-1 | Compare vs v1 |
+| 20 | ROLL-1 | Rollout | Gradual enablement; measure CPU/latency | Backend | TODO | Start 10×3; ramp | N/A | SCHED-1 | Flag `INDICATORS_ENABLED` |
+| 21 | WS-V2-4 | WebSocket v2 | Client migration docs + v1 deprecation notice | Backend | TODO | Banner + timeline | `server.py`,`README.md` | WS-V2-1 | Short removal window |
+| 22 | WS-V2-5 | WebSocket v2 | Remove `/ws/ticks` and `/ws/market` after cutover | Backend | TODO | Delete routes/legacy glue | `server.py` | WS-V2-3/4 | Keep README updated |
+| 23 | DOC-1 | Docs | Keep README.md updated | Backend | DONE | README references this doc | `README.md` | None | Clarify current vs planned |
+| 24 | DOC-2 | Docs | Keep ALERTS.md aligned to pipeline | Backend | DONE | liveRSI note reflects task | `ALERTS.md` | None | No math duplication |
