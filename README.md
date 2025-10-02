@@ -419,6 +419,46 @@ V2 greeting example (capabilities + indicators registry):
 }
 ```
 
+##### Indicator payloads (when "indicators" is requested)
+
+- On subscribe, the server sends the latest closed-bar snapshot:
+
+```json
+{
+  "type": "initial_indicators",
+  "symbol": "EURUSDm",
+  "timeframe": "5M",
+  "data": {
+    "bar_time": 1696229940000,
+    "indicators": {
+      "rsi": {"14": 51.23},
+      "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
+      "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
+    }
+  }
+}
+```
+
+- Live push when a new bar is detected by the 10s poller:
+
+```json
+{
+  "type": "indicator_update",
+  "symbol": "EURUSDm",
+  "timeframe": "5M",
+  "data": {
+    "bar_time": 1696229940000,
+    "indicators": {
+      "rsi": {"14": 51.23},
+      "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
+      "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
+    }
+  }
+}
+```
+
+Note: `bar_time` is epoch milliseconds (ms) using broker server time.
+
 ### REST API Endpoints
 
 | Endpoint | Method | Description | Auth Required |

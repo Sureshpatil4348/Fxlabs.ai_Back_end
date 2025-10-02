@@ -136,8 +136,21 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
     - Closed bar at boundary: `{ "type": "ohlc_update", "data": { /* single OHLC with is_closed=true */ } }`
   - Indicator update:
     ```json
-    { "type": "indicator_update", "symbol": "EURUSDm", "timeframe": "5M", "data": { /* see IndicatorSnapshot */ } }
+    {
+      "type": "indicator_update",
+      "symbol": "EURUSDm",
+      "timeframe": "5M",
+      "data": {
+        "bar_time": 1696229940000,
+        "indicators": {
+          "rsi": {"14": 51.23},
+          "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
+          "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
+        }
+      }
+    }
     ```
+    - Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
 - Unsubscribe and keepalive
   - Unsubscribe a single symbol×timeframe:
@@ -339,7 +352,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 04 | CACHE-1 | Indicators | Add `app/indicator_cache.py` with deque per (sym,tf) | Backend | DONE | `get_latest_*`,`update_*`; ring size cfg | `app/indicator_cache.py` | IND-1 | Async-safe usage |
 | 05 | SCHED-1 | Scheduler | 10s closed-bar detector/poller | Backend | DONE | Detects, computes, stores, broadcasts | `server.py` | IND-1, CACHE-1 | Measured latency logged |
 | 06 | WS-2 | WebSocket | Handle `data_types` incl. `indicators` on subscribe | Backend | DONE | Accept/validate; send snapshot+updates | `server.py` | SCHED-1 | Per-client subs |
-| 07 | WS-3 | WebSocket | Add `initial_indicators` + `indicator_update` shapes | Backend | TODO | JSON contracts finalized | `server.py`,`REARCHITECTING.md` | IND-1,SCHED-1 | Include `bar_time` ms |
+| 07 | WS-3 | WebSocket | Add `initial_indicators` + `indicator_update` shapes | Backend | DONE | JSON contracts finalized | `server.py`,`REARCHITECTING.md` | IND-1,SCHED-1 | Include `bar_time` ms |
 | 08 | WS-V2-2 | WebSocket v2 | Add `market_summary` periodic sender | Backend | TODO | `{daily_change_pct}` every 10–30s | `server.py`,`app/mt5_utils.py` | D1 fetch helper | Lightweight payload |
 | 09 | DEBUG-1 | Debug | Align liveRSI to cache; single source numbers | Backend | TODO | Log when M1 indicator updates | `server.py`,`app/mt5_utils.py` | SCHED-1 | Remove dup math |
 | 10 | OBS-1 | Observability | Add metrics + structured logs | Backend | TODO | Poll durations; items; latencies | `server.py` | SCHED-1 | JSON logs optional |
