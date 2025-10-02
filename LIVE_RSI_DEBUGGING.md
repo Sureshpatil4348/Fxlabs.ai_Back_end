@@ -15,7 +15,7 @@ Restart the service after changing the variable so the loader can pick it up.
 
 ## What It Does
 
-When enabled, the backend will emit a log entry every time a new **closed** 1-minute candle forms for **BTC/USD**. The message includes:
+When enabled, the backend will emit a log entry exactly when a new **closed** 1-minute candle forms for **BTC/USD** (boundary-aligned helper task). The message includes:
 
 - Pair label (`BTC/USD`)
 - Timeframe (`1M`)
@@ -36,6 +36,7 @@ The dedicated compass emoji (`🧭`) allows you to locate these statements quick
 
 - The feed relies on MT5 candles fetched through `get_ohlc_data`. If the terminal is disconnected or delivers stale data, no entries are produced.
 - Only **closed** candles trigger the log, so you will not see updates while a candle is still forming.
+- Timing: A lightweight background task sleeps until the next M1 boundary and then logs. Typical latency is under 100 ms, subject to OS scheduler and MT5 response.
 - The RSI calculation uses the same Wilder smoothing pipeline consumed by all RSI alerts, guaranteeing parity between debug output and production triggers.
 - The feature is intentionally scoped to BTC/USD (1 minute) to minimise noise. Extend it as needed by adjusting `app/mt5_utils.py`.
 

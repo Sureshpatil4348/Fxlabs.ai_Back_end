@@ -278,7 +278,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 - **Features**: Selective timeframe subscriptions, intelligent caching, Bid/Ask parallel OHLC fields
 
 Note on closed-bar guarantees:
-- The server emits an `is_closed=true` OHLC bar at every timeframe boundary, including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.
+- The server emits an `is_closed=true` OHLC bar at every timeframe boundary (checked at ~100 ms resolution), including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.
 
 Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services.
 Connected discovery message now includes Bid/Ask capabilities and schema:
@@ -309,7 +309,7 @@ Extended subscribe supports price basis and schema shaping (defaults: `last`, `p
 
 Multi-timeframe subscriptions per symbol:
 - A single WebSocket connection can subscribe to the same `symbol` across multiple `timeframe`s concurrently (e.g., `1M`, `5M`, `1H`, `4H`).
-- Send a separate `subscribe` message per timeframe; each will stream its own initial snapshot and boundary `ohlc_update`s.
+- Send a separate `subscribe` message per timeframe; each will stream its own initial snapshot, high‑frequency `ohlc_live` updates while the candle is forming, and a boundary `ohlc_update` when the candle closes.
 - To unsubscribe a specific symbol×timeframe, send:
 
 ```json
@@ -322,7 +322,26 @@ Multi-timeframe subscriptions per symbol:
 { "action": "unsubscribe", "symbol": "EURUSD" }
 ```
 
-OHLC payloads include parallel fields when schema is `parallel`:
+OHLC payload types
+
+- Live forming bar (high frequency, ~every tick, pushed within ~100 ms loop):
+
+```json
+{
+  "type": "ohlc_live",
+  "data": {
+    "symbol": "EURUSD",
+    "timeframe": "1M",
+    "time": 1738219500000,
+    "open": 1.1052, "high": 1.1056, "low": 1.1050, "close": 1.1054,
+    "openBid": 1.1051, "highBid": 1.1055, "lowBid": 1.1049, "closeBid": 1.1053,
+    "openAsk": 1.1053, "highAsk": 1.1057, "lowAsk": 1.1051, "closeAsk": 1.1055,
+    "is_closed": false
+  }
+}
+```
+
+- Closed bar at timeframe boundary (guaranteed even if no ticks):
 
 ```json
 {
@@ -927,6 +946,14 @@ The system provides comprehensive logging for:
 - Data processing errors
 - API request/response cycles
 - Performance metrics
+
+#### Live RSI Debugging cadence (why not every minute?)
+- `🧭 liveRSI` logs are emitted by `app.mt5_utils._maybe_log_live_rsi()` only when `get_ohlc_data(...)` is called.
+- The alert scheduler is boundary‑aligned to 5‑minute multiples, so in a headless setup you will typically see one `liveRSI` line each scheduler cycle (usually every 5 minutes). A dedicated background task now logs exactly on each M1 close when `LIVE_RSI_DEBUGGING=true`.
+- If a WebSocket client subscribes to OHLC and triggers frequent `get_ohlc_data(...)` calls, you may see more frequent `liveRSI` lines.
+
+#### Alert Evaluation Cadence (Closed‑Bar)
+- The alert evaluator loop sleeps until the next `5M` boundary and runs immediately after it. This ensures RSI‑closed and other closed‑bar math are computed right after the candle closes (no drift). Higher timeframes (15M/30M/1H/4H/1D/W1) are also aligned since their boundaries are multiples of 5 minutes.
 
 #### Troubleshooting: WebSocket “accept” error
 - Symptom: RuntimeError "WebSocket is not connected. Need to call 'accept' first." in logs.

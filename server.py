@@ -27,6 +27,7 @@ from app.config import (
     API_TOKEN,
     ALLOWED_ORIGINS,
     MT5_TERMINAL_PATH,
+    LIVE_RSI_DEBUGGING,
 )
 import app.news as news
 from app.alert_cache import alert_cache
@@ -80,10 +81,15 @@ async def lifespan(app: FastAPI):
     # Start daily morning brief scheduler (09:00 IST)
     daily_task = asyncio.create_task(daily_mail_scheduler())
 
-    # Start minute alerts scheduler (fetch + evaluate RSI Tracker)
+    # Start minute alerts scheduler (fetch + evaluate RSI Tracker) — boundary-aligned
     global _minute_scheduler_task, _minute_scheduler_running
     _minute_scheduler_running = True
     _minute_scheduler_task = asyncio.create_task(_minute_alerts_scheduler())
+    
+    # Optional: dedicated M1 live RSI debugger — logs exactly at each 1M close
+    live_rsi_task: Optional[asyncio.Task] = None
+    if LIVE_RSI_DEBUGGING:
+        live_rsi_task = asyncio.create_task(_live_rsi_debugger())
     
     yield
     
@@ -93,6 +99,8 @@ async def lifespan(app: FastAPI):
     daily_task.cancel()
     if _minute_scheduler_task:
         _minute_scheduler_task.cancel()
+    if live_rsi_task:
+        live_rsi_task.cancel()
     try:
         await news_task
     except asyncio.CancelledError:
@@ -108,6 +116,11 @@ async def lifespan(app: FastAPI):
     if _minute_scheduler_task:
         try:
             await _minute_scheduler_task
+        except asyncio.CancelledError:
+            pass
+    if live_rsi_task:
+        try:
+            await live_rsi_task
         except asyncio.CancelledError:
             pass
     mt5.shutdown()
@@ -142,7 +155,7 @@ news_cache_metadata: Dict[str, any] = {
     "is_updating": False
 }
 
-# Minute-based alert scheduler
+# Minute-based alert scheduler (boundary aligned)
 ENABLE_TICK_TRIGGERED_ALERTS = False  # Tick-driven checks disabled
 _minute_scheduler_task: Optional[asyncio.Task] = None
 _minute_scheduler_running: bool = False
@@ -244,10 +257,29 @@ async def _get_user_tracked_symbols(user_email: str) -> Set[str]:
 
 
 async def _minute_alerts_scheduler():
-    """Every 5 minutes: refresh alerts and evaluate all alert types."""
+    """Align evaluations to timeframe boundaries so closed-bar RSI is processed immediately after candle close.
+
+    Strategy: sleep until the next 5-minute boundary (covers 5M/15M/30M/1H/4H/1D/W1 boundaries),
+    then run all evaluators once. Services gate on last closed bar timestamps, so redundant calls are cheap.
+    """
     try:
         logger = logging.getLogger(__name__)
+        # Lazy import to avoid cycles
+        from app.models import Timeframe as TF
+        from app.mt5_utils import calculate_next_update_time
+
+        # Compute the very next 5-minute boundary from now
+        next_run = calculate_next_update_time(datetime.now(timezone.utc), TF.M5)
         while _minute_scheduler_running:
+            # Sleep until boundary with a short floor to avoid tight-looping
+            now = datetime.now(timezone.utc)
+            delay = max((next_run - now).total_seconds(), 0.05)
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                raise
+
+            # Re-check time and run evaluations
             try:
                 await alert_cache._refresh_cache()
             except Exception:
@@ -272,11 +304,44 @@ async def _minute_alerts_scheduler():
                 logger.info("🔎 indicator_tracker_eval | triggers: %d", len(indicator_trig))
             except Exception as e:
                 print(f"❌ Indicator Tracker evaluation error: {e}")
-            await asyncio.sleep(300)
+
+            # Schedule next 5-minute boundary from current time
+            next_run = calculate_next_update_time(datetime.now(timezone.utc), TF.M5)
     except asyncio.CancelledError:
         return
     except Exception as e:
         print(f"❌ Minute scheduler error: {e}")
+
+
+async def _live_rsi_debugger():
+    """Emit liveRSI debug exactly on each 1-minute closed candle when enabled.
+
+    Runs as a lightweight background task and calls app.mt5_utils._maybe_log_live_rsi()
+    right after the 1M boundary, independent of alert evaluation cadence.
+    """
+    try:
+        from app.models import Timeframe as TF
+        from app.mt5_utils import calculate_next_update_time, _maybe_log_live_rsi
+        # Compute next 1-minute boundary
+        next_run = calculate_next_update_time(datetime.now(timezone.utc), TF.M1)
+        while True:
+            now = datetime.now(timezone.utc)
+            delay = max((next_run - now).total_seconds(), 0.02)
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                raise
+            try:
+                _maybe_log_live_rsi()
+            except Exception:
+                # Never fail hard on debug logging
+                pass
+            next_run = calculate_next_update_time(datetime.now(timezone.utc), TF.M1)
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        # Silent exit on unexpected errors (debug helper)
+        return
 
 @app.get("/health")
 def health():
@@ -546,7 +611,7 @@ class WSClient:
                 if not self._is_connected():
                     return
                 await self._send_scheduled_ohlc_updates()
-                await asyncio.sleep(1.0)  # Check every second for due updates
+                await asyncio.sleep(0.10)  # 100ms resolution for boundary checks
         except asyncio.CancelledError:
             return
         except Exception:
@@ -589,7 +654,22 @@ class WSClient:
                     if sym in self.subscriptions:
                         for tf, si in self.subscriptions[sym].items():
                             if "ohlc" in si.data_types:
+                                # Update forming candle from MT5 on every tick
                                 update_ohlc_cache(sym, tf)
+                                # Push a live OHLC snapshot for this symbol×timeframe
+                                try:
+                                    live = get_cached_ohlc(sym, tf, 1)
+                                    if live:
+                                        bar = live[-1]
+                                        # Only stream as live when the bar is still forming; boundary sends closed updates
+                                        if getattr(bar, "is_closed", False) is False:
+                                            await self._try_send_json({
+                                                "type": "ohlc_live",
+                                                "data": self._format_ohlc_for_subscription(bar, sym, tf)
+                                            })
+                                except Exception:
+                                    # Never let live OHLC streaming break the tick loop
+                                    pass
                         
             except HTTPException:
                 # symbol disappeared or invalid; drop it

@@ -22,6 +22,7 @@
 - All alert logs print to terminal and are also persisted to `logs/<YYYY-MM-DDTHH-mm-ssZ>.log` (UTC server start) with rotation (≈10 MB × 5 files).
 - The `logs/` folder is created automatically; you can change location via `LOG_DIR`.
  - To reduce noise, non‑critical diagnostics (e.g., `alert_eval_config`, `alert_eval_start/end`, no‑trigger reasons) are gated behind `ALERT_VERBOSE_LOGS` (default: `false`). Set `export ALERT_VERBOSE_LOGS=true` to see them during debugging.
+ - Note on `🧭 liveRSI` debugging: these lines are produced by MT5 OHLC fetches, not by a dedicated 1‑minute timer. In a default deployment the 5‑minute alert scheduler is what causes the fetch, so you will usually see one `liveRSI` line per 5 minutes. If you need per‑minute prints aligned to M1 closes, add a minute background loop that calls `app.mt5_utils._maybe_log_live_rsi()`.
 
 **Simplified Scope (Current Support)**
 - RSI Tracker Alert (single per user)
@@ -51,9 +52,9 @@
 1) Configuration
   - Single alert per user: timeframe (one), RSI period, OB/OS thresholds.
 2) Supabase Schema
-  - See `supabase_rsi_tracker_alerts_schema.sql` for `rsi_tracker_alerts` and `rsi_tracker_alert_triggers` (unique `user_id`; RLS for owner).
+ - See `supabase_rsi_tracker_alerts_schema.sql` for `rsi_tracker_alerts` and `rsi_tracker_alert_triggers` (unique `user_id`; RLS for owner).
 3) Evaluation Cadence
-  - Every 5 minutes, the server refreshes the alert cache, evaluates closed‑bar RSI for all users' active alerts across supported pairs, records triggers, and sends email.
+  - The server aligns evaluations to the next 5‑minute boundary and runs immediately after it. This ensures closed‑bar RSI is computed right after the candle closes. Higher TFs (15M/30M/1H/4H/1D/W1) are naturally aligned as multiples of 5 minutes.
 4) RSI Calculation
   - Wilder’s method using broker OHLC; closed‑bar only; warm‑up enforced.
 5) Trigger Logic
