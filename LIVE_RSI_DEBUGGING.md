@@ -36,7 +36,7 @@ The dedicated compass emoji (`🧭`) allows you to locate these statements quick
 
 - The feed relies on MT5 candles fetched through `get_ohlc_data`. If the terminal is disconnected or delivers stale data, no entries are produced.
 - Only **closed** candles trigger the log, so you will not see updates while a candle is still forming.
-- Timing: A lightweight background task sleeps until the next M1 boundary and then logs. Typical latency is under 100 ms, subject to OS scheduler and MT5 response.
+- Timing: A lightweight background task sleeps until the next M1 boundary and then waits ~60 ms for MT5 to finalize the bar before logging. Typical end-to-end latency stays under 100 ms, subject to OS scheduler and MT5 response.
 - The RSI calculation uses the same Wilder smoothing pipeline consumed by all RSI alerts, guaranteeing parity between debug output and production triggers.
 - The feature is intentionally scoped to BTC/USD (1 minute) to minimise noise. Extend it as needed by adjusting `app/mt5_utils.py`.
 

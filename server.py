@@ -332,6 +332,9 @@ async def _live_rsi_debugger():
             except asyncio.CancelledError:
                 raise
             try:
+                # Tiny settle to allow MT5 to finalize the last bar buffers
+                # Keep under 100 ms total latency as per requirement
+                await asyncio.sleep(0.06)
                 _maybe_log_live_rsi()
             except Exception:
                 # Never fail hard on debug logging
