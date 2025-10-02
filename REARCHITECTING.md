@@ -209,6 +209,39 @@ Suggested sequence:
 3) Refactor services to read from `indicator_cache`.
 4) Delete/inline-remove duplicate indicator code in services and keep `rsi_utils` only if strictly needed.
 
+## Alerts and Live RSI Debugging — Single Source of Truth
+
+All alert engines and live RSI debugging must reuse the same indicator pipeline to ensure consistent numbers and behavior across the system.
+
+- Single pipeline
+  - Compute indicators only in `app/indicators.py` and populate `app/indicator_cache.py`.
+  - Consumers (alerts, WS, debug logs) read from `indicator_cache` instead of re-computing.
+
+- RSI Tracker Alert
+  - Use `indicator_cache[(symbol,timeframe)]` to read the latest closed-bar RSI value for the configured period (e.g., 14).
+  - Maintain a small ring buffer in `indicator_cache` so last N RSI values are available for cross detection and warm-up.
+
+- RSI Correlation Tracker
+  - For each pair, read RSI series from the ring buffer for both symbols for the selected timeframe and period.
+  - If the buffer is not yet warm (insufficient bars), temporarily fall back to computing the series via `app/indicators.rsi_wilder` using the same OHLC source, then cache the last value to converge quickly.
+  - Always enforce closed-bar gating (no forming candles).
+
+- Heatmap / Quantum Tracker
+  - Replace per-cycle computations with reads of cached EMA/MACD/UTBot/Ichimoku values and apply only the scoring/aggregation step.
+  - If any indicator component is missing (e.g., in early warm-up), treat as neutral for that cell.
+
+- Indicator Tracker
+  - Use cached EMA/RSI (and other requested indicators) to determine flips; do not recompute.
+
+- Live RSI Debugging
+  - Emit logs from the same cache: when `indicator_update` is produced for M1, log the RSIclosed value and OHLC summary for that closed bar.
+  - Do not perform separate fetches or computations in the debug path; reuse cache values for parity.
+  - Rate-limit debug prints if needed to avoid spam (e.g., log only on new M1 bar).
+
+- Benefits
+  - One source of truth across UI, alerts, and logs; eliminates drift.
+  - Lower CPU and fewer MT5 IPC calls; predictable behavior under load.
+
 ## Parity With MT5 (Can We Match Exactly?)
 
 Short answer: not guaranteed to be bit-for-bit identical across all indicators without using MT5’s own indicator handles. However, we can achieve near-parity with careful calibration.
