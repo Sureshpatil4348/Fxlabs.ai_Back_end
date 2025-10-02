@@ -320,7 +320,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 01 | WS-V2-1 | WebSocket v2 | Add `/market-v2` endpoint | Backend | DONE | Endpoint serves ticks/ohlc; advertises capabilities | `server.py`,`README.md` | None | No feature flag needed |
 | 02 | WS-1 | WebSocket | Extend v2 greeting to advertise `indicators` | Backend | DONE | `connected` includes `indicators` | `server.py` | WS-V2-1 | Backward compatible |
 | 03 | IND-1 | Indicators | Create `app/indicators.py` (RSI/EMA/MACD/Ichimoku/UT Bot) | Backend | DONE | Matches tolerances; docstrings | `app/indicators.py` | None | Centralized math |
-| 04 | CACHE-1 | Indicators | Add `app/indicator_cache.py` with deque per (sym,tf) | Backend | TODO | `get_latest_*`,`update_*`; ring size cfg | `app/indicator_cache.py` | IND-1 | Async-safe usage |
+| 04 | CACHE-1 | Indicators | Add `app/indicator_cache.py` with deque per (sym,tf) | Backend | DONE | `get_latest_*`,`update_*`; ring size cfg | `app/indicator_cache.py` | IND-1 | Async-safe usage |
 | 05 | SCHED-1 | Scheduler | 10s closed-bar detector/poller | Backend | TODO | Detects, computes, stores, broadcasts | `server.py` | IND-1, CACHE-1 | Measure latency |
 | 06 | WS-2 | WebSocket | Handle `data_types` incl. `indicators` on subscribe | Backend | TODO | Accept/validate; send snapshot+updates | `server.py` | SCHED-1 | Per-client subs |
 | 07 | WS-3 | WebSocket | Add `initial_indicators` + `indicator_update` shapes | Backend | TODO | JSON contracts finalized | `server.py`,`REARCHITECTING.md` | IND-1,SCHED-1 | Include `bar_time` ms |

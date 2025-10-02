@@ -41,6 +41,9 @@ except Exception:
     NEWS_UPDATE_INTERVAL_HOURS = 0.5
 NEWS_CACHE_MAX_ITEMS = int(os.environ.get("NEWS_CACHE_MAX_ITEMS", "500"))
 
+# Indicator cache configuration
+INDICATOR_RING_SIZE = int(os.environ.get("INDICATOR_RING_SIZE", "256"))
+
 # Supabase configuration (tenant-aware)
 _ten = get_tenant_config()
 SUPABASE_URL = _ten.supabase_url

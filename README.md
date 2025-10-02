@@ -749,6 +749,40 @@ Example `.env`:
 NEWS_CACHE_FILE=/var/fxlabs/news_cache.json
 ```
 
+#### Indicator Cache (Single Source of Truth)
+
+- Closed‑bar indicator values (RSI/EMA/MACD, etc.) are centralized in `app/indicator_cache.py`.
+- Each `(symbol, timeframe, params)` keeps a small ring buffer using `deque(maxlen=INDICATOR_RING_SIZE)`.
+- All consumers (alerts, WebSocket indicators, debug logs) MUST read from this cache rather than recomputing.
+
+APIs:
+
+```python
+from app.indicator_cache import indicator_cache
+
+# Updates (called by indicator pipeline on bar close)
+await indicator_cache.update_rsi("EURUSD", "1H", period=14, value=62.1, ts_ms=1695200100000)
+await indicator_cache.update_ema("EURUSD", "1H", period=21, value=1.10542, ts_ms=1695200100000)
+await indicator_cache.update_macd("EURUSD", "1H", 12, 26, 9, macd_value=0.0012, signal_value=0.0010, hist_value=0.0002)
+
+# Reads (latest)
+ts_rsi, rsi = await indicator_cache.get_latest_rsi("EURUSD", "1H", 14) or (None, None)
+ts_ema, ema = await indicator_cache.get_latest_ema("EURUSD", "1H", 21) or (None, None)
+ts_macd, macd, sig, hist = await indicator_cache.get_latest_macd("EURUSD", "1H", 12, 26, 9) or (None, None, None, None)
+```
+
+Configuration:
+
+```env
+# Max number of recent indicator values kept per key (default 256)
+INDICATOR_RING_SIZE=256
+```
+
+Concurrency:
+
+- Access is async‑safe using keyed locks via `app.concurrency.pair_locks` with keys `ind:{symbol}:{timeframe}`.
+- Avoid holding other `pair_locks` with the same key simultaneously to prevent deadlocks.
+
 ### Performance Characteristics
 
 | Metric | Before Optimization | After Optimization | Improvement |
