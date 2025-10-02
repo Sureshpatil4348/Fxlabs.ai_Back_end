@@ -22,7 +22,7 @@
 - All alert logs print to terminal and are also persisted to `logs/<YYYY-MM-DDTHH-mm-ssZ>.log` (UTC server start) with rotation (≈10 MB × 5 files).
 - The `logs/` folder is created automatically; you can change location via `LOG_DIR`.
  - To reduce noise, non‑critical diagnostics (e.g., `alert_eval_config`, `alert_eval_start/end`, no‑trigger reasons) are gated behind `ALERT_VERBOSE_LOGS` (default: `false`). Set `export ALERT_VERBOSE_LOGS=true` to see them during debugging.
- - Note on `🧭 liveRSI` debugging: these lines are produced by MT5 OHLC fetches, not by a dedicated 1‑minute timer. In a default deployment the 5‑minute alert scheduler is what causes the fetch, so you will usually see one `liveRSI` line per 5 minutes. If you need per‑minute prints aligned to M1 closes, add a minute background loop that calls `app.mt5_utils._maybe_log_live_rsi()`.
+- Note on `🧭 liveRSI` debugging: when `LIVE_RSI_DEBUGGING=true`, a lightweight 1‑minute background task logs exactly at each M1 close via `app.mt5_utils._maybe_log_live_rsi()`. If disabled, you may only see `liveRSI` entries when other fetches occur (e.g., during the 5‑minute alert cycle).
 
 **Simplified Scope (Current Support)**
 - RSI Tracker Alert (single per user)

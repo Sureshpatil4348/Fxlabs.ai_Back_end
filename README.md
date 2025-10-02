@@ -1,6 +1,6 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design: 100ms price stream (bid + daily % change), 10-second closed-bar indicator updates (RSI/EMA/MACD/UT Bot/Ichimoku), in-memory caches, and WebSocket delivery. No EA or external bridge required.
+Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and OHLC data over `/ws/market` (tick-driven, coalesced). Indicator streaming and periodic daily % change summaries are planned and tracked in the Implementation Checklist. No EA or external bridge required.
 
 A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, AI-powered news analysis, and comprehensive alert systems for trading applications.
 
