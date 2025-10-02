@@ -144,6 +144,7 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[O
         raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, count)
     if rates is None or len(rates) == 0:
+        _maybe_log_live_rsi()
         logger.debug(f"⚠️ No rates from MT5 for {symbol}")
         return []
     ohlc_data = []
