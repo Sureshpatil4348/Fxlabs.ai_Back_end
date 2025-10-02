@@ -22,7 +22,7 @@ This document explains exactly which MT5 integration is used, how market data is
 
 Notes:
 - If `copy_rates_from_pos` returns empty, a debug log is emitted; callers gracefully handle an empty list.
-- Server also contains a local `_to_ohlc` and helpers mirroring `app/mt5_utils`, but the canonical logic lives under `app/mt5_utils.py`.
+- Canonical OHLC conversion, caching, and scheduling live in `app/mt5_utils.py`. WebSocket and alert services use these helpers (no duplicate implementations).
 
 ## WebSocket Streaming (Backend → Frontend)
 - Endpoints:
@@ -42,6 +42,7 @@ Notes:
   - `ohlc_schema`:
     - `parallel` (default): includes `open/high/low/close` plus `openBid/openAsk/...` when derivable from spread.
     - `basis_only`: canonical `open/high/low/close` reflect the requested basis and parallel fields are omitted.
+  - OHLC parallel fields are computed centrally in `app/mt5_utils._to_ohlc` by splitting `spread` across bid/ask using the symbol `point`, with a tick-based fallback when spread is absent.
   - Formatting code: `server.py:715` and `server.py:728`.
 
 ## Alerts Calculation (Closed-Bar RSI and Correlation)
@@ -74,9 +75,9 @@ For end-to-end alert behavior and product policies, see `ALERTS.md`.
 - REST endpoints can be gated with `API_TOKEN`; WebSocket endpoints are currently open (consider token-based auth if needed).
 - Symbol validation is enforced centrally; failures return actionable messages (sample/nearby symbols when unknown).
 - On shutdown, MT5 is cleanly shut down via lifespan teardown.
+ - A single in-process MT5 session is shared across WebSocket streaming, alert schedulers, and live RSI debugging to ensure data parity.
 
 ## Troubleshooting
 - "No rates from MT5" → check MT5 is running, logged-in, and the symbol is enabled in Market Watch.
 - "Unknown symbol" → use `/api/symbols?q=...` to discover the exact broker-suffixed symbol (e.g., `EURUSDm`, `BTCUSDm`).
 - Empty RSI/alerts → ensure timeframe >= `5M` for alerts and that closed bars exist (warm-up requires > period bars).
-

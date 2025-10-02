@@ -116,6 +116,32 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
         tf_secs = tf_seconds_map.get(timeframe, 60)
         bar_end_ms = ts_ms + (tf_secs * 1000)
         is_closed = int(datetime.now(timezone.utc).timestamp() * 1000) >= bar_end_ms
+        # Derive bid/ask parallel fields using spread when available
+        # Prefer structured field `spread` if present; otherwise, fallback to current tick
+        spread_points = _rate_val("spread", 6)
+        point = None
+        try:
+            sym_info = mt5.symbol_info(symbol)
+            point = getattr(sym_info, "point", None) if sym_info else None
+        except Exception:
+            point = None
+        if (not spread_points or spread_points == 0) and point:
+            try:
+                tinfo = mt5.symbol_info_tick(symbol)
+                if tinfo and getattr(tinfo, "bid", None) is not None and getattr(tinfo, "ask", None) is not None:
+                    spread_points = (float(getattr(tinfo, "ask")) - float(getattr(tinfo, "bid"))) / float(point)
+            except Exception:
+                pass
+        half_spread = (spread_points * point / 2.0) if (spread_points and point) else 0.0
+        open_bid = float(rate_data[1]) - half_spread if half_spread else None
+        high_bid = float(rate_data[2]) - half_spread if half_spread else None
+        low_bid = float(rate_data[3]) - half_spread if half_spread else None
+        close_bid = float(rate_data[4]) - half_spread if half_spread else None
+        open_ask = float(rate_data[1]) + half_spread if half_spread else None
+        high_ask = float(rate_data[2]) + half_spread if half_spread else None
+        low_ask = float(rate_data[3]) + half_spread if half_spread else None
+        close_ask = float(rate_data[4]) + half_spread if half_spread else None
+
         return OHLC(
             symbol=symbol,
             timeframe=timeframe,
@@ -128,6 +154,14 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
             volume=_rate_val("real_volume", 7) or _rate_val("tick_volume", 5),
             tick_volume=_rate_val("tick_volume", 5),
             spread=_rate_val("spread", 6),
+            openBid=open_bid,
+            highBid=high_bid,
+            lowBid=low_bid,
+            closeBid=close_bid,
+            openAsk=open_ask,
+            highAsk=high_ask,
+            lowAsk=low_ask,
+            closeAsk=close_ask,
             is_closed=is_closed,
         )
     except (IndexError, ValueError, TypeError) as e:

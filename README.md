@@ -763,6 +763,7 @@ The modular structure isolates responsibilities while preserving all existing be
 
 ### MT5 Integration
 - Full MT5 integration, data fetch, WebSocket streaming, alerts math, and live RSI debugging are documented in `MT5.md`.
+- Single shared MT5 session with unified OHLC helpers/caching in `app/mt5_utils.py` (no duplication).
 - WebSocket endpoints: `/ws/market` (preferred) and `/ws/ticks` (legacy). See `test_websocket_client.py` for usage.
 
 ### New Helpers
