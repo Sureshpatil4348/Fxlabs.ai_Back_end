@@ -151,7 +151,7 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[O
         ohlc = _to_ohlc(symbol, timeframe.value, rate)
         if ohlc:
             ohlc_data.append(ohlc)
-    _maybe_log_live_rsi(symbol, timeframe, ohlc_data)
+    _maybe_log_live_rsi()
     return ohlc_data
 
 
@@ -160,17 +160,27 @@ def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
     return data[0] if data else None
 
 
-def _maybe_log_live_rsi(symbol: str, timeframe: Timeframe, bars: List[OHLC]) -> None:
-    if not LIVE_RSI_DEBUGGING or timeframe != Timeframe.M1:
+def _maybe_log_live_rsi() -> None:
+    if not LIVE_RSI_DEBUGGING:
         return
-    base_symbol = symbol.upper().rstrip("M")
-    if base_symbol != "BTCUSD":
+    symbol = "BTCUSDm"
+    timeframe = Timeframe.M1
+    mt5_timeframe = MT5_TIMEFRAMES.get(timeframe)
+    if mt5_timeframe is None:
         return
+    rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, 50)
+    if not rates:
+        return
+    bars: List[OHLC] = []
+    for rate in rates:
+        ohlc = _to_ohlc(symbol, timeframe.value, rate)
+        if ohlc:
+            bars.append(ohlc)
     closed_bars = [bar for bar in bars if getattr(bar, "is_closed", None) is not False]
     if len(closed_bars) < 15:
         return
     latest_closed = closed_bars[-1]
-    key = f"{base_symbol}:{timeframe.value}"
+    key = "BTCUSD:1M"
     if _live_rsi_last_logged.get(key) == latest_closed.time:
         return
     rsi_value = calculate_rsi_latest(closed_closes(bars), 14)
