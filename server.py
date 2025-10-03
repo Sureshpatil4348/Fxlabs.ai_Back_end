@@ -94,9 +94,6 @@ async def lifespan(app: FastAPI):
     # Start 10s closed-bar indicator poller
     global _indicator_scheduler_task
     _indicator_scheduler_task = asyncio.create_task(_indicator_scheduler())
-    # Start market summary periodic sender (15s cadence)
-    global _market_summary_scheduler_task
-    _market_summary_scheduler_task = asyncio.create_task(_market_summary_scheduler())
     
     yield
     
@@ -108,8 +105,6 @@ async def lifespan(app: FastAPI):
         _minute_scheduler_task.cancel()
     if _indicator_scheduler_task:
         _indicator_scheduler_task.cancel()
-    if _market_summary_scheduler_task:
-        _market_summary_scheduler_task.cancel()
     try:
         await news_task
     except asyncio.CancelledError:
@@ -130,11 +125,6 @@ async def lifespan(app: FastAPI):
     if _indicator_scheduler_task:
         try:
             await _indicator_scheduler_task
-        except asyncio.CancelledError:
-            pass
-    if _market_summary_scheduler_task:
-        try:
-            await _market_summary_scheduler_task
         except asyncio.CancelledError:
             pass
     mt5.shutdown()
@@ -176,8 +166,7 @@ _minute_scheduler_running: bool = False
 
 # Indicator scheduler state
 _indicator_scheduler_task: Optional[asyncio.Task] = None
-# Market summary scheduler state (periodic daily_change_pct pushes)
-_market_summary_scheduler_task: Optional[asyncio.Task] = None
+# 
 # Track connected WS clients to discover subscribed symbol×timeframe sets for indicators
 _connected_clients = set()
 _connected_clients_lock = asyncio.Lock()
@@ -597,74 +586,6 @@ async def _indicator_scheduler() -> None:
     except Exception as e:
         print(f"❌ Indicator scheduler fatal error: {e}")
 
-
-async def _market_summary_scheduler() -> None:
-    """Periodically compute and broadcast market summaries per symbol for clients
-    that requested summaries via data_types (v2 endpoint capability).
-
-    Payload: { "type": "market_summary", "symbol": S, "data": { "daily_change_pct": X } }
-    Cadence: ~15 seconds.
-    """
-    try:
-        interval_s = 15.0
-        while True:
-            # Snapshot clients to avoid holding the lock during MT5 calls
-            async with _connected_clients_lock:
-                clients = list(_connected_clients)
-
-            # Build unique symbol set. If any v2 broadcast clients exist, use baseline symbols
-            symbols: Set[str] = set()
-            has_v2_broadcast = any(getattr(c, "v2_broadcast", False) for c in clients)
-            if has_v2_broadcast:
-                symbols.update(RSI_SUPPORTED_SYMBOLS)
-            else:
-                for c in clients:
-                    try:
-                        for sym in getattr(c, "subscriptions", {}).keys():
-                            symbols.add(sym)
-                        # Also consider legacy tick subscriptions
-                        for sym in getattr(c, "symbols", set()):
-                            symbols.add(sym)
-                    except Exception:
-                        continue
-
-            # Compute once per symbol and broadcast to clients that want it
-            for sym in symbols:
-                try:
-                    dcp = get_daily_change_pct_bid(sym)
-                    if dcp is None:
-                        continue
-                    msg = {
-                        "type": "market_summary",
-                        "symbol": sym,
-                        "data": {"daily_change_pct": float(dcp)},
-                    }
-                    for c in clients:
-                        try:
-                            # v2 broadcast: always send. Otherwise, gate by subscription/symbol presence
-                            if getattr(c, "v2_broadcast", False):
-                                await c._try_send_json(msg)
-                            else:
-                                wants_summary = False
-                                if sym in getattr(c, "subscriptions", {}):
-                                    wants_summary = True
-                                if sym in getattr(c, "symbols", set()):
-                                    wants_summary = True
-                                if wants_summary:
-                                    await c._try_send_json(msg)
-                        except Exception:
-                            continue
-                except Exception:
-                    continue
-
-            try:
-                await asyncio.sleep(interval_s)
-            except asyncio.CancelledError:
-                raise
-    except asyncio.CancelledError:
-        return
-    except Exception as e:
-        print(f"❌ Market summary scheduler fatal error: {e}")
 
 # liveRSI boundary debugger removed — logs now emitted from indicator scheduler for M1
 
@@ -1407,21 +1328,7 @@ class WSClient:
                         # Never fail the subscription due to indicators snapshot issues
                         pass
 
-                # Send immediate market summary if requested (symbol-level, no timeframe)
-                if "market_summary" in data_types:
-                    try:
-                        dcp = get_daily_change_pct_bid(symbol_norm)
-                        if dcp is not None:
-                            ok3 = await self._try_send_json({
-                                "type": "market_summary",
-                                "symbol": symbol_norm,
-                                "data": {"daily_change_pct": float(dcp)}
-                            })
-                            if not ok3:
-                                return
-                    except Exception:
-                        # Best-effort only
-                        pass
+                # Market summary removed: daily_change_pct is included in tick payloads only
                 
                 ok = await self._try_send_json({
                     "type": "subscribed",
@@ -1658,8 +1565,8 @@ async def ws_market_v2(websocket: WebSocket):
                 "type": "connected",
                 "message": "WebSocket connected successfully",
                 "supported_timeframes": [tf.value for tf in Timeframe],
-                # WS-V2-1: ticks + ohlc supported initially; more types arrive later
-                "supported_data_types": ["ticks", "ohlc", "indicators", "market_summary"],
+                # WS-V2-1: ticks + ohlc + indicators supported; market_summary removed
+                "supported_data_types": ["ticks", "ohlc", "indicators"],
                 "supported_price_bases": ["last", "bid", "ask"],
                 "ohlc_schema": "parallel",
                 "indicators": {
@@ -1675,7 +1582,7 @@ async def ws_market_v2(websocket: WebSocket):
             pass
 
         # Reuse the same WSClient implementation as /ws/market, enable broadcast-all for v2
-        client = WSClient(websocket, "", supported_data_types={"ticks", "ohlc", "indicators", "market_summary"}, v2_broadcast=True)
+        client = WSClient(websocket, "", supported_data_types={"ticks", "ohlc", "indicators"}, v2_broadcast=True)
         await client.start()
         async with _connected_clients_lock:
             _connected_clients.add(client)

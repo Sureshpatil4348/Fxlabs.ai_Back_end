@@ -3,7 +3,7 @@
 This document defines a simple, polling-only design that uses Python’s MetaTrader5 library to deliver fast tick streaming and closed-bar indicator updates on a 10-second cadence. No Expert Advisor (EA) or external bridge is required.
 
 ## Goals
-- Minimal frontend data: push only what’s needed. Ticks are pushed on new-tick arrival (coalesced; typically ~100 ms during active periods), not on a fixed 10 Hz timer. A lightweight daily % change is included within each tick payload and also pushed periodically as a `market_summary` update (see checklist).
+- Minimal frontend data: push only what’s needed. Ticks are pushed on new-tick arrival (coalesced; typically ~100 ms during active periods), not on a fixed 10 Hz timer. A lightweight daily % change is included within each tick payload.
 - Every 10 seconds, detect newly closed candles for all tracked symbols and timeframes (M1 → W1) and emit indicator updates (planned addition).
 - Indicators computed in Python for closed bars:
   - RSI (support common periods: e.g., 2, 3, 5, 7, 9, 14, 21, 50)
@@ -42,11 +42,11 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
   - `indicator_cache` (new): dictionary keyed by `symbol:timeframe`, storing the latest IndicatorSnapshot (+small ring buffer for snapshots on connect).
 
 - WebSocket (existing `/ws/market`)
-  - Price stream: pushes `ticks` messages on new-tick arrival (coalesced). Daily % change is included in tick payloads and is also available via periodic `market_summary` for each subscribed symbol (v2).
+  - Price stream: pushes `ticks` messages on new-tick arrival (coalesced). Daily % change is included in tick payloads.
   - Indicators stream: pushes `indicator_update` when new closed-bar indicators are computed (10s poll cadence; v2-only).
   - On subscribe, server sends `initial_ohlc` when `ohlc` is requested. `initial_indicators` will be added with the indicator pipeline.
 - WebSocket v2 (`/market-v2`) — Broadcast-All Mode
-  - No explicit subscriptions required. Server broadcasts ticks, OHLC boundary updates, indicators, and market summaries for a baseline set of symbols/timeframes to all connected clients.
+  - No explicit subscriptions required. Server broadcasts ticks, OHLC boundary updates, and indicators for a baseline set of symbols/timeframes to all connected clients.
   - Baseline symbols: broker-suffixed `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`.
   - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1.
   - Subscription messages are still accepted for compatibility but not required in v2.
@@ -158,7 +158,7 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
     - Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
 Broadcast-All Notes (v2 only)
-- Indicators and market summaries are broadcast to all v2 clients for the baseline coverage; no `data_types:["indicators"]` is needed.
+  - Indicators are broadcast to all v2 clients for the baseline coverage; no `data_types:["indicators"]` is needed.
 - Ticks are pushed for all baseline symbols; OHLC boundary updates fire for all baseline timeframes.
 - Clients can still send `subscribe`/`unsubscribe`, but server behavior in v2 does not require them for receiving baseline data.
 
@@ -195,7 +195,7 @@ Broadcast-All Notes (v2 only)
 4) WebSocket Contract
    - Extend `WSClient` in `server.py` to support `data_types` including `"indicators"` and maintain per-client subscriptions.
    - When a subscription includes `indicators`, send snapshot and subsequent `indicator_update`s.
-   - Optionally include a periodic `market_summary` per symbol with `{daily_change_pct}` computed on Bid vs broker D1 open (see below).
+  
 
 5) Observability & Safety
    - Metrics: compute duration per poll cycle, number of symbols/timeframes processed, failures.
@@ -208,8 +208,7 @@ Broadcast-All Notes (v2 only)
 
 ## Market v2 WebSocket — `/market-v2` (Backwards-Compatible Rollout)
 
-Goals
-- Introduce a stable, forward‑compatible WebSocket endpoint that unifies real‑time ticks, OHLC live/closed bars, indicator streaming, and periodic market summaries.
+- Introduce a stable, forward‑compatible WebSocket endpoint that unifies real‑time ticks, OHLC live/closed bars, and indicator streaming.
 - Keep existing endpoints (`/ws/market`, `/ws/ticks`) operational during migration; remove them after successful client cutover.
 
 Endpoint
@@ -220,14 +219,14 @@ Endpoint
     "type": "connected",
     "message": "WebSocket connected successfully",
     "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
-    "supported_data_types": ["ticks","ohlc","indicators","market_summary"],
+    "supported_data_types": ["ticks","ohlc","indicators"],
     "supported_price_bases": ["last","bid","ask"],
     "ohlc_schema": "parallel"
   }
   ```
 
 Broadcast-All Behavior
-- Server pushes: `ticks`, `ohlc_update`, `indicator_update`, and `market_summary` for baseline symbols/timeframes without subscription.
+- Server pushes: `ticks`, `ohlc_update`, and `indicator_update` for baseline symbols/timeframes without subscription.
 - Optional: clients may still `subscribe` to receive `initial_ohlc` and `initial_indicators` snapshots for specific symbol×timeframe on demand.
 
 Live Push Types
@@ -235,7 +234,6 @@ Live Push Types
 - `ohlc_live`: forming candle on tick
 - `ohlc_update`: closed candle at boundary (guaranteed)
   - `indicator_update`: closed‑bar indicators after 10s poller detects a new bar
-  - `market_summary`: periodic payload per symbol, e.g. `{ daily_change_pct }` (Bid vs broker D1 reference; also included inline with `ticks`)
 
 Validation & Safety
 - Strict symbol/timeframe allowlist; per‑connection caps on total subscriptions.
@@ -243,14 +241,14 @@ Validation & Safety
 
 Migration Plan
 1) Implement `/market-v2` directly (no feature flag needed as app is not live). Keep legacy endpoints available during testing.
-2) Capability discovery: v2 greeting advertises `supported_data_types` and `ohlc_schema`. Clients can detect `indicators`/`market_summary` support directly from `supported_data_types`.
+2) Capability discovery: v2 greeting advertises `supported_data_types` and `ohlc_schema`. Clients can detect `indicators` support directly from `supported_data_types`.
 3) Soak test: Mirror a subset of symbols/TFs on both endpoints; compare volumes and error rates. Add metrics for per‑type send counts and failures.
 4) Client rollout: Frontend migrates to `/market-v2` first for read‑only features; enable indicators/summary per module.
 5) Deprecation window: Emit a one‑line deprecation notice to v1 clients in the greeting (`note: "deprecated; use /market-v2"`). Announce removal date.
 6) Removal: After adoption ≥ 100%, delete `/ws/ticks` and `/ws/market` routes and related legacy glue.
 
 Breaking Changes vs v1 (none required)
-- Message envelope and OHLC payloads remain identical; v2 only adds new types (`indicator_update`, `market_summary`).
+- Message envelope and OHLC payloads remain identical; v2 only adds new type `indicator_update`.
 - Clients not using new types are unaffected beyond the path change.
 
 Operational Notes
@@ -351,7 +349,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 05 | SCHED-1 | Scheduler | 10s closed-bar detector/poller | Backend | DONE | Detects, computes, stores, broadcasts | `server.py` | IND-1, CACHE-1 | Measured latency logged |
 | 06 | WS-2 | WebSocket | Handle `data_types` incl. `indicators` on subscribe | Backend | DONE | Accept/validate; send snapshot+updates | `server.py` | SCHED-1 | Per-client subs |
 | 07 | WS-3 | WebSocket | Add `initial_indicators` + `indicator_update` shapes | Backend | DONE | JSON contracts finalized | `server.py`,`REARCHITECTING.md` | IND-1,SCHED-1 | Include `bar_time` ms |
-| 08 | WS-V2-2 | WebSocket v2 | Add `market_summary` periodic sender | Backend | DONE | `{daily_change_pct}` every 15s + included in ticks | `server.py`,`app/mt5_utils.py` | D1 fetch helper | Lightweight payload |
+| 08 | WS-V2-2 | WebSocket v2 | Remove `market_summary` (daily_change_pct only in ticks) | Backend | DONE | No separate summary pushes; keep daily_change in tick payloads | `server.py`,`README.md` |  |  |
 | 09 | DEBUG-1 | Debug | Align liveRSI to cache; single source numbers | Backend | DONE | Log when M1 indicator updates | `server.py`,`app/mt5_utils.py` | SCHED-1 | Removed duplicate helper; logs from indicator scheduler |
 | 10 | OBS-1 | Observability | Add metrics + structured logs | Backend | DONE | Poll durations; items; latencies | `server.py` | SCHED-1 | JSON logs optional |
 | 11 | SEC-1 | Security | WS input validation + allowlists | Backend | DONE | Validate symbol/tf; caps; optional auth | `server.py` | None | Mirrors REST auth policy: optional `X-API-Key` on WS; allowlists and caps enforced |

@@ -394,9 +394,9 @@ Internal alert tick_data shape:
 - **Features**: Legacy client support
 
 #### Market Data WebSocket v2 (`/market-v2`)
-- Use `/market-v2` for new clients. It exposes the same tick and OHLC payloads, and advertises capabilities via `supported_data_types` in the greeting.
-- Current capabilities: `supported_data_types = ["ticks","ohlc","indicators","market_summary"]`.
-- Broadcast-All mode: v2 pushes ticks, OHLC boundary updates, indicators (closed‑bar), and market summaries for a baseline set of symbols/timeframes to all connected clients without explicit subscriptions.
+- Use `/market-v2` for new clients. It exposes tick and OHLC payloads, and advertises capabilities via `supported_data_types` in the greeting.
+- Current capabilities: `supported_data_types = ["ticks","ohlc","indicators"]`.
+- Broadcast-All mode: v2 pushes ticks, OHLC boundary updates, and indicators (closed‑bar) for a baseline set of symbols/timeframes to all connected clients without explicit subscriptions.
   - Baseline symbols: `RSI_SUPPORTED_SYMBOLS` from `app/constants.py` (broker‑suffixed)
   - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1
 - Subscribe remains optional and is primarily used to receive `initial_ohlc` / `initial_indicators` snapshots on demand.
@@ -418,7 +418,7 @@ V2 greeting example (capabilities + indicators registry):
   "type": "connected",
   "message": "WebSocket connected successfully",
   "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
-  "supported_data_types": ["ticks","ohlc","indicators","market_summary"],
+  "supported_data_types": ["ticks","ohlc","indicators"],
   "supported_price_bases": ["last","bid","ask"],
   "ohlc_schema": "parallel",
   "indicators": {
@@ -430,17 +430,7 @@ V2 greeting example (capabilities + indicators registry):
   }
 }
 ```
-- When `market_summary` is requested in `data_types`, the server sends an immediate summary per symbol and periodic updates (~15s):
-
-```json
-{
-  "type": "market_summary",
-  "symbol": "EURUSDm",
-  "data": { "daily_change_pct": -0.12 }
-}
-```
-
-Tick payloads can include `daily_change_pct` (Bid vs broker D1 reference):
+Tick payloads include `daily_change_pct` (Bid vs broker D1 reference):
 
 ```json
 {"type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"volume":120, "daily_change_pct": -0.12} ] }
@@ -1301,8 +1291,8 @@ For support and questions:
 ## 🛠️ Troubleshooting
 ### Ctrl+C hangs at "Waiting for application shutdown"
 - Symptom: After pressing Ctrl+C, logs show `INFO:     Shutting down`, `connection closed` lines, and then `INFO:     Waiting for application shutdown.` without exiting.
-- Cause: Background schedulers (e.g., market summary/indicators/news) must be cancelled so the lifespan shutdown can complete. If any long-running task isn't cancelled, the server waits indefinitely.
-- Fix in code: The shutdown sequence cancels all background tasks, including the market summary scheduler. Ensure you are on the latest code where `server.py` cancels `_market_summary_scheduler_task` along with other schedulers.
+- Cause: Background schedulers (e.g., indicators/news) must be cancelled so the lifespan shutdown can complete. If any long-running task isn't cancelled, the server waits indefinitely.
+- Fix in code: The shutdown sequence cancels all background tasks. Ensure you are on the latest code where `server.py` cancels scheduler tasks with proper `CancelledError` handling.
 - Tip: If you still see a hang, check for any custom added loops without `CancelledError` handling. All loops should `await asyncio.sleep(...)` and properly handle `asyncio.CancelledError`.
 
 ### "RSI Tracker: triggers exist in DB but no emails/logs"
