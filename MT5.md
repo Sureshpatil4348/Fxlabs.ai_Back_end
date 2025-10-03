@@ -61,9 +61,9 @@ Notes:
 For end-to-end alert behavior and product policies, see `ALERTS.md`.
 
 ## Live RSI Debugging
-- Toggle: `LIVE_RSI_DEBUGGING=true` (default `false`). Code: `app/config.py:16`.
+- Toggle: `LIVE_RSI_DEBUGGING=true` (default `false`). Code: `app/config.py`.
 - Behavior: On each new closed 1‑minute candle for `BTCUSDm`, logs a concise line including RSI(14) on closed bars, candle timestamp, OHLC, volume, tick volume, and spread.
-  - Code: `app/mt5_utils.py:120` (`_maybe_log_live_rsi`).
+  - Emission location: indicator scheduler within `server.py` (gated to `BTCUSDm` and `1M`).
 - Reference doc: `LIVE_RSI_DEBUGGING.md` (how to enable and sample output).
 
 ## REST Endpoints (MT5-backed)

@@ -424,7 +424,12 @@ async def _indicator_scheduler() -> None:
 
                     # Live RSI debug log for M1 closed bars using cache-aligned numbers
                     try:
-                        if LIVE_RSI_DEBUGGING and tf == Timeframe.M1 and rsi_val is not None:
+                        if (
+                            LIVE_RSI_DEBUGGING
+                            and symbol == "BTCUSDm"
+                            and tf == Timeframe.M1
+                            and rsi_val is not None
+                        ):
                             time_iso = getattr(last_closed, "time_iso", "") or ""
                             if "T" in time_iso:
                                 parts = time_iso.split("T", 1)

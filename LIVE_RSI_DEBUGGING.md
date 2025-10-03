@@ -15,7 +15,7 @@ Restart the service after changing the variable so the loader can pick it up.
 
 ## What It Does
 
-When enabled, the backend will emit a log entry exactly when a new **closed** 1-minute candle forms for **BTC/USD** (boundary-aligned helper task). The message includes:
+When enabled, the backend will emit a log entry exactly when a new **closed** 1-minute candle forms for **BTCUSDm**. The message includes:
 
 - Pair label (`BTC/USD`)
 - Timeframe (`1M`)
@@ -27,7 +27,7 @@ When enabled, the backend will emit a log entry exactly when a new **closed** 1-
 Sample output:
 
 ```
-🧭 liveRSI BTC/USD 1 minute RSIclosed(14)=48.32 | date=2024-09-18 time=12:35:00Z open=26850.10000 high=26870.90000 low=26840.50000 close=26865.40000 volume=132.00 tick_volume=284 spread=21
+🧭 liveRSI BTCUSDm 1M RSIclosed(14)=48.32 | date=2024-09-18 time=12:35:00Z open=26850.10000 high=26870.90000 low=26840.50000 close=26865.40000 volume=132.00 tick_volume=284 spread=21
 ```
 
 The dedicated compass emoji (`🧭`) allows you to locate these statements quickly inside aggregated logs.
@@ -38,6 +38,6 @@ The dedicated compass emoji (`🧭`) allows you to locate these statements quick
 - Only **closed** candles trigger the log, so you will not see updates while a candle is still forming.
 - Timing: A lightweight background task sleeps until the next M1 boundary and then waits ~60 ms for MT5 to finalize the bar before logging. Typical end-to-end latency stays under 100 ms, subject to OS scheduler and MT5 response.
 - The RSI calculation uses the same Wilder smoothing pipeline consumed by all RSI alerts, guaranteeing parity between debug output and production triggers.
-- The feature is intentionally scoped to BTC/USD (1 minute) to minimise noise. Extend it as needed by adjusting `app/mt5_utils.py`.
+- The feature is intentionally scoped to BTCUSDm (1 minute) to minimise noise. Extend it as needed by adjusting the gating condition in the indicator scheduler within `server.py`.
 
 Disable the variable (or leave it unset) to silence the stream once you finish debugging.
