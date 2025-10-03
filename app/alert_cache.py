@@ -10,6 +10,7 @@ import builtins
 from .logging_config import configure_logging
 from .alert_logging import log_debug, log_info, log_warning, log_error
 from .config import ALERT_VERBOSE_LOGS
+from .constants import RSI_CORRELATION_WINDOW
 
 class AlertCache:
     """Simple in-memory cache for user alert configurations"""
@@ -143,7 +144,7 @@ class AlertCache:
                         "rsi_period": 14,
                         "rsi_overbought": alert.get("rsi_overbought", 70),
                         "rsi_oversold": alert.get("rsi_oversold", 30),
-                        "correlation_window": alert.get("correlation_window", 50),
+                        "correlation_window": RSI_CORRELATION_WINDOW,
                         "notification_methods": alert.get("notification_methods", ["email"]),
                         "created_at": alert.get("created_at"),
                         "updated_at": alert.get("updated_at"),
@@ -229,7 +230,7 @@ class AlertCache:
                                 cfg = (
                                     f"tf={a.get('timeframe','')} | mode={(a.get('mode') or 'rsi_threshold').lower()} | "
                                     f"period={a.get('rsi_period', 14)} | ob={a.get('rsi_overbought', 70)} | os={a.get('rsi_oversold', 30)} | "
-                                    f"window={a.get('correlation_window', 50)}"
+                                    f"window={RSI_CORRELATION_WINDOW}"
                                 )
                             elif atype == "heatmap_tracker":
                                 pairs = a.get('pairs', []) or []

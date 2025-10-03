@@ -11,7 +11,7 @@ from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
-from .constants import RSI_CORRELATION_PAIR_KEYS, RSI_CORRELATION_PAIR_SIGNS
+from .constants import RSI_CORRELATION_PAIR_KEYS, RSI_CORRELATION_PAIR_SIGNS, RSI_CORRELATION_WINDOW
 from .rsi_utils import calculate_rsi_latest, closed_closes
 from .indicator_cache import indicator_cache
 
@@ -85,7 +85,7 @@ class RSICorrelationTrackerAlertService:
                     rsi_period = 14
                     rsi_ob = int(alert.get("rsi_overbought", 70))
                     rsi_os = int(alert.get("rsi_oversold", 30))
-                    corr_window = int(alert.get("correlation_window", 50))
+                    corr_window = RSI_CORRELATION_WINDOW
                     # Start-of-alert evaluation log
                     log_debug(
                         logger,

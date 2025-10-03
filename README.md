@@ -52,7 +52,7 @@ This backend aligns alert evaluations with the Calculations Reference used by th
 - RSI (14, Wilder): Computed from MT5 OHLC (Bid‑based series), matching frontend logic. Period is fixed to 14 across the entire system (REST/WS, alerts, emails, cache).
 - RSI Correlation (Dashboard parity):
   - Mode `rsi_threshold`: Pair‑type aware mismatch (positive: OB/OS split; negative: both OB or both OS).
-  - Mode `real_correlation`: Timestamp‑aligned log‑return Pearson correlation over the rolling window. Mismatch thresholds are pair‑type aware (positive: corr < +0.25; negative: corr > −0.15). Strength labels: strong |corr|≥0.70, moderate ≥0.30, else weak.
+  - Mode `real_correlation`: Timestamp‑aligned log‑return Pearson correlation over a fixed rolling window of 50. Mismatch thresholds are pair‑type aware (positive: corr < +0.25; negative: corr > −0.15). Strength labels: strong |corr|≥0.70, moderate ≥0.30, else weak.
 - Heatmap/Quantum aggregation:
   - Indicators: EMA21/50/200, MACD(12,26,9), RSI(14), UTBot(EMA50 ± 3×ATR10), Ichimoku Clone (9/26/52).
   - Per‑cell scoring: buy=+1, sell=−1, neutral=0; new‑signal boost ±0.25 in last K=3; quiet‑market damping halves MACD/UTBot cell scores when ATR10 is below the 5th percentile of last 200 values; clamp to [−1.25,+1.25].
@@ -549,7 +549,7 @@ Notes:
 
 - Modes:
   - RSI Threshold: evaluate pairwise RSI combinations (e.g., positive/negative mismatches, neutral break) using per‑pair RSI settings.
-  - Real Correlation: compute Pearson correlation of returns over a configurable `correlation_window` (default 50) using historical OHLC closes for both symbols.
+  - Real Correlation: compute Pearson correlation of returns over a fixed window of 50 using historical OHLC closes for both symbols.
 - Outputs include RSI values (threshold mode) or `correlation_value` (real correlation mode), with per‑pair details in emails.
   - Email uses a compact, mobile‑friendly HTML template titled "RSI Correlation Mismatch" with columns: Expected, RSI Corr Now, Trigger.
 
@@ -572,7 +572,7 @@ Notes:
 - Uses a compact, mobile‑friendly HTML card per triggered pair.
 - Fields per card:
 - **pair_a/pair_b**: Symbols displayed as `ABC/DEF` (e.g., `EUR/USD` vs `GBP/USD`)
-  - **lookback**: `correlation_window` from alert config
+  - **lookback**: fixed 50
   - **timeframe**: TF of the evaluation (e.g., `1H`)
   - **expected_corr**: Threshold expression derived from the triggered rule:
     - strong_positive: `≥ strong_correlation_threshold`

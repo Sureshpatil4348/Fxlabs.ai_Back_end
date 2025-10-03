@@ -73,3 +73,6 @@ RSI_CORRELATION_PAIR_SIGNS = {
     "BTCUSDm_XAUUSDm": "positive",
 }
 
+# Fixed correlation window for Real Correlation mode across the system
+RSI_CORRELATION_WINDOW: int = 50
+

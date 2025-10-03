@@ -102,7 +102,7 @@ Single per-user alert for the RSI Correlation dashboard. User selects `mode` and
 - **Timeframe**: one of `1M,5M,15M,30M,1H,4H,1D,1W` (choose only one)
 - **Pairs**: no selection needed; backend auto-checks configured correlation pairs.
 - **RSI Threshold**: period is fixed to 14; configure `rsi_overbought` (60–90), `rsi_oversold` (10–40)
-- **Real Correlation**: `correlation_window` (20, 50, 90, 120)
+- **Real Correlation**: correlation window is fixed to 50
 - **Behavior**: Insert a trigger when a correlation pair transitions into a mismatch per rules below.
   - RSI Threshold mode: uses pair‑type aware mismatch definitions
     - Positive pair: mismatch if one symbol is Overbought (≥OB) and the other is Oversold (≤OS)
@@ -123,7 +123,7 @@ Fixed correlation pair_keys evaluated:
 
 Configuration:
 - Single alert per user (unique by `user_id`)
-- Validate timeframe, mode, RSI bounds, correlation window
+- Validate timeframe, mode, RSI bounds (correlation window is fixed to 50)
 - CRUD only on alert config; backend evaluates and inserts triggers
 
 Supabase Schema: `supabase_rsi_correlation_tracker_alerts_schema.sql`

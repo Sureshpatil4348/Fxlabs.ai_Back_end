@@ -35,6 +35,7 @@ logger.addHandler(logging.NullHandler())
 from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, DAILY_TZ_NAME, BYPASS_EMAIL_ALERTS
 from .tenancy import get_tenant_config
 from .alert_logging import log_debug, log_info, log_warning, log_error
+from .constants import RSI_CORRELATION_WINDOW
 
 
 class EmailService:
@@ -1504,7 +1505,7 @@ class EmailService:
                     rule = condition.replace("_", " ").title() if condition else "Correlation signal"
                 return expected, rule
 
-            lookback = alert_config.get("correlation_window", 50)
+            lookback = RSI_CORRELATION_WINDOW
             # Build one content block per triggered pair inside the container
             pair_blocks: List[str] = []
             for pair in triggered_pairs:

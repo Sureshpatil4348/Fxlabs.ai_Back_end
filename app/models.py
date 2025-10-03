@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -171,7 +171,7 @@ class RSICorrelationAlertRequest(BaseModel):
     rsi_period: int = 14
     rsi_overbought_threshold: int = 70
     rsi_oversold_threshold: int = 30
-    correlation_window: int = 50
+    correlation_window: Literal[50] = 50
     alert_conditions: List[str]
     strong_correlation_threshold: float = 0.70
     moderate_correlation_threshold: float = 0.30
@@ -196,7 +196,7 @@ class RSICorrelationAlertResponse(BaseModel):
     rsi_period: int
     rsi_overbought_threshold: int
     rsi_oversold_threshold: int
-    correlation_window: int
+    correlation_window: Literal[50]
     alert_conditions: List[str]
     strong_correlation_threshold: float
     moderate_correlation_threshold: float
