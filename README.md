@@ -333,7 +333,7 @@ Internal alert tick_data shape:
 - Current capabilities: `supported_data_types = ["ticks","indicators"]`.
 - Broadcast-All mode: v2 pushes ticks and indicators (closed‑bar) to all connected clients without explicit subscriptions. OHLC is computed server‑side only for indicators/alerts.
   - Symbols: all symbols in `ALLOWED_WS_SYMBOLS` (defaults to all `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`, broker‑suffixed)
-  - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1
+- Timeframes: M1, M5, M15, M30, H1, H4, D1, W1
 - Subscribe remains optional and is primarily used to receive `initial_ohlc` / `initial_indicators` snapshots on demand.
 
 Security and input validation (mirrors REST policy):
@@ -409,13 +409,7 @@ Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 #### Indicator Coverage
 
 - Indicators now process for all allowed symbols (defaults to full `RSI_SUPPORTED_SYMBOLS`).
-- Timeframes are controlled via `INDICATOR_ROLLOUT_TFS`. Use `ALL` to include the full baseline `M1,M5,M15,M30,H1,H4,D1`.
-
-```env
-# Timeframes to include (comma-separated). Accepts enum values (1M,5M,...) or names (M1,M5,...).
-# Use ALL to include full baseline (M1,M5,M15,M30,H1,H4,D1).
-INDICATOR_ROLLOUT_TFS=M1,M5,M15
-```
+- Timeframes are fixed to the full set: `M1, M5, M15, M30, H1, H4, D1, W1` (no env control).
 
 Observability:
 - The indicator scheduler logs per-cycle duration and CPU time: `duration_ms` and `cpu_ms`.

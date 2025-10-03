@@ -243,26 +243,17 @@ _rollout_tfs_env = [
 ]
 
 def _rollout_timeframes() -> List[Timeframe]:
-    # Allow special token 'ALL' to use full baseline
-    if any(token in ("ALL", "*", "ANY") for token in _rollout_tfs_env):
-        return [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1]
-    tfs: List[Timeframe] = []
-    seen: Set[str] = set()
-    for token in _rollout_tfs_env:
-        tf: Optional[Timeframe] = None
-        try:
-            tf = Timeframe(token)
-        except Exception:
-            try:
-                tf = Timeframe[token]
-            except Exception:
-                tf = None
-        if tf and tf.name not in seen:
-            seen.add(tf.name)
-            tfs.append(tf)
-    if not tfs:
-        tfs = [Timeframe.M1, Timeframe.M5, Timeframe.M15]
-    return tfs
+    # Always use full baseline timeframes; no rollout/env control
+    return [
+        Timeframe.M1,
+        Timeframe.M5,
+        Timeframe.M15,
+        Timeframe.M30,
+        Timeframe.H1,
+        Timeframe.H4,
+        Timeframe.D1,
+        Timeframe.W1,
+    ]
 
 def _rollout_symbols() -> List[str]:
     # If explicitly provided, honor env list (filtered to supported symbols); else use default supported list
@@ -1031,7 +1022,7 @@ class WSClient:
         if self.v2_broadcast and ("ohlc" in self.supported_data_types):
             try:
                 now = datetime.now(timezone.utc)
-                baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1]
+                baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
                 for sym in RSI_SUPPORTED_SYMBOLS:
                     try:
                         ensure_symbol_selected(sym)
@@ -1147,7 +1138,7 @@ class WSClient:
                     # Update OHLC caches for baseline timeframes in v2 broadcast mode only (no live OHLC streaming in v2)
                     if self.v2_broadcast and ("ohlc" in self.supported_data_types):
                         try:
-                            baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1]
+                            baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
                             for tf in baseline_tfs:
                                 update_ohlc_cache(sym, tf)
                         except Exception:
