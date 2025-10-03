@@ -280,7 +280,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 - **Features**: Selective timeframe subscriptions, intelligent caching, Bid/Ask parallel OHLC fields
 
 Note on closed-bar guarantees:
-- The server emits an `is_closed=true` OHLC bar at every timeframe boundary (checked at ~100 ms resolution), including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.
+- The server emits an `is_closed=true` OHLC bar at every timeframe boundary (checked at ~500 ms resolution), including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.
 
 Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services.
 Connected discovery message includes Bid/Ask capabilities and schema:
@@ -326,7 +326,7 @@ Multi-timeframe subscriptions per symbol:
 
 OHLC payload types
 
-- Live forming bar (high frequency, ~every tick, pushed within ~100 ms loop):
+- Live forming bar (high frequency, pushed within ~500 ms loop):
 
 ```json
 {

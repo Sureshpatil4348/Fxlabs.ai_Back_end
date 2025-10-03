@@ -3,7 +3,7 @@
 This document defines a simple, polling-only design that uses Python’s MetaTrader5 library to deliver fast tick streaming and closed-bar indicator updates on a 10-second cadence. No Expert Advisor (EA) or external bridge is required.
 
 ## Goals
-- Minimal frontend data: push only what’s needed. Ticks are pushed on new-tick arrival (coalesced; typically ~100 ms during active periods), not on a fixed 10 Hz timer. A lightweight daily % change is included within each tick payload.
+- Minimal frontend data: push only what’s needed. Ticks are pushed on a fixed ~500 ms cadence (2 Hz), coalesced; not on every tick. A lightweight daily % change is included within each tick payload.
 - Every 10 seconds, detect newly closed candles for all tracked symbols and timeframes (M1 → W1) and emit indicator updates (planned addition).
 - Indicators computed in Python for closed bars:
   - RSI (support common periods: e.g., 2, 3, 5, 7, 9, 14, 21, 50)
@@ -314,7 +314,7 @@ Why exact parity is hard without MT5 handles:
 - Proprietary nuances: Some MT5 implementations include subtle buffering/offset logic not publicly documented.
 
 Expected deviations and tolerances (closed-bar values unless noted)
-- Bid price stream (100ms): values come from `mt5.symbol_info_tick` and should match MT5 Market Watch bid exactly at the same moment; minor differences can occur due to transmission delay and local rounding. Tolerance: 0 pips ideally; up to 1 pip during fast markets.
+- Bid price stream (500ms): values come from `mt5.symbol_info_tick` and should match MT5 Market Watch bid exactly at the same moment; minor differences can occur due to transmission delay and local rounding. Tolerance: 0 pips ideally; up to 1 pip during fast markets.
 - Daily % change (planned summary field): depends on broker session convention (today’s D1 open vs prior close) and price basis (bid vs last). Using bid and D1 open yields Tolerance: ≤ 0.05% (5 bps). During session rollover or sparse-tick periods, temporary deviations up to 0.10% may appear.
 - RSI (Wilder): with SMA seeding and closed bars, typical absolute error ≤ 0.05; edge cases (low volatility, very short periods) up to 0.15.
 - EMA 21/50/200: with SMA seed, absolute difference generally ≤ 1e-4 on FX quotes; for 5-digit pairs, ≤ 1–2 pips × 1e-3 (i.e., 0.00010). Prefer reporting to 5 decimals.
