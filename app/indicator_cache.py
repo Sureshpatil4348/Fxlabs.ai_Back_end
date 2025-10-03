@@ -160,6 +160,53 @@ class IndicatorCache:
             start_index = max(0, len(dq) - int(count))
             return list(dq)[start_index:]
 
+    async def get_recent_ema(
+        self,
+        symbol: str,
+        timeframe: str,
+        period: int,
+        count: int,
+    ) -> Optional[List[Tuple[int, float]]]:
+        """Return the last N EMA (ts_ms, value) tuples in chronological order or None if none."""
+        lock_key = self._lock_key(symbol, timeframe)
+        async with pair_locks.acquire(lock_key):
+            dq = (
+                self._ema.get(symbol, {})
+                .get(timeframe, {})
+                .get(int(period))
+            )
+            if not dq or len(dq) == 0:
+                return None
+            if count <= 0:
+                return []
+            start_index = max(0, len(dq) - int(count))
+            return list(dq)[start_index:]
+
+    async def get_recent_macd(
+        self,
+        symbol: str,
+        timeframe: str,
+        fast: int,
+        slow: int,
+        signal: int,
+        count: int,
+    ) -> Optional[List[Tuple[int, float, float, float]]]:
+        """Return the last N MACD (ts_ms, macd, signal, hist) tuples in chronological order or None if none."""
+        lock_key = self._lock_key(symbol, timeframe)
+        params = (int(fast), int(slow), int(signal))
+        async with pair_locks.acquire(lock_key):
+            dq = (
+                self._macd.get(symbol, {})
+                .get(timeframe, {})
+                .get(params)
+            )
+            if not dq or len(dq) == 0:
+                return None
+            if count <= 0:
+                return []
+            start_index = max(0, len(dq) - int(count))
+            return list(dq)[start_index:]
+
     async def get_latest_ema(
         self, symbol: str, timeframe: str, period: int
     ) -> Optional[Tuple[int, float]]:

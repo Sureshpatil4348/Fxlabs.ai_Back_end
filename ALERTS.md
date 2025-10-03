@@ -163,6 +163,9 @@ Supabase Schema: `supabase_heatmap_indicator_tracker_alerts_schema.sql`
 - `heatmap_indicator_tracker_alerts` and `heatmap_indicator_tracker_alert_triggers` with owner RLS
 
 Implementation details (backend alignment with Calculations Reference):
+ - Cache and centralization:
+   - RSI, EMA(21/50/200), MACD(12,26,9) values are sourced from the single source of truth `indicator_cache` (closed-bar only).
+   - UTBot and Ichimoku values are computed via `app.indicators` over closed OHLC; no ad-hoc math in services.
 - Heatmap/Quantum Buy%/Sell% aggregation:
   - Indicators per timeframe: EMA21, EMA50, EMA200, MACD(12,26,9), RSI(14), UTBot(EMA50 ± 3×ATR10), Ichimoku Clone (9/26/52).
   - New‑signal boost: detection over last K=3 closed candles per indicator (close/EMA cross, MACD cross, RSI 50/30/70 crossings, UTBot flip, Ichimoku TK cross/cloud breakout).

@@ -642,9 +642,9 @@ Notes:
   - Swing: 1H(0.25), 4H(0.45), 1D(0.3)
 - Final Score = weighted average of per‑TF scores; Buy Now % = (Final Score + 100)/2.
 
-Note (current backend simplification):
-- The Heatmap/Quantum tracker currently derives Buy%/Sell% from RSI(14) on a style‑mapped timeframe (scalper→15M, swing→4H, default→1H). Buy% := RSI, Sell% := 100 − RSI. This ensures real, time‑varying signals until the full style‑weighted model is reintroduced.
-- The Custom Indicator tracker computes real flips for EMA21/EMA50/EMA200 (close vs EMA cross) and RSI(14) (cross of 50). Other indicators resolve to neutral.
+- Backend alignment update:
+- The Heatmap/Quantum tracker now reads indicator values from the centralized `indicator_cache` and performs aggregation only. RSI(14), EMA(21/50/200), MACD(12,26,9) are cache-based; UTBot and Ichimoku are computed via `app.indicators` over closed OHLC. New‑signal boosts and quiet‑market damping are applied per spec.
+- The Custom Indicator tracker computes real flips for EMA21/EMA50/EMA200 and RSI(14) using cache‑first reads; unknown indicators resolve to neutral.
 - Triggers:
   - BUY if Buy Now % ≥ `buy_threshold_min` (and ≤ `buy_threshold_max` when provided)
   - SELL if Buy Now % ≤ `sell_threshold_max` (and ≥ `sell_threshold_min`)

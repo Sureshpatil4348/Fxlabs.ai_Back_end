@@ -11,7 +11,15 @@ from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
-from .rsi_utils import calculate_rsi_series
+from .indicator_cache import indicator_cache
+from .indicators import (
+    rsi_series as ind_rsi_series,
+    ema_series as ind_ema_series,
+    macd_series as ind_macd_series,
+    atr_wilder_series as ind_atr_wilder_series,
+    utbot_series as ind_utbot_series,
+    ichimoku_series as ind_ichimoku_series,
+)
 
 
 configure_logging()
@@ -272,81 +280,31 @@ class HeatmapTrackerAlertService:
             )
 
     async def _compute_buy_sell_percent(self, symbol: str, style: str) -> (float, float, float):
-        """Compute Buy%/Sell% using the Quantum Analysis aggregation per Calculations Reference.
+        """Compute Buy%/Sell% using cache-derived indicators and centralized helpers.
 
-        - Indicators: EMA21/50/200, MACD(12,26,9), RSI(14), UTBot(EMA50 ± 3*ATR10), Ichimoku(9/26/52)
-        - New-signal lookback K=3 closed candles
-        - Quiet-market damping: halve MACD/UTBot cell scores if ATR is below 5th percentile of last 200 values
-        - Scoring per cell: buy=+1, sell=-1, neutral=0; +/−0.25 boost if new; clamp to [-1.25, +1.25]
-        - Aggregation: Σ_tf Σ_ind S(tf, ind) × W_tf(tf) × W_ind(ind)
-        - Final: 100 × (Raw / 1.25); Buy% = (Final + 100)/2; Sell% = 100 − Buy%
+        - Uses cached RSI(14), EMA(21/50/200), MACD(12,26,9) from `indicator_cache`.
+        - Computes UTBot and Ichimoku via `app.indicators` on closed OHLC (no inline math).
+        - New-signal lookback K=3 closed candles.
+        - Quiet-market damping: halve MACD/UTBot cell scores if ATR10 is below 5th percentile of the last 200 values.
+        - Aggregation per spec; equal indicator weights within each timeframe; style-weighted across TFs.
         """
         try:
             from .models import Timeframe as TF
             from .mt5_utils import get_ohlc_data
 
             style_l = (style or "").lower()
-            # Timeframe weights by style
             tf_weights_map = {
                 "scalper": {"5M": 0.30, "15M": 0.30, "30M": 0.20, "1H": 0.15, "4H": 0.05, "1D": 0.0},
                 "swingtrader": {"30M": 0.10, "1H": 0.25, "4H": 0.35, "1D": 0.30},
             }
             tf_weights = tf_weights_map.get(style_l, tf_weights_map["scalper"])  # default scalper
-            active_tfs = [tf for tf, w in tf_weights.items() if w > 0]
 
-            # Indicator weights (equal)
             indicators = ["EMA21", "EMA50", "EMA200", "MACD", "RSI", "UTBOT", "ICHIMOKU"]
             ind_weight = 1.0 / len(indicators)
             ind_weights = {ind: ind_weight for ind in indicators}
 
-            # Helpers
-            def ema_series(cl: list, period: int) -> list:
-                if len(cl) < period:
-                    return []
-                k = 2.0 / (period + 1)
-                ema_vals = [sum(cl[:period]) / float(period)]
-                for price in cl[period:]:
-                    ema_vals.append(price * k + ema_vals[-1] * (1 - k))
-                return ema_vals
-
-            def macd_series(cl: list, fast: int = 12, slow: int = 26, signal: int = 9):
-                if len(cl) < slow + signal:
-                    return [], [], []
-                ema_fast = ema_series(cl, fast)
-                ema_slow = ema_series(cl, slow)
-                # Align: ema_fast starts at fast-1, ema_slow at slow-1
-                offset = (slow - 1) - (fast - 1)
-                macd_line = []
-                for i in range(len(ema_slow)):
-                    idx_fast = i + offset
-                    if idx_fast < 0 or idx_fast >= len(ema_fast):
-                        continue
-                    macd_line.append(ema_fast[idx_fast] - ema_slow[i])
-                sig_line = ema_series(macd_line, signal)
-                # Align histogram with sig_line
-                hist = []
-                if sig_line:
-                    start = len(macd_line) - len(sig_line)
-                    for i in range(len(sig_line)):
-                        hist.append(macd_line[start + i] - sig_line[i])
-                return macd_line, sig_line, hist
-
-            def true_range(h: float, l: float, pclose: float) -> float:
-                return max(h - l, abs(h - pclose), abs(l - pclose))
-
-            def atr_series(highs: list, lows: list, closes: list, period: int = 10) -> list:
-                if len(closes) < period + 1:
-                    return []
-                trs = []
-                for i in range(1, len(closes)):
-                    trs.append(true_range(highs[i], lows[i], closes[i - 1]))
-                # Wilder smoothing
-                atrs = []
-                first = sum(trs[:period]) / float(period)
-                atrs.append(first)
-                for i in range(period, len(trs)):
-                    atrs.append(((atrs[-1] * (period - 1)) + trs[i]) / period)
-                return atrs
+            K = 3
+            tf_map = {"5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
 
             def percentile(values: list, p: float) -> float:
                 if not values:
@@ -355,9 +313,8 @@ class HeatmapTrackerAlertService:
                 k = max(0, min(len(s) - 1, int(round((p / 100.0) * (len(s) - 1)))))
                 return float(s[k])
 
-            # Compute per-timeframe indicator signals and scores
-            K = 3  # lookback for new-signal detection
-            tf_map = {"5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+            def clamp(x: float, lo: float, hi: float) -> float:
+                return hi if x > hi else (lo if x < lo else x)
 
             raw = 0.0
             for tf_code, w_tf in tf_weights.items():
@@ -366,39 +323,22 @@ class HeatmapTrackerAlertService:
                 mtf = tf_map.get(tf_code)
                 if not mtf:
                     continue
-                bars = get_ohlc_data(symbol, mtf, 260)
-                if not bars or len(bars) < 60:
+
+                # Fetch closed OHLC for alignment and UTBot/Ichimoku/ATR
+                bars = get_ohlc_data(symbol, mtf, 300)
+                if not bars:
                     continue
-                closes = [b.close for b in bars]
-                highs = [b.high for b in bars]
-                lows = [b.low for b in bars]
                 closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
-                closed_closes_list = [b.close for b in closed_bars]
-                closed_highs = [b.high for b in closed_bars]
-                closed_lows = [b.low for b in closed_bars]
+                if len(closed_bars) < 60:
+                    continue
+                closes = [b.close for b in closed_bars]
+                highs = [b.high for b in closed_bars]
+                lows = [b.low for b in closed_bars]
+                ts_list = [int(b.time) for b in closed_bars]
+                ts_to_close: Dict[int, float] = {int(b.time): float(b.close) for b in closed_bars}
 
-                # Precompute series
-                ema21 = ema_series(closes, 21)
-                ema50 = ema_series(closes, 50)
-                ema200 = ema_series(closes, 200)
-                macd_line, macd_sig, _ = macd_series(closes)
-                rsis = calculate_rsi_series(closed_closes_list, 14)
-                atrs = atr_series(closed_highs, closed_lows, closed_closes_list, 10)
-
-                def last_cross(seq_a: list, seq_b: list) -> Optional[int]:
-                    # return bars ago where a crossed b (1..K); None if no cross
-                    n = min(len(seq_a), len(seq_b))
-                    if n < 2:
-                        return None
-                    a = seq_a[-n:]
-                    b = seq_b[-n:]
-                    for i in range(2, min(K + 2, n + 1)):
-                        p = -i
-                        if (a[p] <= b[p] and a[p + 1] > b[p + 1]) or (a[p] >= b[p] and a[p + 1] < b[p + 1]):
-                            return i - 1
-                    return None
-
-                # Quiet-market detection (ATR 5th percentile over last 200 values)
+                # Quiet market detection
+                atrs = ind_atr_wilder_series(highs, lows, closes, 10)
                 is_quiet = False
                 if len(atrs) >= 200:
                     last_atr = atrs[-1]
@@ -413,53 +353,27 @@ class HeatmapTrackerAlertService:
                         base = base + (0.25 if base > 0 else -0.25)
                     if is_quiet and ind_name in ("MACD", "UTBOT"):
                         base *= 0.5
-                    # Clamp
-                    if base > 1.25:
-                        base = 1.25
-                    if base < -1.25:
-                        base = -1.25
-                    return base
+                    return clamp(base, -1.25, 1.25)
 
-                # EMA signals
-                # Align EMA series with closes
-                def ema_signal(ema_vals: list, period: int) -> (str, bool):
-                    if len(ema_vals) < 2:
-                        return "neutral", False
-                    idx_offset = len(closes) - len(ema_vals)
-                    close_prev = closes[-2]
-                    close_curr = closes[-1]
-                    ema_prev = ema_vals[-2]
-                    ema_curr = ema_vals[-1]
-                    sig = "buy" if (close_curr > ema_curr and (ema_curr - ema_vals[-min(3, len(ema_vals))]) >= 0) else (
-                        "sell" if (close_curr < ema_curr and (ema_curr - ema_vals[-min(3, len(ema_vals))]) <= 0) else "neutral"
-                    )
-                    # New if cross within K
-                    crossed = last_cross(closes[idx_offset:], ema_vals)
-                    is_new = crossed is not None and crossed <= K
-                    return sig, is_new
+                # -----------------
+                # RSI(14) from cache (fallback compute if needed)
+                # -----------------
+                rsi_recent = await indicator_cache.get_recent_rsi(symbol, tf_code, 14, K + 2)
+                if not rsi_recent or len(rsi_recent) < 2:
+                    try:
+                        rsis = ind_rsi_series(closes, 14)
+                        if rsis:
+                            rsi_recent = [(ts_list[-len(rsis) + i], rsis[i]) for i in range(len(rsis))][- (K + 2):]
+                    except Exception:
+                        rsi_recent = None
 
-                # MACD signal
-                def macd_signal() -> (str, bool):
-                    if len(macd_sig) < 1:
+                def rsi_signal_from_recent() -> (str, bool):
+                    if not rsi_recent or len(rsi_recent) < 2:
                         return "neutral", False
-                    # Align lines
-                    m = macd_line[-1]
-                    s = macd_sig[-1]
-                    sig = "buy" if (m > s and m > 0) else ("sell" if (m < s and m < 0) else "neutral")
-                    # New if cross of MACD vs signal in last K
-                    crossed = last_cross(macd_line[-len(macd_sig):], macd_sig)
-                    is_new = crossed is not None and crossed <= K
-                    return sig, is_new
-
-                # RSI signal
-                def rsi_signal() -> (str, bool):
-                    if len(rsis) < 2:
-                        return "neutral", False
-                    r = rsis[-1]
+                    r = float(rsi_recent[-1][1])
                     sig = "buy" if r <= 30 else ("sell" if r >= 70 else "neutral")
-                    # New if crossed 50 or entered/exited 30/70 in last K
                     is_new = False
-                    window = rsis[-min(len(rsis), K + 1):]
+                    window = [float(v) for _, v in rsi_recent[- (K + 1):]]
                     for i in range(1, len(window)):
                         prev, curr = window[i - 1], window[i]
                         if (prev < 50 <= curr) or (prev > 50 >= curr):
@@ -470,121 +384,124 @@ class HeatmapTrackerAlertService:
                             break
                     return sig, is_new
 
-                # UTBot
-                def utbot_signal() -> (str, bool):
-                    if len(ema50) < 1 or len(atrs) < 1:
+                # -----------------
+                # EMA from cache (align with closes by timestamp)
+                # -----------------
+                ema_recent_21 = await indicator_cache.get_recent_ema(symbol, tf_code, 21, K + 3)
+                ema_recent_50 = await indicator_cache.get_recent_ema(symbol, tf_code, 50, K + 3)
+                ema_recent_200 = await indicator_cache.get_recent_ema(symbol, tf_code, 200, K + 3)
+
+                def ema_signal_from_recent(ema_recent: Optional[List[Tuple[int, float]]], label: str) -> (str, bool):
+                    if not ema_recent or len(ema_recent) < 2:
                         return "neutral", False
-                    # Align baseline with closes
-                    baseline = ema50[-1]
-                    atr_now = atrs[-1]
-                    long_stop = baseline - 3.0 * atr_now
-                    short_stop = baseline + 3.0 * atr_now
-                    close_now = closes[-1]
-                    pos = "buy" if close_now > short_stop else ("sell" if close_now < long_stop else "neutral")
-                    # New if flip in last K: check prior pos
+                    # Align on timestamps
+                    aligned: List[Tuple[int, float, float]] = []  # (ts, close, ema)
+                    for ts, ev in ema_recent:
+                        c = ts_to_close.get(int(ts))
+                        if c is not None:
+                            aligned.append((int(ts), float(c), float(ev)))
+                    if len(aligned) < 2:
+                        return "neutral", False
+                    _, c_prev, e_prev = aligned[-2]
+                    _, c_curr, e_curr = aligned[-1]
+                    sig = "buy" if c_curr > e_curr else ("sell" if c_curr < e_curr else "neutral")
+                    # Cross within last K
                     is_new = False
-                    # Build last K positions
-                    positions: list = []
-                    len_align = min(len(ema50), len(atrs), len(closes))
-                    for i in range(1, min(K + 2, len_align + 1)):
-                        b = ema50[-i]
-                        a = atrs[-i]
-                        c = closes[-i]
-                        lstop = b - 3.0 * a
-                        sstop = b + 3.0 * a
-                        p = "buy" if c > sstop else ("sell" if c < lstop else "neutral")
-                        positions.append(p)
-                    if len(positions) >= 2 and positions[0] != positions[1] and positions[0] in ("buy", "sell"):
-                        is_new = True
+                    for i in range(1, min(K, len(aligned) - 1) + 1):
+                        _, cp, ep = aligned[-(i + 1)]
+                        _, cc, ec = aligned[-i]
+                        if (cp <= ep and cc > ec) or (cp >= ep and cc < ec):
+                            is_new = True
+                            break
+                    return sig, is_new
+
+                # -----------------
+                # MACD from cache
+                # -----------------
+                macd_recent = await indicator_cache.get_recent_macd(symbol, tf_code, 12, 26, 9, K + 3)
+
+                def macd_signal_from_recent() -> (str, bool):
+                    if not macd_recent or len(macd_recent) < 1:
+                        return "neutral", False
+                    _, m, s, _h = macd_recent[-1]
+                    sig = "buy" if (m > s and m > 0) else ("sell" if (m < s and m < 0) else "neutral")
+                    # Cross within last K
+                    is_new = False
+                    for i in range(1, min(K, len(macd_recent) - 1) + 1):
+                        _, m_prev, s_prev, _ = macd_recent[-(i + 1)]
+                        _, m_curr, s_curr, _ = macd_recent[-i]
+                        if (m_prev <= s_prev and m_curr > s_curr) or (m_prev >= s_prev and m_curr < s_curr):
+                            is_new = True
+                            break
+                    return sig, is_new
+
+                # -----------------
+                # UTBot via centralized helper
+                # -----------------
+                def utbot_signal() -> (str, bool):
+                    res = ind_utbot_series(highs, lows, closes, 50, 10, 3.0)
+                    base = res.get("baseline") or []
+                    l = res.get("long_stop") or []
+                    s = res.get("short_stop") or []
+                    flips = res.get("buy_sell_signal") or []
+                    if not (base and l and s):
+                        return "neutral", False
+                    price = closes[-1]
+                    pos = "buy" if price > s[-1] else ("sell" if price < l[-1] else "neutral")
+                    is_new = any(v != 0 for v in flips[-K:]) if flips else False
                     return pos, is_new
 
-                # Ichimoku Clone
+                # -----------------
+                # Ichimoku via centralized helper
+                # -----------------
                 def ichimoku_signal() -> (str, bool):
-                    if len(highs) < 52 or len(lows) < 52:
+                    series = ind_ichimoku_series(highs, lows, closes, 9, 26, 52, 26)
+                    tenkan = series.get("tenkan") or []
+                    kijun = series.get("kijun") or []
+                    sa = series.get("senkou_a") or []
+                    sb = series.get("senkou_b") or []
+                    if not (tenkan and kijun and sa and sb):
                         return "neutral", False
-                    def rolling_mid(vals_high: list, vals_low: list, length: int, idx: int) -> float:
-                        h = max(vals_high[idx - length + 1: idx + 1])
-                        l = min(vals_low[idx - length + 1: idx + 1])
-                        return (h + l) / 2.0
-                    idx = len(closes) - 1
-                    if idx < 52:
-                        return "neutral", False
-                    tenkan = rolling_mid(highs, lows, 9, idx)
-                    kijun = rolling_mid(highs, lows, 26, idx)
-                    span_a = (tenkan + kijun) / 2.0
-                    span_b = rolling_mid(highs, lows, 52, idx)
-                    # Decision priority
-                    up_cloud = max(span_a, span_b)
-                    dn_cloud = min(span_a, span_b)
-                    price = closes[idx]
-                    # 1) Price vs cloud
+                    up_cloud = max(sa[-1], sb[-1])
+                    dn_cloud = min(sa[-1], sb[-1])
+                    price = closes[-1]
                     if price > up_cloud:
                         sig = "buy"
                     elif price < dn_cloud:
                         sig = "sell"
                     else:
-                        # 2) Tenkan/Kijun cross
-                        # Approximate previous values for cross check
-                        prev_idx = idx - 1
-                        if prev_idx >= 52:
-                            tenkan_prev = rolling_mid(highs, lows, 9, prev_idx)
-                            kijun_prev = rolling_mid(highs, lows, 26, prev_idx)
-                        else:
-                            tenkan_prev = tenkan
-                            kijun_prev = kijun
-                        if tenkan > kijun and tenkan_prev <= kijun_prev:
-                            sig = "buy"
-                        elif tenkan < kijun and tenkan_prev >= kijun_prev:
-                            sig = "sell"
-                        else:
-                            # 3) Cloud color
-                            if span_a > span_b:
+                        # TK cross check on last K
+                        sig = "neutral"
+                        for i in range(1, min(K, len(tenkan) - 1, len(kijun) - 1) + 1):
+                            t_prev, k_prev = tenkan[-(i + 1)], kijun[-(i + 1)]
+                            t_curr, k_curr = tenkan[-i], kijun[-i]
+                            if t_prev <= k_prev and t_curr > k_curr:
                                 sig = "buy"
-                            elif span_a < span_b:
+                                break
+                            if t_prev >= k_prev and t_curr < k_curr:
                                 sig = "sell"
-                            else:
-                                # 4) Chikou vs price[-26]
-                                if idx >= 26:
-                                    chikou = closes[idx - 26]
-                                    price_prev = closes[idx - 26]
-                                    if chikou > price_prev:
-                                        sig = "buy"
-                                    elif chikou < price_prev:
-                                        sig = "sell"
-                                    else:
-                                        sig = "neutral"
-                                else:
-                                    sig = "neutral"
+                                break
+                        if sig == "neutral":
+                            # Cloud color
+                            if sa[-1] > sb[-1]:
+                                sig = "buy"
+                            elif sa[-1] < sb[-1]:
+                                sig = "sell"
                     # New if TK cross or cloud breakout in last K
                     is_new = False
-                    # Check TK cross in last K
-                    crosses = 0
-                    for i in range(1, K + 1):
-                        j = idx - i
-                        if j < 52:
+                    # TK cross
+                    for i in range(1, min(K, len(tenkan) - 1, len(kijun) - 1) + 1):
+                        t_prev, k_prev = tenkan[-(i + 1)], kijun[-(i + 1)]
+                        t_curr, k_curr = tenkan[-i], kijun[-i]
+                        if (t_prev <= k_prev and t_curr > k_curr) or (t_prev >= k_prev and t_curr < k_curr):
+                            is_new = True
                             break
-                        tk = rolling_mid(highs, lows, 9, j)
-                        kj = rolling_mid(highs, lows, 26, j)
-                        tk_prev = rolling_mid(highs, lows, 9, j - 1) if j - 1 >= 26 else tk
-                        kj_prev = rolling_mid(highs, lows, 26, j - 1) if j - 1 >= 26 else kj
-                        if (tk_prev <= kj_prev and tk > kj) or (tk_prev >= kj_prev and tk < kj):
-                            crosses += 1
-                            break
-                    if crosses > 0:
-                        is_new = True
-                    else:
+                    if not is_new:
                         # Cloud breakout
-                        for i in range(1, K + 1):
-                            j = idx - i
-                            if j < 52:
-                                break
-                            ten = rolling_mid(highs, lows, 9, j)
-                            kij = rolling_mid(highs, lows, 26, j)
-                            sa = (ten + kij) / 2.0
-                            sb = rolling_mid(highs, lows, 52, j)
-                            up_c = max(sa, sb)
-                            dn_c = min(sa, sb)
-                            pr = closes[j]
+                        for i in range(1, min(K, len(sa), len(sb), len(closes)) + 1):
+                            up_c = max(sa[-i], sb[-i])
+                            dn_c = min(sa[-i], sb[-i])
+                            pr = closes[-i]
                             if pr > up_c or pr < dn_c:
                                 is_new = True
                                 break
@@ -592,36 +509,25 @@ class HeatmapTrackerAlertService:
 
                 # Evaluate each indicator cell
                 per_tf_sum = 0.0
-                # EMA21
-                sig, is_new = ema_signal(ema21, 21)
+                sig, is_new = ema_signal_from_recent(ema_recent_21, "EMA21")
                 per_tf_sum += score_cell(sig, is_new, "EMA21") * ind_weights["EMA21"]
-                # EMA50
-                sig, is_new = ema_signal(ema50, 50)
+                sig, is_new = ema_signal_from_recent(ema_recent_50, "EMA50")
                 per_tf_sum += score_cell(sig, is_new, "EMA50") * ind_weights["EMA50"]
-                # EMA200
-                sig, is_new = ema_signal(ema200, 200)
+                sig, is_new = ema_signal_from_recent(ema_recent_200, "EMA200")
                 per_tf_sum += score_cell(sig, is_new, "EMA200") * ind_weights["EMA200"]
-                # MACD
-                sig, is_new = macd_signal()
+                sig, is_new = macd_signal_from_recent()
                 per_tf_sum += score_cell(sig, is_new, "MACD") * ind_weights["MACD"]
-                # RSI
-                sig, is_new = rsi_signal()
+                sig, is_new = rsi_signal_from_recent()
                 per_tf_sum += score_cell(sig, is_new, "RSI") * ind_weights["RSI"]
-                # UTBot
                 sig, is_new = utbot_signal()
                 per_tf_sum += score_cell(sig, is_new, "UTBOT") * ind_weights["UTBOT"]
-                # Ichimoku Clone
                 sig, is_new = ichimoku_signal()
                 per_tf_sum += score_cell(sig, is_new, "ICHIMOKU") * ind_weights["ICHIMOKU"]
 
                 raw += per_tf_sum * w_tf
 
-            # Normalize and derive percentages
             final = 100.0 * (raw / 1.25)
-            if final > 100.0:
-                final = 100.0
-            if final < -100.0:
-                final = -100.0
+            final = clamp(final, -100.0, 100.0)
             buy_pct = (final + 100.0) / 2.0
             sell_pct = 100.0 - buy_pct
             return float(buy_pct), float(sell_pct), float(final)
