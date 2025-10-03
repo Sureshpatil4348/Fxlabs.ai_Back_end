@@ -1133,7 +1133,10 @@ class WSClient:
                     tick_dict = tick.model_dump()
                     if dcp_val is not None and dcp_val == dcp_val:  # not NaN
                         tick_dict["daily_change_pct"] = float(dcp_val)
-                    updates.append(tick_dict)
+
+                    # Store full tick data for alert processing
+                    full_tick_data = tick_dict.copy()
+                    updates.append(full_tick_data)
                     self._last_sent_ts[sym] = ts_ms
                     
                     # Update OHLC caches for baseline timeframes in v2 broadcast mode only (no live OHLC streaming in v2)
@@ -1152,11 +1155,23 @@ class WSClient:
                     del self.subscriptions[sym]
                     
         if updates:
-            sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": updates}))
+            # Create bid-only tick data for frontend (only send bid prices)
+            bid_only_updates = []
+            for full_tick in updates:
+                bid_only_tick = {
+                    "symbol": full_tick["symbol"],
+                    "time": full_tick["time"],
+                    "time_iso": full_tick["time_iso"],
+                    "bid": full_tick["bid"],
+                    "daily_change_pct": full_tick.get("daily_change_pct")
+                }
+                bid_only_updates.append(bid_only_tick)
+
+            sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": bid_only_updates}))
             # Metrics: per-endpoint counters for tick messages and items
             try:
                 label = getattr(self, "conn_label", "v2")
-                _metrics_inc(label, "ticks_items", by=len(updates))
+                _metrics_inc(label, "ticks_items", by=len(bid_only_updates))
                 if sent:
                     _metrics_inc(label, "ok_ticks", 1)
                 else:
@@ -1175,6 +1190,7 @@ class WSClient:
                 
                 if ENABLE_TICK_TRIGGERED_ALERTS and total_alerts > 0:
                     # Provide tick_data in a dict keyed by symbol as expected by alert services
+                    # Use full tick data for alert processing (includes bid, ask, volume, etc.)
                     tick_data_map = {}
                     for td in updates:
                         sym = td.get("symbol")

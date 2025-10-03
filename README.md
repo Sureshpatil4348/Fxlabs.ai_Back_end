@@ -367,10 +367,10 @@ V2 greeting example (capabilities + indicators registry):
   }
 }
 ```
-Tick payloads include `daily_change_pct` (Bid vs broker D1 reference):
+Tick payloads include `daily_change_pct` (Bid vs broker D1 reference) and only contain bid prices:
 
 ```json
-{"type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"volume":120, "daily_change_pct": -0.12} ] }
+{"type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871, "daily_change_pct": -0.12} ] }
 ```
 
 
@@ -950,7 +950,7 @@ The modular structure isolates responsibilities while preserving all existing be
 - **1W** - 1 Week
 
 ### Data Models
-- **Tick Data**: Real-time price updates (bid, ask, last, volume)
+- **Tick Data**: Real-time price updates (bid prices only sent to frontend)
 - **OHLC Data**: Candlestick data (open, high, low, close, volume)
 - **News Data**: Economic news with AI analysis
 - **Analysis Data**: Trading impact assessment

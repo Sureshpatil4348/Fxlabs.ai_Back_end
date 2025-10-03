@@ -49,7 +49,7 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
   - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1.
 
 ## Data Models
-- Tick (frontend): `{symbol, time, time_iso, bid, ask, last, volume, flags, daily_change_pct}`
+- Tick (frontend): `{symbol, time, time_iso, bid, daily_change_pct}`
 - IndicatorSnapshot: `{sym, tf, bar_time, indicators: { rsi: {period->value}, ema: {21,50,200}, macd: {macd, signal, hist}, ichimoku: {tenkan, kijun, senkou_a, senkou_b, chikou}, utbot: {signal, type, baseline, atr, longStop, shortStop, new, confidence} }}`
 
 Daily % change calculation (matching MT5 as closely as feasible without EA):
@@ -90,9 +90,9 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
     - Server: `{ "type": "info", "message": "v2 broadcast-only: subscribe/unsubscribe ignored" }`
 
 - Live pushes
-  - Ticks (coalesced by symbol):
+  - Ticks (coalesced by symbol, bid-only for frontend):
     ```json
-    { "type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"volume":120, "daily_change_pct": -0.12} ] }
+    { "type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871, "daily_change_pct": -0.12} ] }
     ```
   - Indicator update (latest closed bar only):
     ```json
