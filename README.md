@@ -1,8 +1,8 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-> DEPRECATION NOTICE (WebSocket v1): `/ws/market` and `/ws/ticks` are deprecated and will be removed on 2025-10-10. Please migrate to `/market-v2`.
+WebSocket v2: Use `/market-v2` for live ticks and indicator updates (broadcast-all baseline). Legacy endpoints have been removed.
 
-Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and OHLC data over `/ws/market` (tick-driven, coalesced). Indicator streaming and periodic daily % change summaries are planned and tracked in the Implementation Checklist. No EA or external bridge required.
+Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, coalesced; OHLC is not streamed to clients in v2). No EA or external bridge required.
 
 A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, AI-powered news analysis, and comprehensive alert systems for trading applications.
 
@@ -25,7 +25,7 @@ A high-performance, real-time financial market data streaming service built with
 
 ### Key Features
 
-- **Real-time Data Streaming**: Live tick and OHLC data via WebSocket
+- **Real-time Data Streaming**: Live tick and indicator data via WebSocket
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
@@ -276,38 +276,36 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 
 ### WebSocket Endpoints
 
-#### Market Data WebSocket (`/ws/market`) — deprecated (removal on 2025-10-10)
-- **URL**: `ws://localhost:8000/ws/market`
-- **Purpose**: Real-time tick and OHLC data streaming
-- **Features**: Selective timeframe subscriptions, intelligent caching, Bid/Ask parallel OHLC fields
+#### Market Data WebSocket v2 (`/market-v2`) — preferred
+- **URL**: `ws://localhost:8000/market-v2`
+- **Purpose**: Real-time tick and indicator streaming (no OHLC streaming to clients)
+- **Features**: Broadcast-all baseline (symbols/timeframes), optional subscribe for snapshots (e.g., `initial_indicators`)
 
 Note on closed-bar guarantees:
 - The server emits an `is_closed=true` OHLC bar at every timeframe boundary (checked at ~500 ms resolution), including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.
 
 Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services.
-Connected discovery message includes Bid/Ask capabilities and schema:
+Connected discovery message includes capabilities and indicators registry:
 
 ```json
 {
   "type": "connected",
   "message": "WebSocket connected successfully",
   "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W"],
-  "supported_data_types": ["ticks", "ohlc"],
-  "supported_price_bases": ["last", "bid", "ask"],
-  "ohlc_schema": "parallel"
+  "supported_data_types": ["ticks", "indicators"],
+  "supported_price_bases": ["last", "bid", "ask"]
 }
 ```
 
-Extended subscribe supports price basis and schema shaping (defaults: `last`, `parallel`):
+Extended subscribe supports price basis shaping (default: `last`):
 
 ```json
 {
   "action": "subscribe",
   "symbol": "EURUSD",
   "timeframe": "1M",
-  "data_types": ["ohlc", "ticks"],
-  "price_basis": "bid",
-  "ohlc_schema": "parallel"
+  "data_types": ["ticks", "indicators"],
+  "price_basis": "bid"
 }
 ```
 
@@ -326,43 +324,7 @@ Multi-timeframe subscriptions per symbol:
 { "action": "unsubscribe", "symbol": "EURUSD" }
 ```
 
-OHLC payload types
-
-- Live forming bar (high frequency, pushed within ~500 ms loop):
-
-```json
-{
-  "type": "ohlc_live",
-  "data": {
-    "symbol": "EURUSD",
-    "timeframe": "1M",
-    "time": 1738219500000,
-    "open": 1.1052, "high": 1.1056, "low": 1.1050, "close": 1.1054,
-    "openBid": 1.1051, "highBid": 1.1055, "lowBid": 1.1049, "closeBid": 1.1053,
-    "openAsk": 1.1053, "highAsk": 1.1057, "lowAsk": 1.1051, "closeAsk": 1.1055,
-    "is_closed": false
-  }
-}
-```
-
-- Closed bar at timeframe boundary (guaranteed even if no ticks):
-
-```json
-{
-  "type": "ohlc_update",
-  "data": {
-    "symbol": "EURUSD",
-    "timeframe": "1M",
-    "time": 1738219500000,
-    "open": 1.1052, "high": 1.1056, "low": 1.1050, "close": 1.1054,
-    "openBid": 1.1051, "highBid": 1.1055, "lowBid": 1.1049, "closeBid": 1.1053,
-    "openAsk": 1.1053, "highAsk": 1.1057, "lowAsk": 1.1051, "closeAsk": 1.1055,
-    "is_closed": true
-  }
-}
-```
-
-If a client requests `ohlc_schema = "basis_only"`, payloads omit parallel fields and map the requested basis into the canonical `open/high/low/close` keys.
+// OHLC payload examples removed for v2; OHLC is server-side only for indicators/alerts.
 
 Internal alert tick_data shape:
 
@@ -389,11 +351,6 @@ Internal alert tick_data shape:
   - Send a proper WebSocket close frame on app shutdown/navigation where possible.
   - Use keepalive/ping if intermediaries are aggressive about idle timeouts.
   - Reconnect with backoff on close codes 1001/1006.
-
-#### Legacy Tick WebSocket (`/ws/ticks`) — deprecated (removal on 2025-10-10)
-- **URL**: `ws://localhost:8000/ws/ticks`
-- **Purpose**: Backward-compatible tick-only streaming
-- **Features**: Legacy client support
 
 #### Market Data WebSocket v2 (`/market-v2`) — preferred
 - Use `/market-v2` for new clients. It exposes tick and indicator payloads only (no OHLC streaming), and advertises capabilities via `supported_data_types` in the greeting.
@@ -481,12 +438,12 @@ Tick payloads include `daily_change_pct` (Bid vs broker D1 reference):
 
 Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
-#### WebSocket Dual‑Run Metrics (WS‑V2‑3)
+#### WebSocket Metrics (v2)
 
-- The server emits periodic WebSocket metrics to compare v1 vs v2 behavior during dual‑run/soak.
+- The server emits periodic WebSocket metrics for v2 connections.
 - Interval: `WS_METRICS_INTERVAL_S` (default 30s).
 - Log channel: INFO summary on logger `obs.ws` and DEBUG JSON snapshot.
-- Counters (per label `legacy|v1|v2`):
+- Counters:
   - `connections_opened`, `connections_closed`
   - `ok_ticks`, `fail_ticks`, `ticks_items` (sum of items sent in tick lists)
   - `ok_indicator_update`, `fail_indicator_update`

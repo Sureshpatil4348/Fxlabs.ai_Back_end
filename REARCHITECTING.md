@@ -207,7 +207,7 @@ Broadcast-All Notes (v2 only)
 ## Market v2 WebSocket — `/market-v2` (Backwards-Compatible Rollout)
 
 - Introduce a stable, forward‑compatible WebSocket endpoint that serves real‑time ticks and indicator streaming. OHLC is computed/cached server‑side only (not streamed in v2).
-- Keep existing endpoints (`/ws/market`, `/ws/ticks`) operational during migration; remove them after successful client cutover.
+- Keep existing endpoints (`/ws/market`, `/ws/ticks`) operational during migration; remove them after successful client cutover. (Completed: legacy endpoints removed)
 
 Endpoint
 - New WebSocket path: `/market-v2`
@@ -242,9 +242,7 @@ Migration Plan
 5) Deprecation window: Emit a one‑line deprecation notice to v1 clients in the greeting (`note: "deprecated; use /market-v2"`). Announce removal date.
 6) Removal: After adoption ≥ 100%, delete `/ws/ticks` and `/ws/market` routes and related legacy glue.
 
-Breaking Changes vs v1 (none required)
-- Message envelope and OHLC payloads remain identical; v2 only adds new type `indicator_update`.
-- Clients not using new types are unaffected beyond the path change.
+Breaking Changes vs v1: legacy endpoints are removed; use `/market-v2` exclusively. Message envelope remains stable; v2 adds `indicator_update` and does not stream OHLC to clients.
 
 Operational Notes
 - Use sensible code defaults for polling cadence and indicator streaming during initial rollout.
@@ -357,7 +355,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 18 | WS-V2-3 | WebSocket v2 | Dual-run + metrics/soak | Backend | DONE | Per-type counters; periodic reporter; low error rate | `server.py` | WS-V2-1 | Compare vs v1 via `obs.ws` logs (ws_metrics) |
 | 19 | ROLL-1 | Rollout | Gradual enablement; measure CPU/latency | Backend | DONE | Start 10×3; ramp with env overrides; CPU/time logged | `server.py`,`README.md` | SCHED-1 | Env: `INDICATOR_ROLLOUT_MAX_SYMBOLS`, `INDICATOR_ROLLOUT_TFS`, `INDICATOR_ROLLOUT_SYMBOLS` |
 | 20 | WS-V2-4 | WebSocket v2 | Client migration docs + v1 deprecation notice | Backend | DONE | Banner + timeline | `server.py`,`README.md` | WS-V2-1 | v1 removal date: 2025-10-10 |
-| 21 | WS-V2-5 | WebSocket v2 | Remove `/ws/ticks` and `/ws/market` after cutover | Backend | TODO | Delete routes/legacy glue | `server.py` | WS-V2-3/4 | Keep README updated |
+| 21 | WS-V2-5 | WebSocket v2 | Remove `/ws/ticks` and `/ws/market` after cutover | Backend | DONE | Delete routes/legacy glue | `server.py` | WS-V2-3/4 | README updated |
 | 22 | DOC-1 | Docs | Keep README.md updated | Backend | DONE | README references this doc | `README.md` | None | Clarify current vs planned |
 | 23 | DOC-2 | Docs | Keep ALERTS.md aligned to pipeline | Backend | DONE | liveRSI note reflects task | `ALERTS.md` | None | No math duplication |
 | 24 | WS-V2-7 | WebSocket v2 | Remove per-client subscription model post cutover | Backend | TODO | Delete subscribe/unsubscribe handlers; remove `SubscriptionInfo`-based gating; v2 stays broadcast-only | `server.py`,`app/models.py` | WS-V2-5 | Keep ping/pong; retain global shaping defaults |

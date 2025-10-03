@@ -186,10 +186,8 @@ _indicator_last_bar: Dict[str, int] = {}
 # D1 reference cache for daily % change computations (per symbol, keyed by UTC day)
 _d1_ref_cache: Dict[str, Tuple[str, float]] = {}
 
-# WebSocket metrics (dual-run v1/v2 soak): in-memory counters per endpoint label
+# WebSocket metrics (v2 only): in-memory counters per endpoint label
 _ws_metrics: Dict[str, Dict[str, int]] = {
-    "legacy": defaultdict(int),
-    "v1": defaultdict(int),
     "v2": defaultdict(int),
 }
 _ws_metrics_task: Optional[asyncio.Task] = None
@@ -677,10 +675,7 @@ async def _indicator_scheduler() -> None:
 
 
 async def _ws_metrics_reporter() -> None:
-    """Periodically log WebSocket send counters per endpoint label to compare v1 vs v2 during dual-run.
-
-    Resets counters after each report to emit windowed deltas.
-    """
+    """Periodically log WebSocket send counters (v2 only). Resets counters after each report."""
     try:
         interval_s = int(os.environ.get("WS_METRICS_INTERVAL_S", "30"))
         logger = logging.getLogger("obs.ws")
@@ -692,13 +687,13 @@ async def _ws_metrics_reporter() -> None:
 
             # Snapshot and reset counters atomically enough for our purposes
             try:
-                # Compute active connections by label
-                active: Dict[str, int] = {"legacy": 0, "v1": 0, "v2": 0}
+                # Compute active connections (v2 only)
+                active: Dict[str, int] = {"v2": 0}
                 async with _connected_clients_lock:
                     for c in list(_connected_clients):
-                        label = getattr(c, "conn_label", "v1")
-                        if label in active:
-                            active[label] += 1
+                        label = getattr(c, "conn_label", "v2")
+                        if label == "v2":
+                            active["v2"] += 1
 
                 snap = {lbl: dict(counts) for lbl, counts in _ws_metrics.items()}
                 # Human-friendly rollup
@@ -720,10 +715,8 @@ async def _ws_metrics_reporter() -> None:
                     )
 
                 logger.info(
-                    "📈 ws_metrics | window_s=%d | legacy: %s | v1: %s | v2: %s",
+                    "📈 ws_metrics | window_s=%d | v2: %s",
                     interval_s,
-                    fmt("legacy"),
-                    fmt("v1"),
                     fmt("v2"),
                 )
 
@@ -763,7 +756,7 @@ def health():
 
 @app.get("/test-ws")
 def test_websocket():
-    return {"message": "WebSocket endpoint available at /ws/market"}
+    return {"message": "WebSocket endpoint available at /market-v2"}
 
 @app.get("/api/ohlc/{symbol}")
 def get_ohlc(symbol: str, timeframe: str = Query("5M"), count: int = Query(250, le=500), x_api_key: Optional[str] = Depends(require_api_token_header)):
@@ -953,8 +946,6 @@ class WSClient:
     def __init__(self, websocket: WebSocket, token: str, supported_data_types: Optional[Set[str]] = None, *, v2_broadcast: bool = False):
         self.websocket = websocket
         self.token = token
-        # Legacy tick subscriptions
-        self.symbols: Set[str] = set()
         self._last_sent_ts: Dict[str, int] = {}
         # New subscription model (supports multiple timeframes per symbol)
         # subscriptions[symbol][timeframe] -> SubscriptionInfo
@@ -1117,8 +1108,6 @@ class WSClient:
                     tick_symbols.add(symbol)
                     break
         
-        # Also include legacy tick subscriptions
-        tick_symbols.update(self.symbols)
         # v2 broadcast: include rollout baseline symbols (gradual enablement)
         if self.v2_broadcast:
             try:
@@ -1197,7 +1186,7 @@ class WSClient:
             sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": updates}))
             # Metrics: per-endpoint counters for tick messages and items
             try:
-                label = getattr(self, "conn_label", "v1")
+                label = getattr(self, "conn_label", "v2")
                 _metrics_inc(label, "ticks_items", by=len(updates))
                 if sent:
                     _metrics_inc(label, "ok_ticks", 1)
@@ -1531,14 +1520,6 @@ class WSClient:
             except Exception as e:
                 await self._try_send_json({"type": "error", "error": str(e)})
                 
-        elif action == "subscribe_legacy":
-            # Legacy tick-only subscription
-            syms = message.get("symbols", [])
-            for s in syms:
-                ensure_symbol_selected(s)
-                self.symbols.add(s)
-            await self._try_send_json({"type": "subscribed", "symbols": sorted(self.symbols)})
-            
         elif action == "unsubscribe":
             symbol = message.get("symbol", "")
             timeframe_str = message.get("timeframe")
@@ -1562,7 +1543,6 @@ class WSClient:
                         del self.next_ohlc_updates[symbol_norm][tf]
                         if not self.next_ohlc_updates[symbol_norm]:
                             del self.next_ohlc_updates[symbol_norm]
-                    self.symbols.discard(symbol_norm)
                     await self._try_send_json({"type": "unsubscribed", "symbol": symbol_norm, "timeframe": tf.value})
                 else:
                     # Unsubscribe all timeframes for this symbol
@@ -1570,185 +1550,14 @@ class WSClient:
                         del self.subscriptions[symbol_norm]
                     if symbol_norm in self.next_ohlc_updates:
                         del self.next_ohlc_updates[symbol_norm]
-                    self.symbols.discard(symbol_norm)
                     await self._try_send_json({"type": "unsubscribed", "symbol": symbol_norm})
-            else:
-                # Legacy unsubscribe
-                syms = message.get("symbols", [])
-                for s in syms:
-                    s_norm = (s or "").upper()
-                    self.symbols.discard(s_norm)
-                    if s_norm in self.subscriptions:
-                        del self.subscriptions[s_norm]
-                    if s_norm in self.next_ohlc_updates:
-                        del self.next_ohlc_updates[s_norm]
-                await self._try_send_json({"type": "unsubscribed", "symbols": sorted([ (s or "").upper() for s in syms ])})
                 
         elif action == "ping":
             await self._try_send_json({"type": "pong"})
         else:
             await self._try_send_json({"type": "error", "error": "unknown_action"})
 
-# Keep legacy endpoint for backward compatibility
-@app.websocket("/ws/ticks")
-async def ws_ticks_legacy(websocket: WebSocket):
-    """Legacy WebSocket endpoint for tick-only streaming"""
-    client = None
-    try:
-        # Optional auth: mirror REST policy
-        if not _ws_is_authorized(websocket):
-            try:
-                await websocket.close(code=1008)
-            finally:
-                return
-        await websocket.accept()
-        try:
-            await websocket.send_json({"type": "connected", "message": "Legacy tick WebSocket connected", "note": "deprecated; use /market-v2", "removal_date": "2025-10-10", "removal_date_utc": "2025-10-10T00:00:00Z"})
-        except Exception:
-            pass
-
-        client = WSClient(websocket, "", supported_data_types={"ticks", "ohlc"})
-        # Tag connection for metrics
-        try:
-            setattr(client, "conn_label", "legacy")
-            _metrics_inc("legacy", "connections_opened", 1)
-        except Exception:
-            pass
-        await client.start()
-        async with _connected_clients_lock:
-            _connected_clients.add(client)
-
-        while True:
-            # If client already disconnected, exit gracefully
-            if getattr(websocket, "client_state", None) != WebSocketState.CONNECTED:
-                break
-            try:
-                data = await websocket.receive_text()
-            except WebSocketDisconnect:
-                break
-            except RuntimeError:
-                # Starlette raises RuntimeError when not accepted/connected; treat as normal disconnect
-                break
-
-            try:
-                message = orjson.loads(data)
-                # Force legacy behavior
-                if message.get("action") == "subscribe":
-                    message["action"] = "subscribe_legacy"
-                await client.handle_message(message)
-            except Exception as parse_error:
-                try:
-                    await websocket.send_json({"type": "error", "error": str(parse_error)})
-                except Exception:
-                    break
-
-    except WebSocketDisconnect:
-        print("🔌 Legacy WebSocket disconnected")
-    except Exception as e:
-        # Treat generic runtime receive/accept errors as disconnects to avoid scary traces
-        if "accept" in str(e).lower() and "websocket" in str(e).lower():
-            print("🔌 Legacy WebSocket disconnected (accept state)")
-        else:
-            print(f"❌ Legacy WebSocket error: {e}")
-    finally:
-        if client:
-            await client.stop()
-        try:
-            async with _connected_clients_lock:
-                _connected_clients.discard(client)
-        except Exception:
-            pass
-        try:
-            _metrics_inc("legacy", "connections_closed", 1)
-        except Exception:
-            pass
-
-@app.websocket("/ws/market")
-async def ws_market(websocket: WebSocket):
-    client = None
-    
-    try:
-        # Optional auth: mirror REST policy
-        if not _ws_is_authorized(websocket):
-            try:
-                await websocket.close(code=1008)
-            finally:
-                return
-        await websocket.accept()
-        
-        # Send a welcome message (v1 is deprecated)
-        try:
-            await websocket.send_json({
-            "type": "connected", 
-            "message": "WebSocket connected successfully",
-            "supported_timeframes": [tf.value for tf in Timeframe],
-            "supported_data_types": ["ticks", "ohlc"],
-            "supported_price_bases": ["last", "bid", "ask"],
-            "ohlc_schema": "parallel",
-            "note": "deprecated; use /market-v2",
-            "removal_date": "2025-10-10",
-            "removal_date_utc": "2025-10-10T00:00:00Z"
-        })
-        except Exception:
-            # Client may already have disconnected
-            pass
-        
-        # Create WSClient for real MT5 data
-        client = WSClient(websocket, "", supported_data_types={"ticks", "ohlc", "indicators"})
-        # Tag connection for metrics
-        try:
-            setattr(client, "conn_label", "v1")
-            _metrics_inc("v1", "connections_opened", 1)
-        except Exception:
-            pass
-        await client.start()
-        async with _connected_clients_lock:
-            _connected_clients.add(client)
-        
-        # Handle incoming messages
-        while True:
-            # Exit if client not connected
-            if getattr(websocket, "client_state", None) != WebSocketState.CONNECTED:
-                break
-            try:
-                data = await websocket.receive_text()
-            except WebSocketDisconnect:
-                break
-            except RuntimeError:
-                # Starlette raises RuntimeError when not accepted/connected; treat as normal disconnect
-                break
-            
-            try:
-                message = orjson.loads(data)
-                await client.handle_message(message)
-                
-            except Exception as parse_error:
-                print(f"❌ Error parsing message: {parse_error}")
-                try:
-                    await websocket.send_json({"type": "error", "error": str(parse_error)})
-                except Exception:
-                    break
-                
-    except WebSocketDisconnect:
-        print("Websocket Disconnected")
-    except Exception as e:
-        # Treat generic runtime receive/accept errors as disconnects to avoid scary traces
-        if "accept" in str(e).lower() and "websocket" in str(e).lower():
-            print("🔌 WebSocket disconnected (accept state)")
-        else:
-            print(f"❌ WebSocket error: {e}")
-    finally:
-        if client:
-            await client.stop()
-        try:
-            async with _connected_clients_lock:
-                _connected_clients.discard(client)
-        except Exception:
-            pass
-        try:
-            _metrics_inc("v1", "connections_closed", 1)
-        except Exception:
-            pass
+"""Legacy (/ws/ticks) and v1 (/ws/market) WebSocket endpoints have been removed after cutover. Use /market-v2."""
 
 @app.websocket("/market-v2")
 async def ws_market_v2(websocket: WebSocket):
@@ -1786,7 +1595,7 @@ async def ws_market_v2(websocket: WebSocket):
             # Client may already have disconnected
             pass
 
-        # Reuse the same WSClient implementation as /ws/market, enable broadcast-all for v2
+        # Reuse the same WSClient implementation, enable broadcast-all for v2
         client = WSClient(websocket, "", supported_data_types={"ticks", "indicators"}, v2_broadcast=True)
         # Tag connection for metrics
         try:
@@ -1856,8 +1665,6 @@ if __name__ == "__main__":
     print("🚀 Starting MT5 Market Data Server...")
     print("📊 Available endpoints:")
     print("   - WebSocket (v2): ws://localhost:8000/market-v2")
-    print("   - WebSocket (v1, deprecated - removal 2025-10-10): ws://localhost:8000/ws/market")
-    print("   - WebSocket (legacy, deprecated - removal 2025-10-10): ws://localhost:8000/ws/ticks")
     print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=1M&count=100")
     print("   - News Analysis: GET /api/news/analysis")
     print("   - News Refresh: POST /api/news/refresh")
