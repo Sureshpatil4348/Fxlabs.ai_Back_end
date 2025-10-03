@@ -69,7 +69,7 @@
 3) Evaluation Cadence
   - The server aligns evaluations to the next 5‑minute boundary and runs immediately after it. This ensures closed‑bar RSI is computed right after the candle closes. Higher TFs (15M/30M/1H/4H/1D/W1) are naturally aligned as multiples of 5 minutes.
 4) RSI Calculation
-  - Wilder’s method using broker OHLC; closed‑bar only; warm‑up enforced.
+  - Values are sourced from the single source of truth `indicator_cache` (populated by the indicator scheduler using broker OHLC). Closed‑bar only; warm‑up enforced. No per-alert recomputation.
 5) Trigger Logic
   - Crossing policy: Overbought (prev < OB and curr ≥ OB), Oversold (prev > OS and curr ≤ OS), evaluated on closed bars only.
   - Threshold‑level re‑arm per side. No additional per-pair cooldown applied for RSI Tracker.

@@ -12,7 +12,7 @@ from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
 from .constants import RSI_SUPPORTED_SYMBOLS
-from .rsi_utils import calculate_rsi_series, closed_closes
+from .indicator_cache import indicator_cache
 
 
 configure_logging()
@@ -109,30 +109,16 @@ class RSITrackerAlertService:
             return None
 
     async def _get_recent_rsi_series(self, symbol: str, timeframe: str, period: int, bars_needed: int) -> Optional[List[float]]:
+        """Fetch recent closed-bar RSI values from the indicator cache.
+
+        No on-the-fly recomputation; if cache is not warm, return None.
+        """
         try:
-            from .mt5_utils import get_ohlc_data
-            from .models import Timeframe as MT5Timeframe
-            tf_map = {
-                "5M": MT5Timeframe.M5,
-                "15M": MT5Timeframe.M15,
-                "30M": MT5Timeframe.M30,
-                "1H": MT5Timeframe.H1,
-                "4H": MT5Timeframe.H4,
-                "1D": MT5Timeframe.D1,
-                "1W": MT5Timeframe.W1,
-            }
-            mt5_tf = tf_map.get(timeframe)
-            if not mt5_tf:
+            # Read last N RSI points from cache; return values only in chronological order
+            recent = await indicator_cache.get_recent_rsi(symbol, timeframe, int(period), int(max(bars_needed, 1)))
+            if not recent:
                 return None
-            count = max(period + bars_needed + 2, period + 5)
-            ohlc_data = get_ohlc_data(symbol, mt5_tf, count)
-            closed = closed_closes(ohlc_data)
-            if len(closed) < period + 1:
-                return None
-            series = calculate_rsi_series(closed, period)
-            if not series:
-                return None
-            return series[-bars_needed:] if len(series) >= bars_needed else series
+            return [float(v) for (_ts, v) in recent]
         except Exception:
             return None
 

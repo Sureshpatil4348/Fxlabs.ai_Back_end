@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import deque
 from datetime import datetime, timezone
-from typing import Deque, Dict, Optional, Tuple
+from typing import Deque, Dict, Optional, Tuple, List
 
 # Configuration and concurrency
 from .config import INDICATOR_RING_SIZE
@@ -137,6 +137,28 @@ class IndicatorCache:
             if dq and len(dq) > 0:
                 return dq[-1]
             return None
+
+    async def get_recent_rsi(
+        self,
+        symbol: str,
+        timeframe: str,
+        period: int,
+        count: int,
+    ) -> Optional[List[Tuple[int, float]]]:
+        """Return the last N RSI (ts_ms, value) tuples in chronological order or None if none."""
+        lock_key = self._lock_key(symbol, timeframe)
+        async with pair_locks.acquire(lock_key):
+            dq = (
+                self._rsi.get(symbol, {})
+                .get(timeframe, {})
+                .get(int(period))
+            )
+            if not dq or len(dq) == 0:
+                return None
+            if count <= 0:
+                return []
+            start_index = max(0, len(dq) - int(count))
+            return list(dq)[start_index:]
 
     async def get_latest_ema(
         self, symbol: str, timeframe: str, period: int
