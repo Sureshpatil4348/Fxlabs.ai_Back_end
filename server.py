@@ -1603,7 +1603,7 @@ async def ws_ticks_legacy(websocket: WebSocket):
                 return
         await websocket.accept()
         try:
-            await websocket.send_json({"type": "connected", "message": "Legacy tick WebSocket connected"})
+            await websocket.send_json({"type": "connected", "message": "Legacy tick WebSocket connected", "note": "deprecated; use /market-v2", "removal_date": "2025-10-10", "removal_date_utc": "2025-10-10T00:00:00Z"})
         except Exception:
             pass
 
@@ -1676,7 +1676,7 @@ async def ws_market(websocket: WebSocket):
                 return
         await websocket.accept()
         
-        # Send a welcome message
+        # Send a welcome message (v1 is deprecated)
         try:
             await websocket.send_json({
             "type": "connected", 
@@ -1684,7 +1684,10 @@ async def ws_market(websocket: WebSocket):
             "supported_timeframes": [tf.value for tf in Timeframe],
             "supported_data_types": ["ticks", "ohlc"],
             "supported_price_bases": ["last", "bid", "ask"],
-            "ohlc_schema": "parallel"
+            "ohlc_schema": "parallel",
+            "note": "deprecated; use /market-v2",
+            "removal_date": "2025-10-10",
+            "removal_date_utc": "2025-10-10T00:00:00Z"
         })
         except Exception:
             # Client may already have disconnected
@@ -1853,8 +1856,8 @@ if __name__ == "__main__":
     print("🚀 Starting MT5 Market Data Server...")
     print("📊 Available endpoints:")
     print("   - WebSocket (v2): ws://localhost:8000/market-v2")
-    print("   - WebSocket (new): ws://localhost:8000/ws/market")
-    print("   - WebSocket (legacy): ws://localhost:8000/ws/ticks")
+    print("   - WebSocket (v1, deprecated - removal 2025-10-10): ws://localhost:8000/ws/market")
+    print("   - WebSocket (legacy, deprecated - removal 2025-10-10): ws://localhost:8000/ws/ticks")
     print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=1M&count=100")
     print("   - News Analysis: GET /api/news/analysis")
     print("   - News Refresh: POST /api/news/refresh")

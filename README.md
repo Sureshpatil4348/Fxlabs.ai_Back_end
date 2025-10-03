@@ -1,5 +1,7 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
+> DEPRECATION NOTICE (WebSocket v1): `/ws/market` and `/ws/ticks` are deprecated and will be removed on 2025-10-10. Please migrate to `/market-v2`.
+
 Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and OHLC data over `/ws/market` (tick-driven, coalesced). Indicator streaming and periodic daily % change summaries are planned and tracked in the Implementation Checklist. No EA or external bridge required.
 
 A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, AI-powered news analysis, and comprehensive alert systems for trading applications.
@@ -274,7 +276,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 
 ### WebSocket Endpoints
 
-#### Market Data WebSocket (`/ws/market`) — deprecated soon
+#### Market Data WebSocket (`/ws/market`) — deprecated (removal on 2025-10-10)
 - **URL**: `ws://localhost:8000/ws/market`
 - **Purpose**: Real-time tick and OHLC data streaming
 - **Features**: Selective timeframe subscriptions, intelligent caching, Bid/Ask parallel OHLC fields
@@ -388,12 +390,12 @@ Internal alert tick_data shape:
   - Use keepalive/ping if intermediaries are aggressive about idle timeouts.
   - Reconnect with backoff on close codes 1001/1006.
 
-#### Legacy Tick WebSocket (`/ws/ticks`)
+#### Legacy Tick WebSocket (`/ws/ticks`) — deprecated (removal on 2025-10-10)
 - **URL**: `ws://localhost:8000/ws/ticks`
 - **Purpose**: Backward-compatible tick-only streaming
 - **Features**: Legacy client support
 
-#### Market Data WebSocket v2 (`/market-v2`)
+#### Market Data WebSocket v2 (`/market-v2`) — preferred
 - Use `/market-v2` for new clients. It exposes tick and indicator payloads only (no OHLC streaming), and advertises capabilities via `supported_data_types` in the greeting.
 - Current capabilities: `supported_data_types = ["ticks","indicators"]`.
 - Broadcast-All mode: v2 pushes ticks and indicators (closed‑bar) for a baseline set of symbols/timeframes to all connected clients without explicit subscriptions. OHLC is computed server‑side only for indicators/alerts.
@@ -420,6 +422,9 @@ V2 greeting example (capabilities + indicators registry):
   "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
   "supported_data_types": ["ticks","indicators"],
   "supported_price_bases": ["last","bid","ask"],
+  "note": "v2 endpoint; v1 deprecated — migrate to /market-v2",
+  "removal_date": "2025-10-10",
+  "removal_date_utc": "2025-10-10T00:00:00Z",
   "indicators": {
     "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]},
     "ema": {"periods": [21, 50, 200]},

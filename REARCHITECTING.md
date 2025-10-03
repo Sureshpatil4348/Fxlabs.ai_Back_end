@@ -356,7 +356,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 17 | PAR-1 | Parity | Add parity checks within tolerances | Backend | DONE | Compare last N closed bars via `tests/test_parity.py` for 3–5 symbols×TFs; enforce RSI ≤ 0.15 abs diff, EMA tail ≤ 1e-9, MACD hist ≤ 5e-4; daily_change_pct (Bid) parity ≤ 0.10% | `tests/test_parity.py` | IND-1 | Close vs Bid fixed; includes daily % change parity |
 | 18 | WS-V2-3 | WebSocket v2 | Dual-run + metrics/soak | Backend | DONE | Per-type counters; periodic reporter; low error rate | `server.py` | WS-V2-1 | Compare vs v1 via `obs.ws` logs (ws_metrics) |
 | 19 | ROLL-1 | Rollout | Gradual enablement; measure CPU/latency | Backend | DONE | Start 10×3; ramp with env overrides; CPU/time logged | `server.py`,`README.md` | SCHED-1 | Env: `INDICATOR_ROLLOUT_MAX_SYMBOLS`, `INDICATOR_ROLLOUT_TFS`, `INDICATOR_ROLLOUT_SYMBOLS` |
-| 20 | WS-V2-4 | WebSocket v2 | Client migration docs + v1 deprecation notice | Backend | TODO | Banner + timeline | `server.py`,`README.md` | WS-V2-1 | Short removal window |
+| 20 | WS-V2-4 | WebSocket v2 | Client migration docs + v1 deprecation notice | Backend | DONE | Banner + timeline | `server.py`,`README.md` | WS-V2-1 | v1 removal date: 2025-10-10 |
 | 21 | WS-V2-5 | WebSocket v2 | Remove `/ws/ticks` and `/ws/market` after cutover | Backend | TODO | Delete routes/legacy glue | `server.py` | WS-V2-3/4 | Keep README updated |
 | 22 | DOC-1 | Docs | Keep README.md updated | Backend | DONE | README references this doc | `README.md` | None | Clarify current vs planned |
 | 23 | DOC-2 | Docs | Keep ALERTS.md aligned to pipeline | Backend | DONE | liveRSI note reflects task | `ALERTS.md` | None | No math duplication |
