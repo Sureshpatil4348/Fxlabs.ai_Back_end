@@ -63,13 +63,7 @@ class OHLC(BaseModel):
     is_closed: Optional[bool] = None
 
 
-class SubscriptionInfo(BaseModel):
-    symbol: str
-    timeframe: Timeframe
-    subscription_time: datetime
-    data_types: List[str]
-    price_basis: PriceBasis = PriceBasis.LAST
-    ohlc_schema: OHLCSchema = OHLCSchema.PARALLEL
+"""Per-client SubscriptionInfo removed; v2 WebSocket is broadcast-only."""
 
 
 class NewsItem(BaseModel):

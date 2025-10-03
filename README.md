@@ -1,6 +1,6 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-WebSocket v2: Use `/market-v2` for live ticks and indicator updates (broadcast-all baseline). Legacy endpoints have been removed.
+WebSocket v2: Use `/market-v2` for live ticks and indicator updates (broadcast-all baseline). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are no-ops (ignored). Ping/pong is supported for keepalive.
 
 Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, coalesced; OHLC is not streamed to clients in v2). No EA or external bridge required.
 
@@ -279,7 +279,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 #### Market Data WebSocket v2 (`/market-v2`) — preferred
 - **URL**: `ws://localhost:8000/market-v2`
 - **Purpose**: Real-time tick and indicator streaming (no OHLC streaming to clients)
-- **Features**: Broadcast-all baseline (symbols/timeframes), optional subscribe for snapshots (e.g., `initial_indicators`)
+- **Features**: Broadcast-all baseline (symbols/timeframes). Subscribe/unsubscribe messages are ignored in v2; snapshots on demand are not supported.
 
 Note on closed-bar guarantees:
 - The server emits an `is_closed=true` OHLC bar at every timeframe boundary (checked at ~500 ms resolution), including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.

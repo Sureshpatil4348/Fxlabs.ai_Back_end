@@ -42,7 +42,6 @@ from app.models import (
     Timeframe,
     Tick,
     OHLC,
-    SubscriptionInfo,
     NewsItem,
     NewsAnalysis,
     PriceBasis,
@@ -153,7 +152,7 @@ app.add_middleware(
 
 """OHLC model is imported from app.models"""
 
-"""SubscriptionInfo model is imported from app.models"""
+"""SubscriptionInfo model removed; v2 is broadcast-only"""
 
 """NewsItem model is imported from app.models"""
 
@@ -466,15 +465,8 @@ async def _indicator_scheduler() -> None:
                     for tf in baseline_tfs:
                         pairs.add((sym, tf))
             else:
-                for c in clients:
-                    try:
-                        for sym, tf_map in getattr(c, "subscriptions", {}).items():
-                            for tf, sub in tf_map.items():
-                                if "indicators" in getattr(sub, "data_types", []):
-                                    pairs.add((sym, tf))
-                    except Exception:
-                        # Ignore a client snapshot failure and continue
-                        continue
+                # No v2 broadcast clients → do not compute indicators
+                pairs = set()
 
             processed = 0
             error_count = 0
@@ -947,9 +939,9 @@ class WSClient:
         self.websocket = websocket
         self.token = token
         self._last_sent_ts: Dict[str, int] = {}
-        # New subscription model (supports multiple timeframes per symbol)
-        # subscriptions[symbol][timeframe] -> SubscriptionInfo
-        self.subscriptions: Dict[str, Dict[Timeframe, SubscriptionInfo]] = {}
+        # Per-client subscription model removed for v2 broadcast-only
+        # subscriptions retained as generic dict for OHLC boundary scheduling state
+        self.subscriptions: Dict[str, Dict[Timeframe, Any]] = {}
         # next_ohlc_updates[symbol][timeframe] -> next boundary datetime
         self.next_ohlc_updates: Dict[str, Dict[Timeframe, datetime]] = {}
         self._task: Optional[asyncio.Task] = None
@@ -1101,12 +1093,7 @@ class WSClient:
         """Send real-time tick updates for subscribed symbols"""
         tick_symbols = set()
         
-        # Collect symbols that need tick updates (any timeframe requesting ticks)
-        for symbol, tf_map in self.subscriptions.items():
-            for sub_info in tf_map.values():
-                if "ticks" in sub_info.data_types:
-                    tick_symbols.add(symbol)
-                    break
+        # Per-client tick subscriptions removed; rely on v2 broadcast baseline
         
         # v2 broadcast: include rollout baseline symbols (gradual enablement)
         if self.v2_broadcast:
@@ -1154,31 +1141,18 @@ class WSClient:
                     updates.append(tick_dict)
                     self._last_sent_ts[sym] = ts_ms
                     
-                    # Update OHLC caches for all subscribed timeframes requesting OHLC for this symbol
-                    if sym in self.subscriptions:
-                        for tf, si in self.subscriptions[sym].items():
-                            if "ohlc" in si.data_types:
-                                # Update forming candle from MT5 on every tick
+                    # Update OHLC caches for baseline timeframes in v2 broadcast mode only (no live OHLC streaming in v2)
+                    if self.v2_broadcast and ("ohlc" in self.supported_data_types):
+                        try:
+                            baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1]
+                            for tf in baseline_tfs:
                                 update_ohlc_cache(sym, tf)
-                                # Push a live OHLC snapshot for this symbol×timeframe
-                                try:
-                                    live = get_cached_ohlc(sym, tf, 1)
-                                    if live:
-                                        bar = live[-1]
-                                        # Only stream as live when the bar is still forming; boundary sends closed updates
-                                        if getattr(bar, "is_closed", False) is False:
-                                            await self._try_send_json({
-                                                "type": "ohlc_live",
-                                                "data": self._format_ohlc_for_subscription(bar, sym, tf)
-                                            })
-                                except Exception:
-                                    # Never let live OHLC streaming break the tick loop
-                                    pass
+                        except Exception:
+                            pass
                         
             except HTTPException:
                 # symbol disappeared or invalid; drop it
-                if sym in self.symbols:
-                    self.symbols.discard(sym)
+                # Clean internal scheduling state
                 if sym in self.subscriptions:
                     del self.subscriptions[sym]
                     
@@ -1253,10 +1227,8 @@ class WSClient:
             for tf, next_update_time in list(tf_map.items()):
                 if current_time >= next_update_time:
                     try:
-                        sub_info = self.subscriptions.get(symbol, {}).get(tf)
-                        # Only send OHLC updates when explicitly requested via subscription,
-                        # and never broadcast OHLC for v2 connections.
-                        if (sub_info and "ohlc" in sub_info.data_types) or (self.v2_broadcast and ("ohlc" in self.supported_data_types)):
+                        # Per-client OHLC subscriptions removed; emit updates only in v2 broadcast mode when enabled
+                        if self.v2_broadcast and ("ohlc" in self.supported_data_types):
                             # Refresh cache from MT5 at boundary to include zero-tick flat minutes
                             update_ohlc_cache(symbol, tf)
                             # Get current OHLC data from cache (now authoritative and closed)
@@ -1280,12 +1252,8 @@ class WSClient:
                             )
                     except Exception as e:
                         print(f"❌ Error sending OHLC update for {symbol} {tf.value}: {e}")
-                        # Remove problematic symbol×timeframe subscription
+                        # Remove problematic scheduling state
                         try:
-                            if symbol in self.subscriptions and tf in self.subscriptions[symbol]:
-                                del self.subscriptions[symbol][tf]
-                                if not self.subscriptions[symbol]:
-                                    del self.subscriptions[symbol]
                             if symbol in self.next_ohlc_updates and tf in self.next_ohlc_updates[symbol]:
                                 del self.next_ohlc_updates[symbol][tf]
                                 if not self.next_ohlc_updates[symbol]:
@@ -1295,265 +1263,11 @@ class WSClient:
 
     async def handle_message(self, message: dict):
         action = message.get("action")
-        
-        if action == "subscribe":
-            # New subscription format
-            symbol = message.get("symbol", "")
-            timeframe = message.get("timeframe", "5M")
-            raw_data_types = message.get("data_types", ["ticks", "ohlc"])
-            price_basis_str = message.get("price_basis", "last")
-            ohlc_schema_str = message.get("ohlc_schema", "parallel")
-            
-            if not symbol:
-                await self._try_send_json({"type": "error", "error": "symbol_required"})
-                return
-            
-            try:
-                # Validate timeframe (accept both "1M" style and "M1" alias)
-                try:
-                    tf = Timeframe(timeframe)
-                except ValueError:
-                    try:
-                        tf = Timeframe[timeframe]
-                    except Exception:
-                        raise ValueError(f"Invalid timeframe: {timeframe}")
-                # Enforce timeframe allowlist
-                if tf not in ALLOWED_WS_TIMEFRAMES:
-                    await self._try_send_json({"type": "error", "error": f"forbidden_timeframe: {tf.value}"})
-                    return
-                # Normalize and enforce symbol allowlist
-                symbol_norm = (symbol or "").upper()
-                if symbol_norm not in ALLOWED_WS_SYMBOLS:
-                    await self._try_send_json({"type": "error", "error": f"forbidden_symbol: {symbol_norm}"})
-                    return
-                # Enforce per-connection caps
-                # Count existing unique (symbol,timeframe) subs
-                current_pairs = sum(len(v) for v in self.subscriptions.values())
-                if current_pairs >= WS_MAX_SUBSCRIPTIONS and (symbol_norm not in self.subscriptions or tf not in self.subscriptions.get(symbol_norm, {})):
-                    await self._try_send_json({"type": "error", "error": "subscription_limit_exceeded"})
-                    return
-                # Enforce symbols count cap
-                existing_syms = set(self.subscriptions.keys())
-                if symbol_norm not in existing_syms and len(existing_syms) >= WS_MAX_SYMBOLS:
-                    await self._try_send_json({"type": "error", "error": "symbol_limit_exceeded"})
-                    return
-                # Enforce TFs per symbol cap
-                tfs_for_sym = set(self.subscriptions.get(symbol_norm, {}).keys())
-                if tf not in tfs_for_sym and len(tfs_for_sym) >= WS_MAX_TFS_PER_SYMBOL:
-                    await self._try_send_json({"type": "error", "error": "timeframe_limit_per_symbol_exceeded"})
-                    return
-                ensure_symbol_selected(symbol_norm)
-                
-                # Normalize and validate data_types against endpoint capabilities
-                if not isinstance(raw_data_types, list):
-                    raw_data_types = ["ticks", "ohlc"]
-                cleaned: List[str] = []
-                for dt in raw_data_types:
-                    if isinstance(dt, str):
-                        dts = dt.strip().lower()
-                        if dts in self.supported_data_types:
-                            cleaned.append(dts)
-                data_types = sorted(set(cleaned)) or ["ticks", "ohlc"]
-
-                # Parse enums with safe defaults
-                try:
-                    pb = PriceBasis(price_basis_str)
-                except Exception:
-                    pb = PriceBasis.LAST
-                try:
-                    schema = OHLCSchema(ohlc_schema_str)
-                except Exception:
-                    schema = OHLCSchema.PARALLEL
-
-                # Create subscription info
-                sub_info = SubscriptionInfo(
-                    symbol=symbol_norm,
-                    timeframe=tf,
-                    subscription_time=datetime.now(timezone.utc),
-                    data_types=data_types,
-                    price_basis=pb,
-                    ohlc_schema=schema,
-                )
-                
-                # Persist subscription (allow multiple TFs per symbol)
-                if symbol_norm not in self.subscriptions:
-                    self.subscriptions[symbol_norm] = {}
-                self.subscriptions[symbol_norm][tf] = sub_info
-                
-                # Send initial OHLC data if requested
-                if "ohlc" in data_types:
-                    try:
-                        ohlc_data = get_cached_ohlc(symbol_norm, tf, 250)
-                        
-                        if ohlc_data:
-                            ok = await self._try_send_json({
-                                "type": "initial_ohlc",
-                                "symbol": symbol_norm,
-                                "timeframe": timeframe,
-                                "data": [self._format_ohlc_for_subscription(ohlc, symbol, tf) for ohlc in ohlc_data]
-                            })
-                            if not ok:
-                                return
-                        else:
-                            # Only log at debug level to reduce noise
-                            import logging
-                            logger = logging.getLogger(__name__)
-                            logger.debug(f"⚠️ No OHLC data available for {symbol}")
-                        
-                        # Schedule next OHLC update for this symbol×timeframe
-                        self.next_ohlc_updates.setdefault(symbol_norm, {})[tf] = calculate_next_update_time(
-                            sub_info.subscription_time, tf
-                        )
-                        
-                    except Exception as e:
-                        print(f"❌ Error getting initial OHLC for {symbol}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        await self._try_send_json({
-                            "type": "error",
-                            "error": f"failed_to_get_ohlc: {str(e)}"
-                        })
-                        return
-
-                # Send initial indicators snapshot if requested
-                if "indicators" in data_types:
-                    try:
-                        # Try latest values from cache first
-                        latest_rsi = await indicator_cache.get_latest_rsi(symbol_norm, tf.value, 14)
-                        latest_ema21 = await indicator_cache.get_latest_ema(symbol_norm, tf.value, 21)
-                        latest_ema50 = await indicator_cache.get_latest_ema(symbol_norm, tf.value, 50)
-                        latest_ema200 = await indicator_cache.get_latest_ema(symbol_norm, tf.value, 200)
-                        latest_macd = await indicator_cache.get_latest_macd(symbol_norm, tf.value, 12, 26, 9)
-
-                        ts_candidates: List[int] = []
-                        if latest_rsi:
-                            ts_candidates.append(int(latest_rsi[0]))
-                        for em in (latest_ema21, latest_ema50, latest_ema200):
-                            if em:
-                                ts_candidates.append(int(em[0]))
-                        if latest_macd:
-                            ts_candidates.append(int(latest_macd[0]))
-
-                        bar_time_ts: Optional[int] = max(ts_candidates) if ts_candidates else None
-
-                        # If cache is empty, compute once from closed bars and populate cache
-                        if bar_time_ts is None:
-                            try:
-                                bars = get_ohlc_data(symbol_norm, tf, 300)
-                                closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
-                                if closed_bars:
-                                    last_closed = closed_bars[-1]
-                                    closes = [b.close for b in closed_bars]
-                                    rsi_val = ind_rsi_latest(closes, 14) if len(closes) >= 15 else None
-                                    ema_vals: Dict[int, Optional[float]] = {}
-                                    for p in (21, 50, 200):
-                                        ema_vals[p] = ind_ema_latest(closes, p) if len(closes) >= p else None
-                                    macd_trip = ind_macd_latest(closes, 12, 26, 9)
-
-                                    # Store into cache
-                                    if rsi_val is not None:
-                                        await indicator_cache.update_rsi(symbol_norm, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
-                                    for period, v in ema_vals.items():
-                                        if v is not None:
-                                            await indicator_cache.update_ema(symbol_norm, tf.value, int(period), float(v), ts_ms=last_closed.time)
-                                    if macd_trip is not None:
-                                        mv, sv, hv = macd_trip
-                                        await indicator_cache.update_macd(symbol_norm, tf.value, 12, 26, 9, float(mv), float(sv), float(hv), ts_ms=last_closed.time)
-
-                                    # Refresh latest values variables for snapshot
-                                    latest_rsi = (last_closed.time, float(rsi_val)) if rsi_val is not None else None
-                                    latest_ema21 = (last_closed.time, float(ema_vals.get(21))) if ema_vals.get(21) is not None else None
-                                    latest_ema50 = (last_closed.time, float(ema_vals.get(50))) if ema_vals.get(50) is not None else None
-                                    latest_ema200 = (last_closed.time, float(ema_vals.get(200))) if ema_vals.get(200) is not None else None
-                                    if macd_trip is not None:
-                                        mv, sv, hv = macd_trip
-                                        latest_macd = (last_closed.time, float(mv), float(sv), float(hv))
-                                    bar_time_ts = last_closed.time
-                            except Exception:
-                                # Best-effort; proceed with whatever we have
-                                pass
-
-                        snapshot = {
-                            "bar_time": int(bar_time_ts) if bar_time_ts is not None else None,
-                            "indicators": {
-                                "rsi": ({14: float(latest_rsi[1])} if latest_rsi else {}),
-                                "ema": {
-                                    **({21: float(latest_ema21[1])} if latest_ema21 else {}),
-                                    **({50: float(latest_ema50[1])} if latest_ema50 else {}),
-                                    **({200: float(latest_ema200[1])} if latest_ema200 else {}),
-                                },
-                                "macd": (
-                                    {"macd": float(latest_macd[1]), "signal": float(latest_macd[2]), "hist": float(latest_macd[3])}
-                                    if latest_macd else {}
-                                ),
-                            },
-                        }
-                        ok2 = await self._try_send_json({
-                            "type": "initial_indicators",
-                            "symbol": symbol_norm,
-                            "timeframe": timeframe,
-                            "data": snapshot,
-                        })
-                        if not ok2:
-                            return
-                    except Exception:
-                        # Never fail the subscription due to indicators snapshot issues
-                        pass
-
-                # Market summary removed: daily_change_pct is included in tick payloads only
-                
-                ok = await self._try_send_json({
-                    "type": "subscribed",
-                    "symbol": symbol_norm,
-                    "timeframe": timeframe,
-                    "data_types": data_types,
-                    "price_basis": sub_info.price_basis.value,
-                    "ohlc_schema": sub_info.ohlc_schema.value,
-                })
-                if not ok:
-                    return
-                
-            except ValueError:
-                await self._try_send_json({"type": "error", "error": f"invalid_timeframe: {timeframe}"})
-            except HTTPException as e:
-                await self._try_send_json({"type": "error", "error": str(e.detail)})
-            except Exception as e:
-                await self._try_send_json({"type": "error", "error": str(e)})
-                
-        elif action == "unsubscribe":
-            symbol = message.get("symbol", "")
-            timeframe_str = message.get("timeframe")
-            if symbol:
-                symbol_norm = symbol.upper()
-                if timeframe_str:
-                    # Unsubscribe only this symbol×timeframe
-                    try:
-                        try:
-                            tf = Timeframe(timeframe_str)
-                        except ValueError:
-                            tf = Timeframe[timeframe_str]
-                    except Exception:
-                        await self._try_send_json({"type": "error", "error": f"invalid_timeframe: {timeframe_str}"})
-                        return
-                    if symbol_norm in self.subscriptions and tf in self.subscriptions[symbol_norm]:
-                        del self.subscriptions[symbol_norm][tf]
-                        if not self.subscriptions[symbol_norm]:
-                            del self.subscriptions[symbol_norm]
-                    if symbol_norm in self.next_ohlc_updates and tf in self.next_ohlc_updates[symbol_norm]:
-                        del self.next_ohlc_updates[symbol_norm][tf]
-                        if not self.next_ohlc_updates[symbol_norm]:
-                            del self.next_ohlc_updates[symbol_norm]
-                    await self._try_send_json({"type": "unsubscribed", "symbol": symbol_norm, "timeframe": tf.value})
-                else:
-                    # Unsubscribe all timeframes for this symbol
-                    if symbol_norm in self.subscriptions:
-                        del self.subscriptions[symbol_norm]
-                    if symbol_norm in self.next_ohlc_updates:
-                        del self.next_ohlc_updates[symbol_norm]
-                    await self._try_send_json({"type": "unsubscribed", "symbol": symbol_norm})
-                
-        elif action == "ping":
+        # Subscriptions removed in v2 broadcast-only; keep ping/pong for keepalive
+        if action == "ping":
             await self._try_send_json({"type": "pong"})
+        elif action in ("subscribe", "unsubscribe"):
+            await self._try_send_json({"type": "info", "message": "v2 broadcast-only: subscribe/unsubscribe ignored"})
         else:
             await self._try_send_json({"type": "error", "error": "unknown_action"})
 
