@@ -61,6 +61,7 @@ from app.mt5_utils import (
 from app.rsi_utils import calculate_rsi_series, closed_closes
 from app.indicator_cache import indicator_cache
 from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest
+from app.constants import RSI_SUPPORTED_SYMBOLS
 
 # Ensure logging has timestamps across the app
 configure_logging()
@@ -356,15 +357,22 @@ async def _indicator_scheduler() -> None:
 
             # Build the unique set of (symbol, timeframe) needing indicators
             pairs: Set[Tuple[str, Timeframe]] = set()
-            for c in clients:
-                try:
-                    for sym, tf_map in getattr(c, "subscriptions", {}).items():
-                        for tf, sub in tf_map.items():
-                            if "indicators" in getattr(sub, "data_types", []):
-                                pairs.add((sym, tf))
-                except Exception:
-                    # Ignore a client snapshot failure and continue
-                    continue
+            has_v2_broadcast = any(getattr(c, "v2_broadcast", False) for c in clients)
+            if has_v2_broadcast:
+                baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1]
+                for sym in RSI_SUPPORTED_SYMBOLS:
+                    for tf in baseline_tfs:
+                        pairs.add((sym, tf))
+            else:
+                for c in clients:
+                    try:
+                        for sym, tf_map in getattr(c, "subscriptions", {}).items():
+                            for tf, sub in tf_map.items():
+                                if "indicators" in getattr(sub, "data_types", []):
+                                    pairs.add((sym, tf))
+                    except Exception:
+                        # Ignore a client snapshot failure and continue
+                        continue
 
             processed = 0
             for symbol, tf in pairs:
@@ -464,6 +472,9 @@ async def _indicator_scheduler() -> None:
                         }
                         for c in clients:
                             try:
+                                if getattr(c, "v2_broadcast", False):
+                                    await c._try_send_json(msg)
+                                    continue
                                 sub = getattr(c, "subscriptions", {}).get(symbol, {}).get(tf)
                                 if sub and "indicators" in getattr(sub, "data_types", []):
                                     await c._try_send_json(msg)
@@ -506,17 +517,21 @@ async def _market_summary_scheduler() -> None:
             async with _connected_clients_lock:
                 clients = list(_connected_clients)
 
-            # Build unique symbol set for which any client has any subscription
+            # Build unique symbol set. If any v2 broadcast clients exist, use baseline symbols
             symbols: Set[str] = set()
-            for c in clients:
-                try:
-                    for sym in getattr(c, "subscriptions", {}).keys():
-                        symbols.add(sym)
-                    # Also consider legacy tick subscriptions
-                    for sym in getattr(c, "symbols", set()):
-                        symbols.add(sym)
-                except Exception:
-                    continue
+            has_v2_broadcast = any(getattr(c, "v2_broadcast", False) for c in clients)
+            if has_v2_broadcast:
+                symbols.update(RSI_SUPPORTED_SYMBOLS)
+            else:
+                for c in clients:
+                    try:
+                        for sym in getattr(c, "subscriptions", {}).keys():
+                            symbols.add(sym)
+                        # Also consider legacy tick subscriptions
+                        for sym in getattr(c, "symbols", set()):
+                            symbols.add(sym)
+                    except Exception:
+                        continue
 
             # Compute once per symbol and broadcast to clients that want it
             for sym in symbols:
@@ -531,18 +546,17 @@ async def _market_summary_scheduler() -> None:
                     }
                     for c in clients:
                         try:
-                            # Only for endpoints that advertise/accept summaries: v2 uses WSClient default set
-                            # Gate by subscription presence for the symbol (any timeframe)
-                            wants_summary = False
-                            # Heuristic: if client subscribed to the symbol in any timeframe, consider sending summary
-                            if sym in getattr(c, "subscriptions", {}):
-                                wants_summary = True
-                            # Legacy symbol list also qualifies
-                            if sym in getattr(c, "symbols", set()):
-                                wants_summary = True
-                            if not wants_summary:
-                                continue
-                            await c._try_send_json(msg)
+                            # v2 broadcast: always send. Otherwise, gate by subscription/symbol presence
+                            if getattr(c, "v2_broadcast", False):
+                                await c._try_send_json(msg)
+                            else:
+                                wants_summary = False
+                                if sym in getattr(c, "subscriptions", {}):
+                                    wants_summary = True
+                                if sym in getattr(c, "symbols", set()):
+                                    wants_summary = True
+                                if wants_summary:
+                                    await c._try_send_json(msg)
                         except Exception:
                             continue
                 except Exception:
@@ -755,7 +769,7 @@ async def _check_alerts_safely(tick_data: Dict[str, Any]) -> None:
         print(f"❌ Error checking RSI correlation alerts: {e}")
 
 class WSClient:
-    def __init__(self, websocket: WebSocket, token: str, supported_data_types: Optional[Set[str]] = None):
+    def __init__(self, websocket: WebSocket, token: str, supported_data_types: Optional[Set[str]] = None, *, v2_broadcast: bool = False):
         self.websocket = websocket
         self.token = token
         # Legacy tick subscriptions
@@ -771,6 +785,8 @@ class WSClient:
         self._send_interval_s: float = 0.10  # 10 Hz for ticks
         # Supported data types for this connection (endpoint specific)
         self.supported_data_types: Set[str] = set(supported_data_types or {"ticks", "ohlc"})
+        # v2 broadcast mode: server pushes all symbols/timeframes without explicit subscribe
+        self.v2_broadcast: bool = bool(v2_broadcast)
 
     def _is_connected(self) -> bool:
         try:
@@ -842,6 +858,21 @@ class WSClient:
         # Start both tick and OHLC background tasks
         self._task = asyncio.create_task(self._tick_loop())
         self._ohlc_task = asyncio.create_task(self._ohlc_loop())
+        # If v2 broadcast, pre-schedule OHLC boundary updates for baseline symbols/timeframes
+        if self.v2_broadcast:
+            try:
+                now = datetime.now(timezone.utc)
+                baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1]
+                for sym in RSI_SUPPORTED_SYMBOLS:
+                    try:
+                        ensure_symbol_selected(sym)
+                    except Exception:
+                        continue
+                    for tf in baseline_tfs:
+                        self.next_ohlc_updates.setdefault(sym, {})[tf] = calculate_next_update_time(now, tf)
+            except Exception:
+                # Never block connection start
+                pass
 
     async def stop(self):
         if self._task:
@@ -903,6 +934,9 @@ class WSClient:
         
         # Also include legacy tick subscriptions
         tick_symbols.update(self.symbols)
+        # v2 broadcast: include all baseline symbols
+        if self.v2_broadcast:
+            tick_symbols.update(RSI_SUPPORTED_SYMBOLS)
         
         if not tick_symbols:
             return
@@ -1032,7 +1066,7 @@ class WSClient:
                 if current_time >= next_update_time:
                     try:
                         sub_info = self.subscriptions.get(symbol, {}).get(tf)
-                        if sub_info and "ohlc" in sub_info.data_types:
+                        if (sub_info and "ohlc" in sub_info.data_types) or self.v2_broadcast:
                             # Refresh cache from MT5 at boundary to include zero-tick flat minutes
                             update_ohlc_cache(symbol, tf)
                             # Get current OHLC data from cache (now authoritative and closed)
@@ -1498,8 +1532,8 @@ async def ws_market_v2(websocket: WebSocket):
             # Client may already have disconnected
             pass
 
-        # Reuse the same WSClient implementation as /ws/market
-        client = WSClient(websocket, "")
+        # Reuse the same WSClient implementation as /ws/market, enable broadcast-all for v2
+        client = WSClient(websocket, "", supported_data_types={"ticks", "ohlc", "indicators", "market_summary"}, v2_broadcast=True)
         await client.start()
         async with _connected_clients_lock:
             _connected_clients.add(client)

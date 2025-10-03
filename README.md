@@ -396,8 +396,10 @@ Internal alert tick_data shape:
 #### Market Data WebSocket v2 (`/market-v2`)
 - Use `/market-v2` for new clients. It exposes the same tick and OHLC payloads, and advertises capabilities via `supported_data_types` in the greeting.
 - Current capabilities: `supported_data_types = ["ticks","ohlc","indicators","market_summary"]`.
-- During migration, `/ws/market` and `/ws/ticks` remain available; they will be removed after cutover.
-- The v2 subscribe shape is unchanged; request `data_types: ["ticks","ohlc","indicators"]` as needed.
+- Broadcast-All mode: v2 pushes ticks, OHLC boundary updates, indicators (closed‑bar), and market summaries for a baseline set of symbols/timeframes to all connected clients without explicit subscriptions.
+  - Baseline symbols: `RSI_SUPPORTED_SYMBOLS` from `app/constants.py` (broker‑suffixed)
+  - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1
+- Subscribe remains optional and is primarily used to receive `initial_ohlc` / `initial_indicators` snapshots on demand.
 
 V2 greeting example (capabilities + indicators registry):
 

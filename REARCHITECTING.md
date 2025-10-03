@@ -45,6 +45,11 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
   - Price stream: pushes `ticks` messages on new-tick arrival (coalesced). Daily % change is included in tick payloads and is also available via periodic `market_summary` for each subscribed symbol (v2).
   - Indicators stream: pushes `indicator_update` when new closed-bar indicators are computed (10s poll cadence; v2-only).
   - On subscribe, server sends `initial_ohlc` when `ohlc` is requested. `initial_indicators` will be added with the indicator pipeline.
+- WebSocket v2 (`/market-v2`) — Broadcast-All Mode
+  - No explicit subscriptions required. Server broadcasts ticks, OHLC boundary updates, indicators, and market summaries for a baseline set of symbols/timeframes to all connected clients.
+  - Baseline symbols: broker-suffixed `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`.
+  - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1.
+  - Subscription messages are still accepted for compatibility but not required in v2.
 
 ## Data Models
 - Tick (frontend): `{symbol, time, time_iso, bid, ask, last, volume, flags, daily_change_pct}`
@@ -152,6 +157,11 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
     ```
     - Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
+Broadcast-All Notes (v2 only)
+- Indicators and market summaries are broadcast to all v2 clients for the baseline coverage; no `data_types:["indicators"]` is needed.
+- Ticks are pushed for all baseline symbols; OHLC boundary updates fire for all baseline timeframes.
+- Clients can still send `subscribe`/`unsubscribe`, but server behavior in v2 does not require them for receiving baseline data.
+
 - Unsubscribe and keepalive
   - Unsubscribe a single symbol×timeframe:
     ```json
@@ -216,22 +226,9 @@ Endpoint
   }
   ```
 
-Subscribe (unchanged shape; current capabilities are `ticks` and `ohlc`)
-```json
-{
-  "action": "subscribe",
-  "symbol": "EURUSDm",
-  "timeframe": "5M",
-  "data_types": ["ticks","ohlc"],
-  "price_basis": "last",
-  "ohlc_schema": "parallel"
-}
-```
-
-Server Snapshots on Subscribe
-- `initial_ohlc`: same as v1
-- `initial_indicators` (new when requested): latest closed‑bar snapshot for the timeframe
-- Optional: send an immediate `market_summary` for the symbol
+Broadcast-All Behavior
+- Server pushes: `ticks`, `ohlc_update`, `indicator_update`, and `market_summary` for baseline symbols/timeframes without subscription.
+- Optional: clients may still `subscribe` to receive `initial_ohlc` and `initial_indicators` snapshots for specific symbol×timeframe on demand.
 
 Live Push Types
 - `ticks`: coalesced list, as in v1
@@ -348,6 +345,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 |---:|---|---|---|---|---|---|---|---|---|
 | 01 | WS-V2-1 | WebSocket v2 | Add `/market-v2` endpoint | Backend | DONE | Endpoint serves ticks/ohlc; advertises capabilities | `server.py`,`README.md` | None | No feature flag needed |
 | 02 | WS-1 | WebSocket | Extend v2 greeting to advertise `indicators` | Backend | DONE | `connected` includes `indicators` | `server.py` | WS-V2-1 | Backward compatible |
+| 02A | WS-V2-6 | WebSocket v2 | Broadcast-all mode (baseline sym×TF coverage) | Backend | DONE | v2 clients receive all baseline data without subscribing | `server.py`,`REARCHITECTING.md` | WS-V2-1 | Subscriptions optional |
 | 03 | IND-1 | Indicators | Create `app/indicators.py` (RSI/EMA/MACD/Ichimoku/UT Bot) | Backend | DONE | Matches tolerances; docstrings | `app/indicators.py` | None | Centralized math |
 | 04 | CACHE-1 | Indicators | Add `app/indicator_cache.py` with deque per (sym,tf) | Backend | DONE | `get_latest_*`,`update_*`; ring size cfg | `app/indicator_cache.py` | IND-1 | Async-safe usage |
 | 05 | SCHED-1 | Scheduler | 10s closed-bar detector/poller | Backend | DONE | Detects, computes, stores, broadcasts | `server.py` | IND-1, CACHE-1 | Measured latency logged |
