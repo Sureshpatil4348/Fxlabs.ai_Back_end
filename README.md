@@ -861,6 +861,26 @@ python test_websocket_client.py
 curl "http://localhost:8000/health"
 ```
 
+### Indicators: Unit Checks and Micro-Benchmark
+
+- Prerequisite: MT5 terminal is installed and accessible. Optionally set `MT5_TERMINAL_PATH` in your environment.
+
+Run closed-bar indicator unit checks (RSI/EMA/MACD/UTBot/Ichimoku) over a small set of symbols×timeframes:
+
+```bash
+python tests/test_indicators.py
+```
+
+Run a small micro-benchmark of indicator computations (latest closed bar) for 3–5 symbols across `5M/1H/1D`:
+
+```bash
+python tests/bench_indicators.py
+```
+
+Notes:
+- These tests require a live MT5 connection and will skip gracefully if MT5 is unavailable.
+- Parity tolerances follow `REARCHITECTING.md` (e.g., RSI ≤ 0.15 abs diff; MACD hist ≤ 5e-4).
+
 ### Test HTML Client
 Open `test_websocket.html` in your browser to test WebSocket connections interactively.
 
