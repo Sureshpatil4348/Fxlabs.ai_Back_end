@@ -85,12 +85,13 @@ This document describes how the frontend should consume market data and indicato
     - `bar_time` is epoch milliseconds (broker server time).
     - Current coverage in this payload: RSI/EMA/MACD. UTBot/Ichimoku are not included yet.
 
-- ### REST API
+### REST API (Cache-first)
 
 - **Auth**: If `API_TOKEN` is set, include `X-API-Key: <token>` header in requests.
 
 - `GET /api/indicator?indicator=rsi&timeframe=5M&pairs=EURUSDm&pairs=BTCUSDm`
-  - Returns latest closed‑bar value for the requested indicator across provided pairs (1–32).
+  - Returns latest closed‑bar value for the requested indicator across provided pairs (1–32), served from an in-memory cache.
+  - Cache: warm-populated on startup for all allowed symbols/timeframes and updated on each scheduler cycle (closed bars only).
   - If no `pairs`/`symbols` provided, returns for WS‑allowed symbols (capped to 32).
   - Query params:
     - `indicator` (required): `rsi` | `ema` | `macd`

@@ -63,6 +63,47 @@ from app.rsi_utils import calculate_rsi_series, closed_closes
 from app.indicator_cache import indicator_cache
 from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest
 from app.constants import RSI_SUPPORTED_SYMBOLS
+# One-time warmup to backfill indicator cache at startup
+async def _warm_populate_indicator_cache() -> None:
+    try:
+        logger = logging.getLogger("obs.indicator")
+        baseline_tfs: List[Timeframe] = _rollout_timeframes()
+        try:
+            symbols_for_rollout: List[str] = list(ALLOWED_WS_SYMBOLS)
+        except Exception:
+            symbols_for_rollout = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+        total_pairs = len(symbols_for_rollout) * len(baseline_tfs)
+        logger.info("🚀 indicator_warmup | pairs=%d", total_pairs)
+        processed = 0
+        for sym in symbols_for_rollout:
+            for tf in baseline_tfs:
+                try:
+                    bars = get_ohlc_data(sym, tf, 300)
+                    if not bars:
+                        continue
+                    closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
+                    if not closed_bars:
+                        continue
+                    last_closed = closed_bars[-1]
+                    closes = [b.close for b in closed_bars]
+                    rsi_val = ind_rsi_latest(closes, 14) if len(closes) >= 15 else None
+                    if rsi_val is not None:
+                        await indicator_cache.update_rsi(sym, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
+                    for p in (21, 50, 200):
+                        if len(closes) >= p:
+                            ema_val = ind_ema_latest(closes, p)
+                            if ema_val is not None:
+                                await indicator_cache.update_ema(sym, tf.value, int(p), float(ema_val), ts_ms=last_closed.time)
+                    macd_trip = ind_macd_latest(closes, 12, 26, 9)
+                    if macd_trip is not None:
+                        macd_v, sig_v, hist_v = macd_trip
+                        await indicator_cache.update_macd(sym, tf.value, 12, 26, 9, float(macd_v), float(sig_v), float(hist_v), ts_ms=last_closed.time)
+                    processed += 1
+                except Exception:
+                    continue
+        logger.info("✅ indicator_warmup_done | processed=%d", processed)
+    except Exception as e:
+        print(f"❌ Indicator warmup error: {e}")
 
 # Ensure logging has timestamps across the app
 configure_logging()
@@ -87,12 +128,18 @@ async def lifespan(app: FastAPI):
     # Start daily morning brief scheduler (09:00 IST)
     daily_task = asyncio.create_task(daily_mail_scheduler())
 
+    # Warm populate indicator cache on startup (best-effort, non-blocking)
+    try:
+        asyncio.create_task(_warm_populate_indicator_cache())
+    except Exception:
+        pass
+
     # Start minute alerts scheduler (fetch + evaluate RSI Tracker) — boundary-aligned
     global _minute_scheduler_task, _minute_scheduler_running
     _minute_scheduler_running = True
     _minute_scheduler_task = asyncio.create_task(_minute_alerts_scheduler())
     
-    # Start 10s closed-bar indicator poller
+    # Start 10s closed-bar indicator poller (always computes across all allowed symbols/timeframes)
     global _indicator_scheduler_task
     _indicator_scheduler_task = asyncio.create_task(_indicator_scheduler())
     # Start WS metrics reporter (dual-run soak)
@@ -447,19 +494,16 @@ async def _indicator_scheduler() -> None:
             async with _connected_clients_lock:
                 clients = list(_connected_clients)
 
-            # Build the unique set of (symbol, timeframe) needing indicators
+            # Build the unique set of (symbol, timeframe) to compute indicators across ALL allowed symbols/timeframes
             pairs: Set[Tuple[str, Timeframe]] = set()
-            has_v2_broadcast = any(getattr(c, "v2_broadcast", False) for c in clients)
-            if has_v2_broadcast:
-                # Indicators: process all allowed symbols across selected timeframes
-                baseline_tfs: List[Timeframe] = _rollout_timeframes()
+            baseline_tfs: List[Timeframe] = _rollout_timeframes()
+            try:
                 symbols_for_rollout: List[str] = list(ALLOWED_WS_SYMBOLS)
-                for sym in symbols_for_rollout:
-                    for tf in baseline_tfs:
-                        pairs.add((sym, tf))
-            else:
-                # No v2 broadcast clients → do not compute indicators
-                pairs = set()
+            except Exception:
+                symbols_for_rollout = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+            for sym in symbols_for_rollout:
+                for tf in baseline_tfs:
+                    pairs.add((sym, tf))
 
             processed = 0
             error_count = 0

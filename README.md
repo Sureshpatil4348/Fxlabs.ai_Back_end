@@ -26,6 +26,7 @@ A high-performance, real-time financial market data streaming service built with
 ### Key Features
 
 - **Real-time Data Streaming**: Live tick and indicator data via WebSocket (broadcast-only)
+- **Cache-first Indicator Access**: REST `/api/indicator` serves latest indicator values from an in-memory cache populated on startup and updated on every closed-candle cycle
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
