@@ -353,7 +353,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 07 | WS-3 | WebSocket | Add `initial_indicators` + `indicator_update` shapes | Backend | DONE | JSON contracts finalized | `server.py`,`REARCHITECTING.md` | IND-1,SCHED-1 | Include `bar_time` ms |
 | 08 | WS-V2-2 | WebSocket v2 | Add `market_summary` periodic sender | Backend | DONE | `{daily_change_pct}` every 15s + included in ticks | `server.py`,`app/mt5_utils.py` | D1 fetch helper | Lightweight payload |
 | 09 | DEBUG-1 | Debug | Align liveRSI to cache; single source numbers | Backend | DONE | Log when M1 indicator updates | `server.py`,`app/mt5_utils.py` | SCHED-1 | Removed duplicate helper; logs from indicator scheduler |
-| 10 | OBS-1 | Observability | Add metrics + structured logs | Backend | TODO | Poll durations; items; latencies | `server.py` | SCHED-1 | JSON logs optional |
+| 10 | OBS-1 | Observability | Add metrics + structured logs | Backend | DONE | Poll durations; items; latencies | `server.py` | SCHED-1 | JSON logs optional |
 | 11 | SEC-1 | Security | WS input validation + allowlists | Backend | TODO | Validate symbol/tf; caps; optional auth | `server.py` | None | Mirror REST auth policy |
 | 12 | ALERT-1 | Alerts | Refactor RSI Tracker to read cache | Backend | TODO | No re-compute; closed-bar only | `app/rsi_tracker_alert_service.py` | CACHE-1 | Keep cooldown logic |
 | 13 | ALERT-2 | Alerts | Refactor RSI Correlation to read cache | Backend | TODO | Ring buffers; warm-up fallback | `app/rsi_correlation_tracker_alert_service.py` | CACHE-1 | Pair handling |

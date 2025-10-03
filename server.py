@@ -351,8 +351,10 @@ async def _indicator_scheduler() -> None:
     """
     try:
         poll_interval_s = 10.0
+        logger = logging.getLogger("obs.indicator")
         while True:
             started_at = datetime.now(timezone.utc)
+            poll_time_ms = int(started_at.timestamp() * 1000)
             # Snapshot clients safely
             async with _connected_clients_lock:
                 clients = list(_connected_clients)
@@ -377,6 +379,7 @@ async def _indicator_scheduler() -> None:
                         continue
 
             processed = 0
+            error_count = 0
             for symbol, tf in pairs:
                 try:
                     # Fetch recent OHLC and gate on last closed bar
@@ -421,6 +424,33 @@ async def _indicator_scheduler() -> None:
 
                     _indicator_last_bar[key] = last_closed.time
                     processed += 1
+
+                    # Structured per-update metrics (DEBUG level): latency and values snapshot
+                    try:
+                        latency_ms = max(poll_time_ms - int(last_closed.time), 0)
+                        item_log = {
+                            "event": "indicator_item",
+                            "sym": symbol,
+                            "tf": tf.value,
+                            "bar_time": int(last_closed.time),
+                            "latency_ms": int(latency_ms),
+                            "rsi14": (float(rsi_val) if rsi_val is not None else None),
+                            "ema": {k: (float(v) if v is not None else None) for k, v in ema_vals.items()},
+                            "macd": (
+                                {
+                                    "macd": float(macd_trip[0]),
+                                    "signal": float(macd_trip[1]),
+                                    "hist": float(macd_trip[2]),
+                                }
+                                if macd_trip
+                                else None
+                            ),
+                        }
+                        # JSON logs optional; emit at DEBUG to avoid INFO spam
+                        logger.debug(orjson.dumps(item_log).decode("utf-8"))
+                    except Exception:
+                        # Never allow observability to break scheduling
+                        pass
 
                     # Live RSI debug log for M1 closed bars using cache-aligned numbers
                     try:
@@ -489,14 +519,30 @@ async def _indicator_scheduler() -> None:
                                 # Never let a single client block the scheduler
                                 continue
                 except Exception as e:
+                    error_count += 1
                     print(f"❌ Indicator scheduler error for {symbol} {tf.value}: {e}")
                     continue
 
             ended_at = datetime.now(timezone.utc)
             try:
                 elapsed_ms = int((ended_at - started_at).total_seconds() * 1000)
-                logger = logging.getLogger(__name__)
-                logger.info("🧮 indicator_poll | pairs=%d duration_ms=%d", len(pairs), elapsed_ms)
+                # Human-friendly summary
+                logging.getLogger(__name__).info(
+                    "🧮 indicator_poll | pairs=%d processed=%d errors=%d duration_ms=%d",
+                    len(pairs),
+                    processed,
+                    error_count,
+                    elapsed_ms,
+                )
+                # Structured cycle metrics (DEBUG)
+                cycle_log = {
+                    "event": "indicator_poll",
+                    "pairs_total": len(pairs),
+                    "processed": processed,
+                    "errors": error_count,
+                    "duration_ms": elapsed_ms,
+                }
+                logger.debug(orjson.dumps(cycle_log).decode("utf-8"))
             except Exception:
                 pass
 

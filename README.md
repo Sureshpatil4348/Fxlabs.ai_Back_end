@@ -1100,6 +1100,22 @@ The system provides comprehensive logging for:
 - API request/response cycles
 - Performance metrics
 
+#### Indicator Poller Observability (OBS-1)
+- Human-readable cycle summary at INFO:
+  - `🧮 indicator_poll | pairs=<n> processed=<m> errors=<k> duration_ms=<t>`
+- Structured JSON logs at DEBUG via logger `obs.indicator`:
+  - Per-item update (one log per processed bar):
+    ```json
+    {"event":"indicator_item","sym":"EURUSDm","tf":"5M","bar_time":1696229940000,"latency_ms":85,"rsi14":51.23,"ema":{"21":1.06871,"50":1.06855,"200":1.06780},"macd":{"macd":0.00012,"signal":0.00010,"hist":0.00002}}
+    ```
+  - Per-cycle metrics:
+    ```json
+    {"event":"indicator_poll","pairs_total":49,"processed":39,"errors":0,"duration_ms":134}
+    ```
+- Notes:
+  - JSON logs are emitted at DEBUG to avoid INFO spam. Set `LOG_LEVEL=DEBUG` to enable.
+  - Observability errors never break scheduling; metrics/logging are best-effort only.
+
 - #### Live RSI Debugging cadence (M1 closed‑bar, cache‑aligned)
 - `🧭 liveRSI` logs are emitted directly from the indicator scheduler when it detects a new closed `1M` bar for `BTCUSDm` only. Values are sourced from the same indicator pipeline and cache used by alerts and WebSocket indicator streaming (single source of truth).
 - When `LIVE_RSI_DEBUGGING=true`, logs appear shortly after each M1 close (sub‑100 ms latency target).
