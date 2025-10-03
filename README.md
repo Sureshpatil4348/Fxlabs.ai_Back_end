@@ -1,6 +1,6 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-WebSocket v2: Use `/market-v2` for live ticks and indicator updates (broadcast-all baseline). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are no-ops (ignored). Ping/pong is supported for keepalive.
+WebSocket v2: Use `/market-v2` for live ticks and indicator updates (broadcast-all baseline). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe` is optional for requesting a one-time `initial_indicators` snapshot per symbol×timeframe (no OHLC snapshots in v2). `unsubscribe` has no effect in broadcast mode. Ping/pong is supported for keepalive.
 
 Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, coalesced; OHLC is not streamed to clients in v2). No EA or external bridge required.
 
@@ -279,7 +279,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 #### Market Data WebSocket v2 (`/market-v2`) — preferred
 - **URL**: `ws://localhost:8000/market-v2`
 - **Purpose**: Real-time tick and indicator streaming (no OHLC streaming to clients)
-- **Features**: Broadcast-all baseline (symbols/timeframes). Subscribe/unsubscribe messages are ignored in v2; snapshots on demand are not supported.
+- **Features**: Broadcast-all baseline (symbols/timeframes). Optional snapshot request via `subscribe` for `initial_indicators`; `unsubscribe` has no effect in broadcast mode.
 
 Note on closed-bar guarantees:
 - The server emits an `is_closed=true` OHLC bar at every timeframe boundary (checked at ~500 ms resolution), including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.
@@ -297,34 +297,21 @@ Connected discovery message includes capabilities and indicators registry:
 }
 ```
 
-Extended subscribe supports price basis shaping (default: `last`):
+Optional snapshot request (indicators only):
 
 ```json
 {
   "action": "subscribe",
-  "symbol": "EURUSD",
-  "timeframe": "1M",
-  "data_types": ["ticks", "indicators"],
-  "price_basis": "bid"
+  "symbol": "EURUSDm",
+  "timeframe": "5M",
+  "data_types": ["indicators"]
 }
 ```
 
-Multi-timeframe subscriptions per symbol:
-- A single WebSocket connection can subscribe to the same `symbol` across multiple `timeframe`s concurrently (e.g., `1M`, `5M`, `1H`, `4H`).
-- Send a separate `subscribe` message per timeframe; each will stream its own initial snapshot, high‑frequency `ohlc_live` updates while the candle is forming, and a boundary `ohlc_update` when the candle closes.
-- To unsubscribe a specific symbol×timeframe, send:
-
-```json
-{ "action": "unsubscribe", "symbol": "EURUSD", "timeframe": "4H" }
-```
-
-- To unsubscribe all timeframes for a symbol, omit `timeframe`:
-
-```json
-{ "action": "unsubscribe", "symbol": "EURUSD" }
-```
-
-// OHLC payload examples removed for v2; OHLC is server-side only for indicators/alerts.
+Notes:
+- Snapshot subscribe returns a one-time `initial_indicators` for the requested key.
+- `unsubscribe` messages are accepted but have no effect in broadcast mode.
+- OHLC is server-side only for indicators/alerts (no OHLC streaming in v2).
 
 Internal alert tick_data shape:
 
@@ -728,18 +715,20 @@ Cache policy (weekly merge & dedup):
 const ws = new WebSocket('ws://localhost:8000/market-v2');
 
 ws.onopen = () => {
-    // Subscribe to EURUSD 1-minute data (alerts enforce 5M+ only)
-    ws.send(JSON.stringify({
-        action: 'subscribe',
-        symbol: 'EURUSD',
-        timeframe: '1M',
-        data_types: ['ticks', 'indicators']
-    }));
+  console.log('Connected to broadcast feed');
+  // Optional: request a one-time indicators snapshot for a specific key
+  // ws.send(JSON.stringify({ action: 'subscribe', symbol: 'EURUSDm', timeframe: '5M', data_types: ['indicators'] }));
 };
 
 ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    console.log('Received:', data);
+  const data = JSON.parse(event.data);
+  if (data.type === 'ticks') {
+    console.log('Ticks:', data.data);
+  } else if (data.type === 'indicator_update' || data.type === 'initial_indicators') {
+    console.log('Indicators:', data);
+  } else {
+    console.log('Other:', data);
+  }
 };
 ```
 
@@ -770,7 +759,7 @@ curl -H "X-API-Key: your_token" \
 
 3. **Client Connection Flow**:
    ```
-   WebSocket Connection → Authentication → Subscription → Data Streaming
+   WebSocket Connection → Authentication → (Optional) Snapshot Request → Data Streaming
    ```
 
 ### Caching Strategy
@@ -971,7 +960,7 @@ The modular structure isolates responsibilities while preserving all existing be
 ### MT5 Integration
 - Full MT5 integration, data fetch, WebSocket streaming, alerts math, and live RSI debugging are documented in `MT5.md`.
 - Single shared MT5 session with unified OHLC helpers/caching in `app/mt5_utils.py` (no duplication).
-- WebSocket endpoints: `/ws/market` (preferred) and `/ws/ticks` (legacy). See `test_websocket_client.py` for usage.
+ - WebSocket endpoint: `/market-v2` (broadcast-only). See `test_websocket_client.py` for usage.
 
 ### New Helpers
 

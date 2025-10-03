@@ -104,7 +104,7 @@
     <h1>🔌 MT5 Market Data WebSocket Test</h1>
     
     <div class="container">
-        <h2>Connection & Subscription</h2>
+        <h2>Connection & Broadcast</h2>
         
         <div class="controls">
             <input type="text" id="wsUrl" value="ws://localhost:8000/market-v2" placeholder="WebSocket URL">
@@ -113,7 +113,7 @@
         </div>
         
         <div class="controls">
-            <input type="text" id="symbol" value="EURUSD" placeholder="Symbol">
+            <input type="text" id="symbol" value="EURUSDm" placeholder="Symbol (broker-suffixed)">
             <select id="timeframe">
                 <option value="1M">1 Minute</option>
                 <option value="5M">5 Minutes</option>
@@ -124,10 +124,7 @@
                 <option value="1D">1 Day</option>
                 <option value="1W">1 Week</option>
             </select>
-            <label><input type="checkbox" id="ticksEnabled" checked> Ticks</label>
-            <label><input type="checkbox" id="ohlcEnabled" checked> OHLC</label>
-            <button id="subscribeBtn" onclick="subscribe()" disabled>Subscribe</button>
-            <button id="unsubscribeBtn" onclick="unsubscribe()" disabled>Unsubscribe</button>
+            <button id="snapshotBtn" onclick="requestSnapshot()" disabled>Request Indicators Snapshot</button>
         </div>
         
         <div id="status" class="status disconnected">Disconnected</div>
@@ -141,8 +138,8 @@
                 <div id="tickData" class="tick-data">No tick data yet...</div>
             </div>
             <div class="data-section">
-                <h3>📊 Latest OHLC</h3>
-                <div id="ohlcData" class="ohlc-data">No OHLC data yet...</div>
+                <h3>📊 Latest Indicators</h3>
+                <div id="indicatorData" class="ohlc-data">No indicator data yet...</div>
             </div>
         </div>
     </div>
@@ -158,7 +155,7 @@
     <script>
         let ws = null;
         let isConnected = false;
-        let currentSubscription = null;
+        
 
         function log(message) {
             const logs = document.getElementById('logs');
@@ -171,8 +168,7 @@
             const status = document.getElementById('status');
             const connectBtn = document.getElementById('connectBtn');
             const disconnectBtn = document.getElementById('disconnectBtn');
-            const subscribeBtn = document.getElementById('subscribeBtn');
-            const unsubscribeBtn = document.getElementById('unsubscribeBtn');
+            const snapshotBtn = document.getElementById('snapshotBtn');
 
             isConnected = connected;
             
@@ -181,15 +177,13 @@
                 status.className = 'status connected';
                 connectBtn.disabled = true;
                 disconnectBtn.disabled = false;
-                subscribeBtn.disabled = false;
+                snapshotBtn.disabled = false;
             } else {
                 status.textContent = 'Disconnected';
                 status.className = 'status disconnected';
                 connectBtn.disabled = false;
                 disconnectBtn.disabled = true;
-                subscribeBtn.disabled = true;
-                unsubscribeBtn.disabled = true;
-                currentSubscription = null;
+                snapshotBtn.disabled = true;
             }
         }
 
@@ -231,46 +225,18 @@
             }
         }
 
-        function subscribe() {
+        function requestSnapshot() {
             if (!isConnected) return;
-            
             const symbol = document.getElementById('symbol').value.toUpperCase();
             const timeframe = document.getElementById('timeframe').value;
-            const ticksEnabled = document.getElementById('ticksEnabled').checked;
-            const ohlcEnabled = document.getElementById('ohlcEnabled').checked;
-            
-            const dataTypes = [];
-            if (ticksEnabled) dataTypes.push('ticks');
-            if (ohlcEnabled) dataTypes.push('ohlc');
-            
-            if (dataTypes.length === 0) {
-                alert('Please select at least one data type (Ticks or OHLC)');
-                return;
-            }
-            
             const subscription = {
                 action: 'subscribe',
                 symbol: symbol,
                 timeframe: timeframe,
-                data_types: dataTypes
+                data_types: ['indicators']
             };
-            
-            log(`📤 Subscribing: ${JSON.stringify(subscription)}`);
+            log(`📤 Requesting snapshot: ${JSON.stringify(subscription)}`);
             ws.send(JSON.stringify(subscription));
-            currentSubscription = symbol;
-            document.getElementById('unsubscribeBtn').disabled = false;
-        }
-
-        function unsubscribe() {
-            if (!isConnected || !currentSubscription) return;
-            
-            const message = {
-                action: 'unsubscribe',
-                symbol: currentSubscription
-            };
-            
-            log(`📤 Unsubscribing: ${JSON.stringify(message)}`);
-            ws.send(JSON.stringify(message));
         }
 
         function handleMessage(data) {
@@ -284,28 +250,18 @@
                     }
                     break;
                     
-                case 'subscribed':
-                    log(`✅ Subscribed to ${data.symbol} (${data.timeframe}) - ${data.data_types.join(', ')}`);
-                    break;
-                    
-                case 'unsubscribed':
-                    log(`❌ Unsubscribed from ${data.symbol}`);
-                    currentSubscription = null;
-                    document.getElementById('unsubscribeBtn').disabled = true;
-                    break;
-                    
-                case 'initial_ohlc':
-                    log(`📊 Initial OHLC: ${data.data.length} bars for ${data.symbol} (${data.timeframe})`);
-                    displayOHLCData(data.data.slice(-5)); // Show last 5 bars
-                    break;
-                    
                 case 'ticks':
                     displayTickData(data.data);
                     break;
                     
-                case 'ohlc_update':
-                    log(`📊 OHLC Update: ${data.data.symbol} - Close: ${data.data.close}`);
-                    displayOHLCData([data.data]);
+                case 'initial_indicators':
+                    log(`📊 Initial Indicators for ${data.symbol} (${data.timeframe})`);
+                    displayIndicatorData(data);
+                    break;
+
+                case 'indicator_update':
+                    log(`📈 Indicator Update for ${data.symbol} (${data.timeframe})`);
+                    displayIndicatorData(data);
                     break;
                     
                 case 'pong':
@@ -338,21 +294,21 @@
             }
         }
 
-        function displayOHLCData(ohlcBars) {
-            const ohlcDiv = document.getElementById('ohlcData');
-            let html = '';
-            
-            ohlcBars.forEach(bar => {
-                const time = new Date(bar.time).toLocaleString();
-                html += `${bar.symbol} (${bar.timeframe}): O=${bar.open} H=${bar.high} L=${bar.low} C=${bar.close} V=${bar.volume} @ ${time}\n`;
-            });
-            
-            ohlcDiv.textContent = html + ohlcDiv.textContent;
-            
-            // Keep only last 5 bars
-            const lines = ohlcDiv.textContent.split('\n');
-            if (lines.length > 5) {
-                ohlcDiv.textContent = lines.slice(0, 5).join('\n');
+        function displayIndicatorData(indMsg) {
+            const indDiv = document.getElementById('indicatorData');
+            const time = new Date(indMsg.data.bar_time).toLocaleString();
+            const rsi = indMsg.data.indicators?.rsi || {};
+            const ema = indMsg.data.indicators?.ema || {};
+            const macd = indMsg.data.indicators?.macd || {};
+            const header = `${indMsg.symbol} (${indMsg.timeframe}) @ ${time}`;
+            const rsiStr = Object.entries(rsi).map(([p,v]) => `RSI(${p})=${v}`).join(' ');
+            const emaStr = Object.entries(ema).map(([p,v]) => `EMA${p}=${v}`).join(' ');
+            const macdStr = macd.macd !== undefined ? `MACD=${macd.macd} SIG=${macd.signal} HIST=${macd.hist}` : '';
+            const line = `${header} | ${rsiStr} ${emaStr} ${macdStr}\n`;
+            indDiv.textContent = line + indDiv.textContent;
+            const lines = indDiv.textContent.split('\n');
+            if (lines.length > 10) {
+                indDiv.textContent = lines.slice(0, 10).join('\n');
             }
         }
 
