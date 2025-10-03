@@ -57,6 +57,7 @@ from app.mt5_utils import (
     update_ohlc_cache,
     get_cached_ohlc,
     get_daily_change_pct_bid,
+    canonicalize_symbol,
 )
 from app.rsi_utils import calculate_rsi_series, closed_closes
 from app.indicator_cache import indicator_cache
@@ -212,9 +213,9 @@ ALLOWED_EMAIL_DOMAINS = [domain.strip().lower() for domain in ALLOWED_EMAIL_DOMA
 # WebSocket security and shaping caps (environment configurable)
 # Allowed symbols: defaults to RSI_SUPPORTED_SYMBOLS; override via WS_ALLOWED_SYMBOLS (comma-separated, broker-suffixed)
 _ws_allowed_symbols_env = [
-    s.strip().upper() for s in os.environ.get("WS_ALLOWED_SYMBOLS", "").split(",") if s.strip()
+    canonicalize_symbol(s) for s in os.environ.get("WS_ALLOWED_SYMBOLS", "").split(",") if s.strip()
 ]
-ALLOWED_WS_SYMBOLS: Set[str] = set(_ws_allowed_symbols_env or [s.upper() for s in RSI_SUPPORTED_SYMBOLS])
+ALLOWED_WS_SYMBOLS: Set[str] = set(_ws_allowed_symbols_env or [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
 WS_MAX_SYMBOLS: int = int(os.environ.get("WS_MAX_SYMBOLS", "10"))
 WS_MAX_SUBSCRIPTIONS: int = int(os.environ.get("WS_MAX_SUBSCRIPTIONS", "32"))
 WS_MAX_TFS_PER_SYMBOL: int = int(os.environ.get("WS_MAX_TFS_PER_SYMBOL", "7"))
@@ -257,11 +258,11 @@ def _rollout_timeframes() -> List[Timeframe]:
 
 def _rollout_symbols() -> List[str]:
     # If explicitly provided, honor env list (filtered to supported symbols); else use default supported list
-    base = [s.upper() for s in (_rollout_symbols_env or RSI_SUPPORTED_SYMBOLS)]
+    base = [canonicalize_symbol(s) for s in (_rollout_symbols_env or RSI_SUPPORTED_SYMBOLS)]
     # Filter to allowlist to protect MT5 IPC
     filtered = [s for s in base if s in set(RSI_SUPPORTED_SYMBOLS)]
     if not filtered:
-        filtered = list(RSI_SUPPORTED_SYMBOLS)
+        filtered = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
     return filtered
 
 def require_api_token_header(x_api_key: Optional[str] = None):
@@ -747,7 +748,7 @@ def get_ohlc(symbol: str, timeframe: str = Query("5M"), count: int = Query(250, 
     """Get OHLC data for a symbol and timeframe"""
     try:
         tf = Timeframe(timeframe)
-        sym = symbol.upper()
+        sym = canonicalize_symbol(symbol)
         ohlc_data = get_ohlc_data(sym, tf, count)
         return {
             "symbol": sym,
@@ -774,7 +775,7 @@ def get_rsi(
     """
     try:
         tf = Timeframe(timeframe)
-        sym = symbol.upper()
+        sym = canonicalize_symbol(symbol)
         ohlc_data = get_ohlc_data(sym, tf, count)
         # Use only closed bars
         closed = [bar for bar in ohlc_data if getattr(bar, "is_closed", None) is not False]
@@ -816,7 +817,7 @@ def get_rsi(
 
 @app.get("/api/tick/{symbol}")
 def get_tick(symbol: str, x_api_key: Optional[str] = Depends(require_api_token_header)):
-    sym = symbol.upper()
+    sym = canonicalize_symbol(symbol)
     ensure_symbol_selected(sym)
     info = mt5.symbol_info_tick(sym)
     tick = _to_tick(sym, info)

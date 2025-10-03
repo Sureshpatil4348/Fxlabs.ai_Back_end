@@ -26,7 +26,28 @@ logger = logging.getLogger(__name__)
 _live_rsi_last_logged: Dict[str, int] = {}
 
 
+def canonicalize_symbol(symbol: str) -> str:
+    """Return canonical MT5 symbol form.
+
+    Rules:
+    - Trim whitespace
+    - Uppercase core instrument letters
+    - Force trailing broker suffix 'm' to lowercase when present
+    - If no suffix, return fully uppercased symbol
+    """
+    try:
+        s = str(symbol).strip()
+        if not s:
+            return s
+        if s[-1] in ("m", "M"):
+            return s[:-1].upper() + "m"
+        return s.upper()
+    except Exception:
+        return str(symbol)
+
+
 def ensure_symbol_selected(symbol: str) -> None:
+    symbol = canonicalize_symbol(symbol)
     info = mt5.symbol_info(symbol)
     if info is None:
         all_symbols = mt5.symbols_get()
@@ -77,6 +98,7 @@ def _to_tick(symbol: str, info) -> Optional[Tick]:
 
 def get_current_tick(symbol: str) -> Optional[Tick]:
     """Return the current tick for a symbol as a Tick model, or None if unavailable."""
+    symbol = canonicalize_symbol(symbol)
     ensure_symbol_selected(symbol)
     info = mt5.symbol_info_tick(symbol)
     return _to_tick(symbol, info)
@@ -171,6 +193,7 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
 
 
 def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[OHLC]:
+    symbol = canonicalize_symbol(symbol)
     ensure_symbol_selected(symbol)
     mt5_timeframe = MT5_TIMEFRAMES.get(timeframe)
     if mt5_timeframe is None:
@@ -188,6 +211,7 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[O
 
 
 def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
+    symbol = canonicalize_symbol(symbol)
     data = get_ohlc_data(symbol, timeframe, 1)
     return data[0] if data else None
 
@@ -236,6 +260,7 @@ def get_daily_change_pct_bid(symbol: str) -> Optional[float]:
     where D1_reference is today's D1 open (bid) if today; else previous D1 close (bid).
     """
     try:
+        symbol = canonicalize_symbol(symbol)
         ensure_symbol_selected(symbol)
         tick = get_current_tick(symbol)
         if tick is None or tick.bid is None:
@@ -302,6 +327,7 @@ global_ohlc_cache: Dict[str, Dict[str, deque]] = {}
 
 def update_ohlc_cache(symbol: str, timeframe: Timeframe, max_bars: int = 250):
     global global_ohlc_cache
+    symbol = canonicalize_symbol(symbol)
     if symbol not in global_ohlc_cache:
         global_ohlc_cache[symbol] = {}
     if timeframe.value not in global_ohlc_cache[symbol]:
@@ -318,6 +344,7 @@ def update_ohlc_cache(symbol: str, timeframe: Timeframe, max_bars: int = 250):
 
 def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 250) -> List[OHLC]:
     global global_ohlc_cache
+    symbol = canonicalize_symbol(symbol)
     if symbol not in global_ohlc_cache:
         global_ohlc_cache[symbol] = {}
     if timeframe.value not in global_ohlc_cache[symbol]:

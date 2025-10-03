@@ -481,6 +481,12 @@ Notes:
 - `times_*` arrays align 1:1 with `rsi[]` and correspond to the closed bars beginning at index `period` in the closed OHLC sequence.
 - For exact parity with MT5, request the broker‑suffixed symbol (e.g., `EURUSDm`).
 
+Symbol normalization (canonicalization):
+- Input symbols are canonicalized server‑side to prevent common mistakes.
+- Rules: trim whitespace, uppercase core instrument (e.g., `eurusd` → `EURUSD`), and force trailing broker suffix to lowercase `m` when present (`EURUSDM` → `EURUSDm`).
+- Environment allowlists (e.g., `WS_ALLOWED_SYMBOLS`) and rollout configs are normalized using the same rules.
+- Errors like `Unknown symbol: 'EURUSDM'. Similar symbols found: ['EURUSDm']` are automatically avoided; the server now resolves `...M` to `...m`.
+
 #### Email Template (RSI)
 - Compact, per‑pair card format.
 - Fields per card:
