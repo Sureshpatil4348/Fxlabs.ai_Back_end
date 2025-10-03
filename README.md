@@ -486,6 +486,26 @@ Note: `bar_time` is epoch milliseconds (ms) using broker server time.
   - `ok_ticks`, `fail_ticks`, `ticks_items` (sum of items sent in tick lists)
   - `ok_indicator_update`, `fail_indicator_update`
 
+#### Indicator Rollout (Gradual Enablement)
+
+- Initial rollout limits indicator processing and v2 broadcast coverage to a small baseline for safety and measurement.
+- Defaults: 10 symbols × 3 timeframes (M1,M5,M15). Override with environment variables:
+
+```env
+# Max number of symbols included in indicator poller and v2 broadcast baseline
+INDICATOR_ROLLOUT_MAX_SYMBOLS=10
+
+# Timeframes to include (comma-separated). Accepts enum values (1M,5M,...) or names (M1,M5,...). Use ALL to include full baseline (M1,M5,M15,M30,H1,H4,D1).
+INDICATOR_ROLLOUT_TFS=M1,M5,M15
+
+# Optional explicit symbol list (comma-separated, broker-suffixed). If not set, uses RSI_SUPPORTED_SYMBOLS.
+INDICATOR_ROLLOUT_SYMBOLS=EURUSDm,GBPUSDm,USDJPYm,XAUUSDm,BTCUSDm
+```
+
+Observability:
+- The indicator scheduler logs per-cycle duration and CPU time: `duration_ms` and `cpu_ms`.
+- Structured JSON on `obs.indicator` includes: `{"event":"indicator_poll","pairs_total":n,"processed":m,"errors":k,"duration_ms":t,"cpu_ms":c}`.
+
 Example INFO log line:
 
 ```text

@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Tuple, Any
 import re
+import time
 
 try:
     import MetaTrader5 as mt5
@@ -235,6 +236,46 @@ if _ws_allowed_tfs_env:
 else:
     ALLOWED_WS_TIMEFRAMES = set(Timeframe)
 
+# Indicator rollout (gradual enablement) — defaults: 10 symbols × 3 timeframes (M1,M5,M15)
+_rollout_symbols_env = [
+    s.strip().upper() for s in os.environ.get("INDICATOR_ROLLOUT_SYMBOLS", "").split(",") if s.strip()
+]
+INDICATOR_ROLLOUT_MAX_SYMBOLS: int = int(os.environ.get("INDICATOR_ROLLOUT_MAX_SYMBOLS", "10"))
+_rollout_tfs_env = [
+    t.strip().upper() for t in os.environ.get("INDICATOR_ROLLOUT_TFS", "M1,M5,M15").split(",") if t.strip()
+]
+
+def _rollout_timeframes() -> List[Timeframe]:
+    # Allow special token 'ALL' to use full baseline
+    if any(token in ("ALL", "*", "ANY") for token in _rollout_tfs_env):
+        return [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1]
+    tfs: List[Timeframe] = []
+    seen: Set[str] = set()
+    for token in _rollout_tfs_env:
+        tf: Optional[Timeframe] = None
+        try:
+            tf = Timeframe(token)
+        except Exception:
+            try:
+                tf = Timeframe[token]
+            except Exception:
+                tf = None
+        if tf and tf.name not in seen:
+            seen.add(tf.name)
+            tfs.append(tf)
+    if not tfs:
+        tfs = [Timeframe.M1, Timeframe.M5, Timeframe.M15]
+    return tfs
+
+def _rollout_symbols() -> List[str]:
+    # If explicitly provided, honor env list (filtered to supported symbols); else use default supported list
+    base = [s.upper() for s in (_rollout_symbols_env or RSI_SUPPORTED_SYMBOLS)]
+    # Filter to allowlist to protect MT5 IPC
+    filtered = [s for s in base if s in set(RSI_SUPPORTED_SYMBOLS)]
+    if not filtered:
+        filtered = list(RSI_SUPPORTED_SYMBOLS)
+    return filtered
+
 def require_api_token_header(x_api_key: Optional[str] = None):
     # For REST: expect header "X-API-Key"
     if API_TOKEN and x_api_key != API_TOKEN:
@@ -411,6 +452,7 @@ async def _indicator_scheduler() -> None:
         logger = logging.getLogger("obs.indicator")
         while True:
             started_at = datetime.now(timezone.utc)
+            cpu_t0 = time.process_time()
             poll_time_ms = int(started_at.timestamp() * 1000)
             # Snapshot clients safely
             async with _connected_clients_lock:
@@ -420,8 +462,9 @@ async def _indicator_scheduler() -> None:
             pairs: Set[Tuple[str, Timeframe]] = set()
             has_v2_broadcast = any(getattr(c, "v2_broadcast", False) for c in clients)
             if has_v2_broadcast:
-                baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1]
-                for sym in RSI_SUPPORTED_SYMBOLS:
+                baseline_tfs: List[Timeframe] = _rollout_timeframes()
+                symbols_for_rollout = _rollout_symbols()
+                for sym in symbols_for_rollout[:INDICATOR_ROLLOUT_MAX_SYMBOLS]:
                     for tf in baseline_tfs:
                         pairs.add((sym, tf))
             else:
@@ -597,15 +640,18 @@ async def _indicator_scheduler() -> None:
                     continue
 
             ended_at = datetime.now(timezone.utc)
+            cpu_t1 = time.process_time()
             try:
                 elapsed_ms = int((ended_at - started_at).total_seconds() * 1000)
+                cpu_ms = int((cpu_t1 - cpu_t0) * 1000)
                 # Human-friendly summary
                 logging.getLogger(__name__).info(
-                    "🧮 indicator_poll | pairs=%d processed=%d errors=%d duration_ms=%d",
+                    "🧮 indicator_poll | pairs=%d processed=%d errors=%d duration_ms=%d cpu_ms=%d",
                     len(pairs),
                     processed,
                     error_count,
                     elapsed_ms,
+                    cpu_ms,
                 )
                 # Structured cycle metrics (DEBUG)
                 cycle_log = {
@@ -614,6 +660,7 @@ async def _indicator_scheduler() -> None:
                     "processed": processed,
                     "errors": error_count,
                     "duration_ms": elapsed_ms,
+                    "cpu_ms": cpu_ms,
                 }
                 logger.debug(orjson.dumps(cycle_log).decode("utf-8"))
             except Exception:
@@ -1072,9 +1119,13 @@ class WSClient:
         
         # Also include legacy tick subscriptions
         tick_symbols.update(self.symbols)
-        # v2 broadcast: include all baseline symbols
+        # v2 broadcast: include rollout baseline symbols (gradual enablement)
         if self.v2_broadcast:
-            tick_symbols.update(RSI_SUPPORTED_SYMBOLS)
+            try:
+                syms = _rollout_symbols()
+                tick_symbols.update(syms[:INDICATOR_ROLLOUT_MAX_SYMBOLS])
+            except Exception:
+                tick_symbols.update(RSI_SUPPORTED_SYMBOLS)
         
         if not tick_symbols:
             return
