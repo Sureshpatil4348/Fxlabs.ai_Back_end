@@ -391,7 +391,9 @@ Live push when a new bar is detected by the 10s poller:
     "indicators": {
       "rsi": {"14": 51.23},
       "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
-      "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
+      "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002},
+      "utbot": {"baseline": 1.06860, "stop": 1.06920, "direction": -1, "flip": 0},
+      "ichimoku": {"tenkan": 1.06880, "kijun": 1.06895, "senkou_a": 1.06890, "senkou_b": 1.06910, "chikou": 1.06840}
     }
   }
 }
@@ -413,6 +415,7 @@ Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
 - Indicators now process for all allowed symbols (defaults to full `RSI_SUPPORTED_SYMBOLS`).
 - Timeframes are fixed to the full set: `M1, M5, M15, M30, H1, H4, D1, W1` (no env control).
+- Indicator payload coverage: RSI/EMA/MACD/UTBot/Ichimoku (closed bars only).
 
 Observability:
 - The indicator scheduler logs per-cycle duration and CPU time: `duration_ms` and `cpu_ms`.

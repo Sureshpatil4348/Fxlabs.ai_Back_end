@@ -304,7 +304,11 @@
             const rsiStr = Object.entries(rsi).map(([p,v]) => `RSI(${p})=${v}`).join(' ');
             const emaStr = Object.entries(ema).map(([p,v]) => `EMA${p}=${v}`).join(' ');
             const macdStr = macd.macd !== undefined ? `MACD=${macd.macd} SIG=${macd.signal} HIST=${macd.hist}` : '';
-            const line = `${header} | ${rsiStr} ${emaStr} ${macdStr}\n`;
+            const utbot = indMsg.data.indicators?.utbot || {};
+            const ich = indMsg.data.indicators?.ichimoku || {};
+            const utStr = (utbot.baseline !== undefined) ? `UTBOT base=${utbot.baseline} stop=${utbot.stop} dir=${utbot.direction} flip=${utbot.flip}` : '';
+            const ichStr = (ich.tenkan !== undefined) ? `ICH Tenk=${ich.tenkan} Kij=${ich.kijun} SA=${ich.senkou_a} SB=${ich.senkou_b} Chik=${ich.chikou}` : '';
+            const line = `${header} | ${rsiStr} ${emaStr} ${macdStr} ${utStr} ${ichStr}\n`;
             indDiv.textContent = line + indDiv.textContent;
             const lines = indDiv.textContent.split('\n');
             if (lines.length > 10) {

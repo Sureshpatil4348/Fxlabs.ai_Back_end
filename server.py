@@ -61,7 +61,7 @@ from app.mt5_utils import (
 )
 from app.rsi_utils import calculate_rsi_series, closed_closes
 from app.indicator_cache import indicator_cache
-from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest
+from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest, utbot_latest as ind_utbot_latest, ichimoku_latest as ind_ichimoku_latest
 from app.constants import RSI_SUPPORTED_SYMBOLS
 # One-time warmup to backfill indicator cache at startup
 async def _warm_populate_indicator_cache() -> None:
@@ -86,6 +86,8 @@ async def _warm_populate_indicator_cache() -> None:
                         continue
                     last_closed = closed_bars[-1]
                     closes = [b.close for b in closed_bars]
+                    highs = [b.high for b in closed_bars]
+                    lows = [b.low for b in closed_bars]
                     rsi_val = ind_rsi_latest(closes, 14) if len(closes) >= 15 else None
                     if rsi_val is not None:
                         await indicator_cache.update_rsi(sym, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
@@ -95,6 +97,17 @@ async def _warm_populate_indicator_cache() -> None:
                             if ema_val is not None:
                                 await indicator_cache.update_ema(sym, tf.value, int(p), float(ema_val), ts_ms=last_closed.time)
                     macd_trip = ind_macd_latest(closes, 12, 26, 9)
+                    # Additional indicators
+                    utbot_vals = None
+                    ich_vals = None
+                    try:
+                        utbot_vals = ind_utbot_latest(highs, lows, closes, 50, 10, 3.0)
+                    except Exception:
+                        utbot_vals = None
+                    try:
+                        ich_vals = ind_ichimoku_latest(highs, lows, closes, 9, 26, 52, 26)
+                    except Exception:
+                        ich_vals = None
                     if macd_trip is not None:
                         macd_v, sig_v, hist_v = macd_trip
                         await indicator_cache.update_macd(sym, tf.value, 12, 26, 9, float(macd_v), float(sig_v), float(hist_v), ts_ms=last_closed.time)
@@ -579,6 +592,17 @@ async def _indicator_scheduler() -> None:
                                 if macd_trip
                                 else None
                             ),
+                            "utbot": (
+                                {
+                                    "baseline": float(utbot_vals[0]),
+                                    "stop": float(utbot_vals[1]),
+                                    "direction": int(utbot_vals[2]),
+                                    "flip": int(utbot_vals[3]),
+                                }
+                                if utbot_vals
+                                else None
+                            ),
+                            "ichimoku": (ich_vals if ich_vals else None),
                         }
                         # JSON logs optional; emit at DEBUG to avoid INFO spam
                         logger.debug(orjson.dumps(item_log).decode("utf-8"))
@@ -633,6 +657,17 @@ async def _indicator_scheduler() -> None:
                                 "rsi": {14: rsi_val} if rsi_val is not None else {},
                                 "ema": {k: v for k, v in ema_vals.items() if v is not None},
                                 "macd": ({"macd": macd_trip[0], "signal": macd_trip[1], "hist": macd_trip[2]} if macd_trip else {}),
+                                "utbot": (
+                                    {
+                                        "baseline": utbot_vals[0],
+                                        "stop": utbot_vals[1],
+                                        "direction": utbot_vals[2],
+                                        "flip": utbot_vals[3],
+                                    }
+                                    if utbot_vals
+                                    else {}
+                                ),
+                                "ichimoku": (ich_vals if ich_vals else {}),
                             },
                         }
                         msg = {

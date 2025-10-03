@@ -15,8 +15,7 @@ This document describes how the frontend should consume market data and indicato
   - v2 does not send initial OHLC or indicator snapshots on connect; fetch initial state via REST, then merge live pushes.
 
 - **Does it work properly with all supported indicators?**
-  - WebSocket streaming currently includes: RSI(14), EMA(21/50/200), MACD(12,26,9) on the latest closed bar for each timeframe.
-  - UTBot and Ichimoku are supported by the indicator library and used in alert services, but they are not included in the `indicator_update` payload yet.
+  - WebSocket streaming includes: RSI(14), EMA(21/50/200), MACD(12,26,9), UTBot(EMA50±3×ATR10), and Ichimoku(9/26/52) on the latest closed bar for each timeframe.
   - Indicator implementations have unit tests and parity checks; see `tests/test_indicators.py` and `tests/test_parity.py`.
 
 ### WebSocket v2
@@ -76,14 +75,16 @@ This document describes how the frontend should consume market data and indicato
         "indicators": {
           "rsi": {"14": 51.23},
           "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
-          "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
+          "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002},
+          "utbot": {"baseline": 1.06860, "stop": 1.06920, "direction": -1, "flip": 0},
+          "ichimoku": {"tenkan": 1.06880, "kijun": 1.06895, "senkou_a": 1.06890, "senkou_b": 1.06910, "chikou": 1.06840}
         }
       }
     }
     ```
   - Notes:
     - `bar_time` is epoch milliseconds (broker server time).
-    - Current coverage in this payload: RSI/EMA/MACD. UTBot/Ichimoku are not included yet.
+    - Coverage: RSI/EMA/MACD/UTBot/Ichimoku (closed bars only).
 
 ### REST API (Cache-first)
 
@@ -126,7 +127,7 @@ Note: Tick data is WebSocket-only via `/market-v2`. There is no REST tick endpoi
 ### Notes & caveats
 
 - v2 is broadcast-only: `subscribe`/`unsubscribe` are accepted but ignored; no per-client filtering or snapshots.
-- Indicator payload coverage is currently RSI/EMA/MACD; UTBot/Ichimoku will appear in alerts and can be computed server-side, but are not published in `indicator_update` yet.
+- Indicator payload coverage: RSI/EMA/MACD/UTBot/Ichimoku.
 - All indicator values are computed on closed bars only (no intrabar values).
 
 ### Quick examples
