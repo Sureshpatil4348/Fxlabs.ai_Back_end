@@ -1272,6 +1272,11 @@ For support and questions:
 **Compatibility**: Python 3.8+, MT5 Python API, FastAPI 0.100+
 
 ## 🛠️ Troubleshooting
+### Ctrl+C hangs at "Waiting for application shutdown"
+- Symptom: After pressing Ctrl+C, logs show `INFO:     Shutting down`, `connection closed` lines, and then `INFO:     Waiting for application shutdown.` without exiting.
+- Cause: Background schedulers (e.g., market summary/indicators/news) must be cancelled so the lifespan shutdown can complete. If any long-running task isn't cancelled, the server waits indefinitely.
+- Fix in code: The shutdown sequence cancels all background tasks, including the market summary scheduler. Ensure you are on the latest code where `server.py` cancels `_market_summary_scheduler_task` along with other schedulers.
+- Tip: If you still see a hang, check for any custom added loops without `CancelledError` handling. All loops should `await asyncio.sleep(...)` and properly handle `asyncio.CancelledError`.
 
 ### "RSI Tracker: triggers exist in DB but no emails/logs"
 - **What it means**: Records appear in `rsi_tracker_alert_triggers`, but you don't see corresponding console logs or emails.

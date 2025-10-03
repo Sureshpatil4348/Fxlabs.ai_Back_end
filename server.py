@@ -108,6 +108,8 @@ async def lifespan(app: FastAPI):
         _minute_scheduler_task.cancel()
     if _indicator_scheduler_task:
         _indicator_scheduler_task.cancel()
+    if _market_summary_scheduler_task:
+        _market_summary_scheduler_task.cancel()
     try:
         await news_task
     except asyncio.CancelledError:
