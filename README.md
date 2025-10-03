@@ -1,6 +1,6 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-WebSocket v2: Use `/market-v2` for live ticks and indicator updates (broadcast-all baseline). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe` is optional for requesting a one-time `initial_indicators` snapshot per symbol×timeframe (no OHLC snapshots in v2). `unsubscribe` has no effect in broadcast mode. Ping/pong is supported for keepalive.
+WebSocket v2: Use `/market-v2` for live ticks and indicator updates (broadcast baseline). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no OHLC or indicator snapshots in v2. Ping/pong is supported for keepalive.
 
 Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, coalesced; OHLC is not streamed to clients in v2). No EA or external bridge required.
 
@@ -25,7 +25,7 @@ A high-performance, real-time financial market data streaming service built with
 
 ### Key Features
 
-- **Real-time Data Streaming**: Live tick and indicator data via WebSocket
+- **Real-time Data Streaming**: Live tick and indicator data via WebSocket (broadcast-only)
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
@@ -274,18 +274,14 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 
 ## 📡 API Documentation
 
-### WebSocket Endpoints
+### WebSocket Endpoint
 
 #### Market Data WebSocket v2 (`/market-v2`) — preferred
 - **URL**: `ws://localhost:8000/market-v2`
 - **Purpose**: Real-time tick and indicator streaming (no OHLC streaming to clients)
-- **Features**: Broadcast-all baseline (symbols/timeframes). Optional snapshot request via `subscribe` for `initial_indicators`; `unsubscribe` has no effect in broadcast mode.
+- **Behavior**: Broadcast-only baseline (symbols/timeframes). `subscribe`/`unsubscribe` are ignored (server replies with `{type:"info", message:"v2 broadcast-only: subscribe/unsubscribe ignored"}`).
 
-Note on closed-bar guarantees:
-- The server emits an `is_closed=true` OHLC bar at every timeframe boundary (checked at ~500 ms resolution), including quiet 1‑minute windows with zero ticks. This removes client-side heuristics and eliminates RSI drift between live streaming and initial snapshots.
-
-Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services.
-Connected discovery message includes capabilities and indicators registry:
+Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services. Connected discovery message includes capabilities and indicators registry:
 
 ```json
 {
@@ -297,21 +293,13 @@ Connected discovery message includes capabilities and indicators registry:
 }
 ```
 
-Optional snapshot request (indicators only):
+Client messages:
 
 ```json
-{
-  "action": "subscribe",
-  "symbol": "EURUSDm",
-  "timeframe": "5M",
-  "data_types": ["indicators"]
-}
+{ "action": "ping" }             // server -> { "type": "pong" }
+{ "action": "subscribe" }        // server -> { "type": "info", "message": "v2 broadcast-only: subscribe/unsubscribe ignored" }
+{ "action": "unsubscribe" }      // same informational response
 ```
-
-Notes:
-- Snapshot subscribe returns a one-time `initial_indicators` for the requested key.
-- `unsubscribe` messages are accepted but have no effect in broadcast mode.
-- OHLC is server-side only for indicators/alerts (no OHLC streaming in v2).
 
 Internal alert tick_data shape:
 
@@ -385,27 +373,9 @@ Tick payloads include `daily_change_pct` (Bid vs broker D1 reference):
 ```
 
 
-##### Indicator payloads (when "indicators" is requested)
+##### Indicator payloads (broadcast-only)
 
-- On subscribe, the server sends the latest closed-bar snapshot:
-
-```json
-{
-  "type": "initial_indicators",
-  "symbol": "EURUSDm",
-  "timeframe": "5M",
-  "data": {
-    "bar_time": 1696229940000,
-    "indicators": {
-      "rsi": {"14": 51.23},
-      "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
-      "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
-    }
-  }
-}
-```
-
-- Live push when a new bar is detected by the 10s poller:
+Live push when a new bar is detected by the 10s poller:
 
 ```json
 {
@@ -465,12 +435,12 @@ Notes:
 - Counters reset after each report (windowed deltas). Active connection counts are sampled live.
 - Low error rates are expected; persistent failures indicate client disconnects or network issues.
 
-### REST API Endpoints
+### REST API Endpoints (complete)
 
 | Endpoint | Method | Description | Auth Required |
 |----------|--------|-------------|---------------|
 | `/health` | GET | Health check and MT5 status | No |
-| `/api/ohlc/{symbol}` | GET | Historical OHLC data | Yes |
+| `/api/ohlc/{symbol}` | GET | Historical OHLC data (server-side only; no WS v2 streaming) | Yes |
 | `/api/rsi/{symbol}`  | GET | Closed‑bar RSI series (Wilder) aligned to OHLC | Yes |
 | `/api/tick/{symbol}` | GET | Current tick data | Yes |
 | `/api/symbols` | GET | Symbol search | Yes |
@@ -960,7 +930,7 @@ The modular structure isolates responsibilities while preserving all existing be
 ### MT5 Integration
 - Full MT5 integration, data fetch, WebSocket streaming, alerts math, and live RSI debugging are documented in `MT5.md`.
 - Single shared MT5 session with unified OHLC helpers/caching in `app/mt5_utils.py` (no duplication).
- - WebSocket endpoint: `/market-v2` (broadcast-only). See `test_websocket_client.py` for usage.
+- WebSocket endpoint: `/market-v2` (broadcast-only). See `test_websocket_client.py` for usage.
 
 ### New Helpers
 

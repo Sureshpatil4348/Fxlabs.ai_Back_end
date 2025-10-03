@@ -41,15 +41,12 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
   - `ohlc_cache` (existing): maintained via `update_ohlc_cache/get_cached_ohlc`.
   - `indicator_cache` (new): dictionary keyed by `symbol:timeframe`, storing the latest IndicatorSnapshot (+small ring buffer for snapshots on connect).
 
-- WebSocket (existing `/ws/market`)
-  - Price stream: pushes `ticks` messages on new-tick arrival (coalesced). Daily % change is included in tick payloads.
-  - Indicators stream: pushes `indicator_update` when new closed-bar indicators are computed (10s poll cadence; v2-only).
-  - On subscribe, server sends `initial_ohlc` when `ohlc` is requested. `initial_indicators` will be added with the indicator pipeline.
-- WebSocket v2 (`/market-v2`) — Broadcast-All Mode
-  - No explicit subscriptions required. Server broadcasts ticks and indicator updates for a baseline set of symbols/timeframes to all connected clients.
+- WebSocket v2 (`/market-v2`) — Broadcast-only
+  - Server broadcasts `ticks` and `indicator_update` for a baseline set of symbols/timeframes to all connected clients.
+  - OHLC is server-side only for indicator calculations and alerts; it is not streamed to clients in v2.
+  - Subscribe/unsubscribe messages are ignored with an informational response; ping/pong is supported for keepalive.
   - Baseline symbols: broker-suffixed `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`.
   - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1.
-  - Subscription messages are still accepted for compatibility but not required in v2.
 
 ## Data Models
 - Tick (frontend): `{symbol, time, time_iso, bid, ask, last, volume, flags, daily_change_pct}`
@@ -60,84 +57,44 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
 - Implementation: fetch last 2 D1 bars via `get_ohlc_data(symbol, Timeframe.D1, 2)`. If the latest D1 bar’s `time` belongs to today (broker server time), use its `open`; otherwise use the previous D1 bar’s `close` as fallback for session transitions.
 - Use `bid` basis consistently for both numerator and denominator to minimize drift.
 
-## WebSocket API and Message Formats
+## WebSocket API and Message Formats (v2, broadcast-only)
 
  - Endpoint
-  - `/ws/market` (unified)
-  - `/market-v2` (new, versioned WS — runs alongside `/ws/market` during migration)
+  - `/market-v2`
 
-- Server greeting
+- Server greeting (capabilities)
   - On connect, server sends:
     ```json
     {
       "type": "connected",
       "message": "WebSocket connected successfully",
       "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
-      "supported_data_types": ["ticks","ohlc"],
+      "supported_data_types": ["ticks","indicators"],
       "supported_price_bases": ["last","bid","ask"],
-      "ohlc_schema": "parallel"
-    }
-    ```
-
-- Subscribe
-  - Client → server to start streaming for a symbol×timeframe:
-    ```json
-    {
-      "action": "subscribe",
-      "symbol": "EURUSDm",
-      "timeframe": "5M",
-      "data_types": ["ticks","ohlc"],
-      "price_basis": "last",
-      "ohlc_schema": "parallel"
-    }
-    ```
-  - Server → client confirmation:
-    ```json
-    {
-      "type": "subscribed",
-      "symbol": "EURUSDm",
-      "timeframe": "5M",
-      "data_types": ["ticks","ohlc"],
-      "price_basis": "last",
-      "ohlc_schema": "parallel"
-    }
-    ```
-  - Errors are returned as `{ "type": "error", "error": "..." }`.
-
-- Snapshots on subscribe
-  - Initial OHLC (latest cached series), when `ohlc` is requested:
-    ```json
-    {
-      "type": "initial_ohlc",
-      "symbol": "EURUSDm",
-      "timeframe": "5M",
-      "data": [ /* array of OHLC objects with parallel Bid/Ask fields and is_closed */ ]
-    }
-    ```
-  - Initial Indicators (latest closed-bar snapshot), when `indicators` is requested:
-    ```json
-    {
-      "type": "initial_indicators",
-      "symbol": "EURUSDm",
-      "timeframe": "5M",
-      "data": {
-        "bar_time": 1696229940000,
-        "indicators": {
-          "rsi": {"14": 51.23},
-          "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
-          "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
-        }
+      "indicators": {
+        "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]},
+        "ema": {"periods": [21, 50, 200]},
+        "macd": {"params": {"fast": 12, "slow": 26, "signal": 9}},
+        "ichimoku": {"params": {"tenkan": 9, "kijun": 26, "senkou_b": 52, "displacement": 26}},
+        "utbot": {"params": {"ema": 50, "atr": 10, "k": 3.0}}
       }
     }
     ```
 
+- Client messages
+  - Ping/pong:
+    - Client: `{ "action": "ping" }`
+    - Server: `{ "type": "pong" }`
+  - Subscribe/unsubscribe are ignored in v2 (broadcast-only):
+    - Client: `{ "action": "subscribe" }` or `{ "action": "unsubscribe" }`
+    - Server: `{ "type": "info", "message": "v2 broadcast-only: subscribe/unsubscribe ignored" }`
+
 - Live pushes
   - Ticks (coalesced by symbol):
     ```json
-    { "type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"volume":120, "daily_change_pct": -0.12}, ... ] }
+    { "type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"volume":120, "daily_change_pct": -0.12} ] }
     ```
-  - OHLC updates: not pushed in v2. OHLC is used server-side only for indicator calculations, alerts, and debugging. Legacy `/ws/market` still supports OHLC streaming.
-  - Indicator update:
+  - Indicator update (latest closed bar only):
     ```json
     {
       "type": "indicator_update",
@@ -155,20 +112,10 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
     ```
     - Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
-Broadcast-All Notes (v2 only)
-- Indicators are broadcast to all v2 clients for the baseline coverage; no `data_types:["indicators"]` is needed.
-- Ticks are pushed for all baseline symbols; OHLC is not streamed on v2.
-- Clients can still send `subscribe`/`unsubscribe`, but server behavior in v2 does not require them for receiving baseline data.
-
-- Unsubscribe and keepalive
-  - Unsubscribe a single symbol×timeframe:
-    ```json
-    { "action": "unsubscribe", "symbol": "EURUSDm", "timeframe": "5M" }
-    ```
-    Server confirms with `{ "type": "unsubscribed", "symbol": "EURUSDm", "timeframe": "5M" }`.
-  - Ping/pong:
-    - Client: `{ "action": "ping" }`
-    - Server: `{ "type": "pong" }`
+Broadcast-Only Notes (v2)
+- Indicators are broadcast to all v2 clients for the baseline coverage.
+- Ticks are pushed for all baseline symbols; OHLC is not streamed on v2 (server-side only for indicators/alerts).
+- `subscribe`/`unsubscribe` are accepted but ignored.
 
 ## Implementation Plan (Map to Current Code)
 
@@ -186,13 +133,12 @@ Broadcast-All Notes (v2 only)
      - Helpers: `get_latest_indicator_snapshot(symbol, timeframe)`, `update_indicator_snapshot(...)`.
 
 3) 10s Poller Task
-   - In `server.py` lifespan (near other schedulers), start `indicator_scheduler()`:
-     - Every 10s: for subscribed `symbol×timeframe`, fetch last bars via `get_ohlc_data`, detect new closed bar, compute indicators via `app/indicators`, store to `indicator_cache`, and push `{"type":"indicator_update","data":...}` to appropriate clients.
-     - On client connect/subscribe, send the latest snapshot for requested keys.
+   - In `server.py` lifespan, start `_indicator_scheduler()`:
+     - Every 10s: when at least one v2 client is connected, iterate rollout baseline `(symbol×timeframe)` sets, fetch closed bars via `get_ohlc_data`, compute indicators via `app/indicators`, store to `indicator_cache`, and broadcast `{"type":"indicator_update","data":...}`.
+     - No per-client snapshot logic in v2.
 
 4) WebSocket Contract
-   - Extend `WSClient` in `server.py` to support `data_types` including `"indicators"` and maintain per-client subscriptions.
-   - When a subscription includes `indicators`, send snapshot and subsequent `indicator_update`s.
+   - `WSClient` in `server.py` is broadcast-only for v2. Per-client subscription handling was removed; `subscribe`/`unsubscribe` return an informational message; `ping` returns `pong`.
   
 
 5) Observability & Safety
