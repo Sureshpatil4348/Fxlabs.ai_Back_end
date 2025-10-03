@@ -401,6 +401,16 @@ Internal alert tick_data shape:
   - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1
 - Subscribe remains optional and is primarily used to receive `initial_ohlc` / `initial_indicators` snapshots on demand.
 
+Security and input validation (mirrors REST policy):
+- If `API_TOKEN` is set, WebSocket connections must include header `X-API-Key: <token>`; otherwise connections are allowed without auth.
+- Symbols allowlist: by default, only symbols in `RSI_SUPPORTED_SYMBOLS` are accepted. Override with env `WS_ALLOWED_SYMBOLS` (comma-separated, broker-suffixed).
+- Timeframe allowlist: defaults to all `app.models.Timeframe` values. Override with env `WS_ALLOWED_TIMEFRAMES` (values like `1M,5M,1H` or enum names like `M1,M5,H1`).
+- Per-connection caps (env-configurable):
+  - `WS_MAX_SYMBOLS` (default 10)
+  - `WS_MAX_SUBSCRIPTIONS` total symbol×timeframe pairs (default 32)
+  - `WS_MAX_TFS_PER_SYMBOL` per symbol (default 7)
+  - Violations return `{ "type": "error", "error": "..._limit_exceeded" }` or `forbidden_symbol` / `forbidden_timeframe`.
+
 V2 greeting example (capabilities + indicators registry):
 
 ```json

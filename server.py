@@ -196,6 +196,30 @@ TEST_EMAIL_RATE_WINDOW = timedelta(hours=1)
 ALLOWED_EMAIL_DOMAINS = os.environ.get("ALLOWED_EMAIL_DOMAINS", "gmail.com,yahoo.com,outlook.com,hotmail.com").split(",")
 ALLOWED_EMAIL_DOMAINS = [domain.strip().lower() for domain in ALLOWED_EMAIL_DOMAINS if domain.strip()]
 
+# WebSocket security and shaping caps (environment configurable)
+# Allowed symbols: defaults to RSI_SUPPORTED_SYMBOLS; override via WS_ALLOWED_SYMBOLS (comma-separated, broker-suffixed)
+_ws_allowed_symbols_env = [
+    s.strip().upper() for s in os.environ.get("WS_ALLOWED_SYMBOLS", "").split(",") if s.strip()
+]
+ALLOWED_WS_SYMBOLS: Set[str] = set(_ws_allowed_symbols_env or [s.upper() for s in RSI_SUPPORTED_SYMBOLS])
+WS_MAX_SYMBOLS: int = int(os.environ.get("WS_MAX_SYMBOLS", "10"))
+WS_MAX_SUBSCRIPTIONS: int = int(os.environ.get("WS_MAX_SUBSCRIPTIONS", "32"))
+WS_MAX_TFS_PER_SYMBOL: int = int(os.environ.get("WS_MAX_TFS_PER_SYMBOL", "7"))
+
+# Allowed timeframes for WS (defaults to all model-defined timeframes)
+_ws_allowed_tfs_env = [
+    t.strip().upper() for t in os.environ.get("WS_ALLOWED_TIMEFRAMES", "").split(",") if t.strip()
+]
+if _ws_allowed_tfs_env:
+    env_tf_values: Set[str] = set(_ws_allowed_tfs_env)
+    ALLOWED_WS_TIMEFRAMES: Set[Timeframe] = set()
+    for tf in Timeframe:
+        # accept both enum value (e.g., "5M") and name (e.g., "M5")
+        if (tf.value.upper() in env_tf_values) or (tf.name.upper() in env_tf_values):
+            ALLOWED_WS_TIMEFRAMES.add(tf)
+else:
+    ALLOWED_WS_TIMEFRAMES = set(Timeframe)
+
 def require_api_token_header(x_api_key: Optional[str] = None):
     # For REST: expect header "X-API-Key"
     if API_TOKEN and x_api_key != API_TOKEN:
@@ -221,6 +245,24 @@ def check_test_email_rate_limit(api_key: str) -> bool:
     # Record this request
     test_email_rate_limits[api_key].append(now)
     return True
+
+
+def _ws_is_authorized(websocket: WebSocket) -> bool:
+    """Mirror REST auth policy for WebSockets using X-API-Key header (optional).
+
+    If API_TOKEN is set, require header X-API-Key to match; otherwise allow.
+    """
+    try:
+        # Starlette headers are case-insensitive
+        x_api_key = websocket.headers.get("x-api-key")
+        if not x_api_key:
+            x_api_key = websocket.headers.get("X-API-Key")
+        if API_TOKEN and (x_api_key or "") != API_TOKEN:
+            return False
+        return True
+    except Exception:
+        # Fail closed when API_TOKEN is set
+        return False if API_TOKEN else True
 
 def validate_test_email_recipient(email: str) -> bool:
     """Validate that email recipient is allowed"""
@@ -840,6 +882,8 @@ class WSClient:
         self.supported_data_types: Set[str] = set(supported_data_types or {"ticks", "ohlc"})
         # v2 broadcast mode: server pushes all symbols/timeframes without explicit subscribe
         self.v2_broadcast: bool = bool(v2_broadcast)
+        # Security/cap tracking
+        self._subscription_count: int = 0
 
     def _is_connected(self) -> bool:
         try:
@@ -1180,7 +1224,32 @@ class WSClient:
                         tf = Timeframe[timeframe]
                     except Exception:
                         raise ValueError(f"Invalid timeframe: {timeframe}")
-                ensure_symbol_selected(symbol)
+                # Enforce timeframe allowlist
+                if tf not in ALLOWED_WS_TIMEFRAMES:
+                    await self._try_send_json({"type": "error", "error": f"forbidden_timeframe: {tf.value}"})
+                    return
+                # Normalize and enforce symbol allowlist
+                symbol_norm = (symbol or "").upper()
+                if symbol_norm not in ALLOWED_WS_SYMBOLS:
+                    await self._try_send_json({"type": "error", "error": f"forbidden_symbol: {symbol_norm}"})
+                    return
+                # Enforce per-connection caps
+                # Count existing unique (symbol,timeframe) subs
+                current_pairs = sum(len(v) for v in self.subscriptions.values())
+                if current_pairs >= WS_MAX_SUBSCRIPTIONS and (symbol_norm not in self.subscriptions or tf not in self.subscriptions.get(symbol_norm, {})):
+                    await self._try_send_json({"type": "error", "error": "subscription_limit_exceeded"})
+                    return
+                # Enforce symbols count cap
+                existing_syms = set(self.subscriptions.keys())
+                if symbol_norm not in existing_syms and len(existing_syms) >= WS_MAX_SYMBOLS:
+                    await self._try_send_json({"type": "error", "error": "symbol_limit_exceeded"})
+                    return
+                # Enforce TFs per symbol cap
+                tfs_for_sym = set(self.subscriptions.get(symbol_norm, {}).keys())
+                if tf not in tfs_for_sym and len(tfs_for_sym) >= WS_MAX_TFS_PER_SYMBOL:
+                    await self._try_send_json({"type": "error", "error": "timeframe_limit_per_symbol_exceeded"})
+                    return
+                ensure_symbol_selected(symbol_norm)
                 
                 # Normalize and validate data_types against endpoint capabilities
                 if not isinstance(raw_data_types, list):
@@ -1205,7 +1274,7 @@ class WSClient:
 
                 # Create subscription info
                 sub_info = SubscriptionInfo(
-                    symbol=symbol,
+                    symbol=symbol_norm,
                     timeframe=tf,
                     subscription_time=datetime.now(timezone.utc),
                     data_types=data_types,
@@ -1214,19 +1283,19 @@ class WSClient:
                 )
                 
                 # Persist subscription (allow multiple TFs per symbol)
-                if symbol not in self.subscriptions:
-                    self.subscriptions[symbol] = {}
-                self.subscriptions[symbol][tf] = sub_info
+                if symbol_norm not in self.subscriptions:
+                    self.subscriptions[symbol_norm] = {}
+                self.subscriptions[symbol_norm][tf] = sub_info
                 
                 # Send initial OHLC data if requested
                 if "ohlc" in data_types:
                     try:
-                        ohlc_data = get_cached_ohlc(symbol, tf, 250)
+                        ohlc_data = get_cached_ohlc(symbol_norm, tf, 250)
                         
                         if ohlc_data:
                             ok = await self._try_send_json({
                                 "type": "initial_ohlc",
-                                "symbol": symbol,
+                                "symbol": symbol_norm,
                                 "timeframe": timeframe,
                                 "data": [self._format_ohlc_for_subscription(ohlc, symbol, tf) for ohlc in ohlc_data]
                             })
@@ -1239,7 +1308,7 @@ class WSClient:
                             logger.debug(f"⚠️ No OHLC data available for {symbol}")
                         
                         # Schedule next OHLC update for this symbol×timeframe
-                        self.next_ohlc_updates.setdefault(symbol, {})[tf] = calculate_next_update_time(
+                        self.next_ohlc_updates.setdefault(symbol_norm, {})[tf] = calculate_next_update_time(
                             sub_info.subscription_time, tf
                         )
                         
@@ -1257,11 +1326,11 @@ class WSClient:
                 if "indicators" in data_types:
                     try:
                         # Try latest values from cache first
-                        latest_rsi = await indicator_cache.get_latest_rsi(symbol, tf.value, 14)
-                        latest_ema21 = await indicator_cache.get_latest_ema(symbol, tf.value, 21)
-                        latest_ema50 = await indicator_cache.get_latest_ema(symbol, tf.value, 50)
-                        latest_ema200 = await indicator_cache.get_latest_ema(symbol, tf.value, 200)
-                        latest_macd = await indicator_cache.get_latest_macd(symbol, tf.value, 12, 26, 9)
+                        latest_rsi = await indicator_cache.get_latest_rsi(symbol_norm, tf.value, 14)
+                        latest_ema21 = await indicator_cache.get_latest_ema(symbol_norm, tf.value, 21)
+                        latest_ema50 = await indicator_cache.get_latest_ema(symbol_norm, tf.value, 50)
+                        latest_ema200 = await indicator_cache.get_latest_ema(symbol_norm, tf.value, 200)
+                        latest_macd = await indicator_cache.get_latest_macd(symbol_norm, tf.value, 12, 26, 9)
 
                         ts_candidates: List[int] = []
                         if latest_rsi:
@@ -1277,7 +1346,7 @@ class WSClient:
                         # If cache is empty, compute once from closed bars and populate cache
                         if bar_time_ts is None:
                             try:
-                                bars = get_ohlc_data(symbol, tf, 300)
+                                bars = get_ohlc_data(symbol_norm, tf, 300)
                                 closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
                                 if closed_bars:
                                     last_closed = closed_bars[-1]
@@ -1290,13 +1359,13 @@ class WSClient:
 
                                     # Store into cache
                                     if rsi_val is not None:
-                                        await indicator_cache.update_rsi(symbol, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
+                                        await indicator_cache.update_rsi(symbol_norm, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
                                     for period, v in ema_vals.items():
                                         if v is not None:
-                                            await indicator_cache.update_ema(symbol, tf.value, int(period), float(v), ts_ms=last_closed.time)
+                                            await indicator_cache.update_ema(symbol_norm, tf.value, int(period), float(v), ts_ms=last_closed.time)
                                     if macd_trip is not None:
                                         mv, sv, hv = macd_trip
-                                        await indicator_cache.update_macd(symbol, tf.value, 12, 26, 9, float(mv), float(sv), float(hv), ts_ms=last_closed.time)
+                                        await indicator_cache.update_macd(symbol_norm, tf.value, 12, 26, 9, float(mv), float(sv), float(hv), ts_ms=last_closed.time)
 
                                     # Refresh latest values variables for snapshot
                                     latest_rsi = (last_closed.time, float(rsi_val)) if rsi_val is not None else None
@@ -1328,7 +1397,7 @@ class WSClient:
                         }
                         ok2 = await self._try_send_json({
                             "type": "initial_indicators",
-                            "symbol": symbol,
+                            "symbol": symbol_norm,
                             "timeframe": timeframe,
                             "data": snapshot,
                         })
@@ -1341,11 +1410,11 @@ class WSClient:
                 # Send immediate market summary if requested (symbol-level, no timeframe)
                 if "market_summary" in data_types:
                     try:
-                        dcp = get_daily_change_pct_bid(symbol)
+                        dcp = get_daily_change_pct_bid(symbol_norm)
                         if dcp is not None:
                             ok3 = await self._try_send_json({
                                 "type": "market_summary",
-                                "symbol": symbol,
+                                "symbol": symbol_norm,
                                 "data": {"daily_change_pct": float(dcp)}
                             })
                             if not ok3:
@@ -1356,7 +1425,7 @@ class WSClient:
                 
                 ok = await self._try_send_json({
                     "type": "subscribed",
-                    "symbol": symbol,
+                    "symbol": symbol_norm,
                     "timeframe": timeframe,
                     "data_types": data_types,
                     "price_basis": sub_info.price_basis.value,
@@ -1384,6 +1453,7 @@ class WSClient:
             symbol = message.get("symbol", "")
             timeframe_str = message.get("timeframe")
             if symbol:
+                symbol_norm = symbol.upper()
                 if timeframe_str:
                     # Unsubscribe only this symbol×timeframe
                     try:
@@ -1394,34 +1464,35 @@ class WSClient:
                     except Exception:
                         await self._try_send_json({"type": "error", "error": f"invalid_timeframe: {timeframe_str}"})
                         return
-                    if symbol in self.subscriptions and tf in self.subscriptions[symbol]:
-                        del self.subscriptions[symbol][tf]
-                        if not self.subscriptions[symbol]:
-                            del self.subscriptions[symbol]
-                    if symbol in self.next_ohlc_updates and tf in self.next_ohlc_updates[symbol]:
-                        del self.next_ohlc_updates[symbol][tf]
-                        if not self.next_ohlc_updates[symbol]:
-                            del self.next_ohlc_updates[symbol]
-                    self.symbols.discard(symbol)
-                    await self._try_send_json({"type": "unsubscribed", "symbol": symbol, "timeframe": tf.value})
+                    if symbol_norm in self.subscriptions and tf in self.subscriptions[symbol_norm]:
+                        del self.subscriptions[symbol_norm][tf]
+                        if not self.subscriptions[symbol_norm]:
+                            del self.subscriptions[symbol_norm]
+                    if symbol_norm in self.next_ohlc_updates and tf in self.next_ohlc_updates[symbol_norm]:
+                        del self.next_ohlc_updates[symbol_norm][tf]
+                        if not self.next_ohlc_updates[symbol_norm]:
+                            del self.next_ohlc_updates[symbol_norm]
+                    self.symbols.discard(symbol_norm)
+                    await self._try_send_json({"type": "unsubscribed", "symbol": symbol_norm, "timeframe": tf.value})
                 else:
                     # Unsubscribe all timeframes for this symbol
-                    if symbol in self.subscriptions:
-                        del self.subscriptions[symbol]
-                    if symbol in self.next_ohlc_updates:
-                        del self.next_ohlc_updates[symbol]
-                    self.symbols.discard(symbol)
-                    await self._try_send_json({"type": "unsubscribed", "symbol": symbol})
+                    if symbol_norm in self.subscriptions:
+                        del self.subscriptions[symbol_norm]
+                    if symbol_norm in self.next_ohlc_updates:
+                        del self.next_ohlc_updates[symbol_norm]
+                    self.symbols.discard(symbol_norm)
+                    await self._try_send_json({"type": "unsubscribed", "symbol": symbol_norm})
             else:
                 # Legacy unsubscribe
                 syms = message.get("symbols", [])
                 for s in syms:
-                    self.symbols.discard(s)
-                    if s in self.subscriptions:
-                        del self.subscriptions[s]
-                    if s in self.next_ohlc_updates:
-                        del self.next_ohlc_updates[s]
-                await self._try_send_json({"type": "unsubscribed", "symbols": sorted(syms)})
+                    s_norm = (s or "").upper()
+                    self.symbols.discard(s_norm)
+                    if s_norm in self.subscriptions:
+                        del self.subscriptions[s_norm]
+                    if s_norm in self.next_ohlc_updates:
+                        del self.next_ohlc_updates[s_norm]
+                await self._try_send_json({"type": "unsubscribed", "symbols": sorted([ (s or "").upper() for s in syms ])})
                 
         elif action == "ping":
             await self._try_send_json({"type": "pong"})
@@ -1434,6 +1505,12 @@ async def ws_ticks_legacy(websocket: WebSocket):
     """Legacy WebSocket endpoint for tick-only streaming"""
     client = None
     try:
+        # Optional auth: mirror REST policy
+        if not _ws_is_authorized(websocket):
+            try:
+                await websocket.close(code=1008)
+            finally:
+                return
         await websocket.accept()
         try:
             await websocket.send_json({"type": "connected", "message": "Legacy tick WebSocket connected"})
@@ -1491,6 +1568,12 @@ async def ws_market(websocket: WebSocket):
     client = None
     
     try:
+        # Optional auth: mirror REST policy
+        if not _ws_is_authorized(websocket):
+            try:
+                await websocket.close(code=1008)
+            finally:
+                return
         await websocket.accept()
         
         # Send a welcome message
@@ -1562,6 +1645,12 @@ async def ws_market_v2(websocket: WebSocket):
     """
     client = None
     try:
+        # Optional auth: mirror REST policy
+        if not _ws_is_authorized(websocket):
+            try:
+                await websocket.close(code=1008)
+            finally:
+                return
         await websocket.accept()
         # Send a capabilities greeting for v2
         try:
