@@ -743,77 +743,145 @@ def health():
 def test_websocket():
     return {"message": "WebSocket endpoint available at /market-v2"}
 
-@app.get("/api/ohlc/{symbol}")
-def get_ohlc(symbol: str, timeframe: str = Query("5M"), count: int = Query(250, le=500), x_api_key: Optional[str] = Depends(require_api_token_header)):
-    """Get OHLC data for a symbol and timeframe"""
-    try:
-        tf = Timeframe(timeframe)
-        sym = canonicalize_symbol(symbol)
-        ohlc_data = get_ohlc_data(sym, tf, count)
-        return {
-            "symbol": sym,
-            "timeframe": timeframe,
-            "count": len(ohlc_data),
-            "data": [ohlc.model_dump() for ohlc in ohlc_data]
-        }
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/api/rsi/{symbol}")
-def get_rsi(
-    symbol: str,
-    timeframe: str = Query("5M"),
-    count: int = Query(300, ge=50, le=1000),
+@app.get("/api/values")
+async def get_values(
+    timeframe: str = Query(..., description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W"),
+    symbols: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., symbols=EURUSDm&symbols=BTCUSDm) or CSV"),
+    pairs: Optional[List[str]] = Query(None, description="Alias for symbols (repeatable or CSV)"),
     x_api_key: Optional[str] = Depends(require_api_token_header),
 ):
-    """Get closed-bar RSI series (Wilder) aligned to closed OHLC bars.
+    """Return latest closed-bar indicator values and current tick for requested (or allowed) symbols at the given timeframe.
 
-    Returns RSI values for the last N closed bars, plus aligned timestamps.
+    Notes:
+    - Indicators mirror WebSocket v2 coverage: RSI(14), EMA(21/50/200), MACD(12,26,9) on the last closed bar.
+    - Ticks are live (latest broker tick at request time).
+    - Timeframe must be one of the WebSocket-supported values and allowed by server policy.
+    - If no symbols provided, all allowed WebSocket symbols are returned.
     """
     try:
         tf = Timeframe(timeframe)
-        sym = canonicalize_symbol(symbol)
-        ohlc_data = get_ohlc_data(sym, tf, count)
-        # Use only closed bars
-        closed = [bar for bar in ohlc_data if getattr(bar, "is_closed", None) is not False]
-        forced_period = 14
-        if len(closed) < forced_period + 1:
-            return {
-                "symbol": sym,
-                "timeframe": timeframe,
-                "period": forced_period,
-                "bars_used": len(closed),
-                "count": 0,
-                "times_ms": [],
-                "times_iso": [],
-                "rsi": [],
-                "applied_price": "close",
-                "method": "wilder",
-            }
-        closes = [bar.close for bar in closed]
-        series = calculate_rsi_series(closes, forced_period)
-        # Align timestamps: RSI series starts at index `forced_period` of closed bars
-        aligned_bars = closed[forced_period:]
-        times_ms = [int(bar.time) for bar in aligned_bars]
-        times_iso = [bar.time_iso for bar in aligned_bars]
-        return {
-            "symbol": sym,
-            "timeframe": timeframe,
-            "period": forced_period,
-            "bars_used": len(closed),
-            "count": len(series),
-            "times_ms": times_ms,
-            "times_iso": times_iso,
-            "rsi": series,
-            "applied_price": "close",
-            "method": "wilder",
-        }
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    # Enforce WS-allowed timeframes (mirror WS policy)
+    try:
+        if 'ALLOWED_WS_TIMEFRAMES' in globals():
+            if tf not in ALLOWED_WS_TIMEFRAMES:
+                raise HTTPException(status_code=403, detail="forbidden_timeframe")
+    except Exception:
+        # If policy not available, fall back to enum validation only
+        pass
+
+    # Collect and normalize requested symbols
+    requested: List[str] = []
+    for src in (symbols or []):
+        if src:
+            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
+    for src in (pairs or []):
+        if src:
+            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
+
+    # Default to all allowed WS symbols if none requested
+    if not requested:
+        try:
+            symbol_list: List[str] = sorted(list(ALLOWED_WS_SYMBOLS))
+        except Exception:
+            # Fallback: use RSI_SUPPORTED_SYMBOLS if ALLOWED_WS_SYMBOLS not set
+            symbol_list = sorted([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+    else:
+        # Canonicalize and filter against allowed list
+        canonical: List[str] = []
+        for s in requested:
+            try:
+                canonical.append(canonicalize_symbol(s))
+            except Exception:
+                continue
+        allowed: Set[str] = set()
+        forbidden: List[str] = []
+        try:
+            allowed_ws: Set[str] = set(ALLOWED_WS_SYMBOLS)
+        except Exception:
+            allowed_ws = set([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+        for s in canonical:
+            if s in allowed_ws:
+                allowed.add(s)
+            else:
+                forbidden.append(s)
+        symbol_list = sorted(list(allowed))
+        forbidden_symbols = sorted(list(set(forbidden)))
+
+    # Build response per symbol
+    results: List[Dict[str, Any]] = []
+    forbidden_symbols = [] if 'forbidden_symbols' not in locals() else forbidden_symbols
+
+    for sym in symbol_list:
+        try:
+            ensure_symbol_selected(sym)
+        except Exception:
+            pass
+
+        # Latest tick
+        tick_obj = None
+        try:
+            info = mt5.symbol_info_tick(sym)
+            tick_obj = _to_tick(sym, info)
+        except Exception:
+            tick_obj = None
+
+        # Latest indicators from cache (closed-bar values)
+        rsi_latest = await indicator_cache.get_latest_rsi(sym, tf.value, 14)
+        ema21_latest = await indicator_cache.get_latest_ema(sym, tf.value, 21)
+        ema50_latest = await indicator_cache.get_latest_ema(sym, tf.value, 50)
+        ema200_latest = await indicator_cache.get_latest_ema(sym, tf.value, 200)
+        macd_latest = await indicator_cache.get_latest_macd(sym, tf.value, 12, 26, 9)
+
+        bar_time = None
+        if rsi_latest:
+            bar_time = int(rsi_latest[0])
+        elif ema21_latest:
+            bar_time = int(ema21_latest[0])
+        elif ema50_latest:
+            bar_time = int(ema50_latest[0])
+        elif ema200_latest:
+            bar_time = int(ema200_latest[0])
+        elif macd_latest:
+            bar_time = int(macd_latest[0])
+
+        indicators: Dict[str, Any] = {}
+        if rsi_latest and rsi_latest[1] is not None:
+            indicators["rsi"] = {"14": float(rsi_latest[1])}
+        ema_map: Dict[str, float] = {}
+        if ema21_latest and ema21_latest[1] is not None:
+            ema_map["21"] = float(ema21_latest[1])
+        if ema50_latest and ema50_latest[1] is not None:
+            ema_map["50"] = float(ema50_latest[1])
+        if ema200_latest and ema200_latest[1] is not None:
+            ema_map["200"] = float(ema200_latest[1])
+        if ema_map:
+            indicators["ema"] = ema_map
+        if macd_latest is not None:
+            _, macd_val, sig_val, hist_val = macd_latest
+            indicators["macd"] = {
+                "macd": float(macd_val),
+                "signal": float(sig_val),
+                "hist": float(hist_val),
+            }
+
+        results.append({
+            "symbol": sym,
+            "timeframe": tf.value,
+            "bar_time": bar_time,
+            "tick": tick_obj.model_dump() if tick_obj else None,
+            "indicators": indicators,
+        })
+
+    return {
+        "timeframe": tf.value,
+        "requested_symbols": sorted(list(set([canonicalize_symbol(s) for s in requested]))) if requested else None,
+        "returned_count": len(results),
+        "forbidden_symbols": forbidden_symbols,
+        "symbols": results,
+    }
 
 @app.get("/api/tick/{symbol}")
 def get_tick(symbol: str, x_api_key: Optional[str] = Depends(require_api_token_header)):
@@ -1390,7 +1458,7 @@ if __name__ == "__main__":
     print("🚀 Starting MT5 Market Data Server...")
     print("📊 Available endpoints:")
     print("   - WebSocket (v2): ws://localhost:8000/market-v2")
-    print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=1M&count=100")
+    print("   - REST Values: GET /api/values?timeframe=5M&symbols=EURUSDm")
     print("   - News Analysis: GET /api/news/analysis")
     print("   - News Refresh: POST /api/news/refresh")
     print("   - Alert Cache: GET /api/alerts/cache")

@@ -434,8 +434,7 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 | Endpoint | Method | Description | Auth Required |
 |----------|--------|-------------|---------------|
 | `/health` | GET | Health check and MT5 status | No |
-| `/api/ohlc/{symbol}` | GET | Historical OHLC data (server-side only; no WS v2 streaming) | Yes |
-| `/api/rsi/{symbol}`  | GET | Closed‑bar RSI series (Wilder) aligned to OHLC | Yes |
+| `/api/values` | GET | Latest closed‑bar indicators and current tick per symbol for a timeframe | Yes |
 | `/api/tick/{symbol}` | GET | Current tick data | Yes |
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
@@ -457,25 +456,33 @@ Notes:
 - Backend enforces closed‑bar evaluation.
 - Pairs are fixed in code via `app/constants.py` (no per-alert selection, no env overrides).
 
-### Closed‑bar RSI REST (`/api/rsi/{symbol}`)
+### Values REST (`/api/values`)
 
 Parameters:
-- `timeframe` (string): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W` (default `5M`)
-- `count` (int): number of OHLC bars to fetch for calculation (default `300`)
+- `timeframe` (string, required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`
+- `symbols` (repeatable or CSV): symbols to include. If omitted, all WS‑allowed symbols are returned.
+- `pairs` (repeatable or CSV): alias for `symbols`.
 
-Response shape:
+Response shape (example):
 ```json
 {
-  "symbol": "EURUSDm",
   "timeframe": "5M",
-  "period": 14,
-  "bars_used": 300,
-  "count": 286,
-  "times_ms": [1695200100000, ...],
-  "times_iso": ["2025-09-20T12:35:00+00:00", ...],
-  "rsi": [61.04, 62.15, ...],
-  "applied_price": "close",
-  "method": "wilder"
+  "requested_symbols": ["EURUSDm"],
+  "returned_count": 1,
+  "forbidden_symbols": [],
+  "symbols": [
+    {
+      "symbol": "EURUSDm",
+      "timeframe": "5M",
+      "bar_time": 1696229940000,
+      "tick": {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885},
+      "indicators": {
+        "rsi": {"14": 51.23},
+        "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
+        "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
+      }
+    }
+  ]
 }
 ```
 
@@ -705,7 +712,7 @@ ws.onmessage = (event) => {
 ```bash
 # Get historical OHLC data
 curl -H "X-API-Key: your_token" \
-     "http://localhost:8000/api/ohlc/EURUSD?timeframe=1H&count=100"
+     "http://localhost:8000/api/values?timeframe=1H&symbols=EURUSDm"
 
 # Get current tick data
 curl -H "X-API-Key: your_token" \
