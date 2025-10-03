@@ -559,6 +559,7 @@ Notes:
 
 The RSI Correlation Tracker is available as a single per-user alert. Users select exactly one timeframe and a mode (`rsi_threshold` or `real_correlation`).
   - Startup warm‑up: On first observation per (pair_key, timeframe), baseline the last closed bar and current mismatch state; trigger only when a new bar produces a transition into mismatch.
+  - Implementation: RSI Threshold mode reads closed‑bar RSI values from the centralized `indicator_cache`. When the cache is not yet warm for a `(symbol,timeframe,period)`, the service computes RSI from OHLC closed bars, updates the cache with the latest value (ring buffer), and then evaluates. This avoids duplicate math long‑term while ensuring immediate correctness.
 
 - Pair selection is not required; backend evaluates a fixed set of correlation pair keys from `app/constants.py`.
 - Triggers insert into `rsi_correlation_tracker_alert_triggers` and emails reuse a compact template.

@@ -112,6 +112,9 @@ Single per-user alert for the RSI Correlation dashboard. User selects `mode` and
     - Negative pair: mismatch if correlation > −0.15
     - Strength labels: strong if |corr| ≥ 0.70; moderate if ≥ 0.30; else weak
   - Closed‑bar evaluation: evaluation runs once per closed bar for each pair/timeframe using last‑closed timestamps for both symbols; re‑triggers only after the pair leaves mismatch and then re‑enters on a subsequent closed bar.
+  - Implementation notes:
+    - RSI values are sourced from the single source of truth `indicator_cache` (closed‑bar only). If the cache is not yet warm for a `(symbol,timeframe,period)`, the service temporarily computes RSI from OHLC closed bars, updates the cache with the latest value, and proceeds. This converges the ring buffer quickly while keeping parity.
+    - Pair handling is protected by keyed async locks per `(symbol,timeframe)` and enforces one evaluation per new closed bar using the last‑closed timestamp baseline per `(alert_id,pair_key,timeframe)`.
   
 Fixed correlation pair_keys evaluated:
 
