@@ -354,7 +354,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 15 | ALERT-4 | Alerts | Refactor Indicator Tracker to read cache | Backend | DONE | Flip detection from cache | `app/heatmap_indicator_tracker_alert_service.py` | CACHE-1 | K=3 window |
 | 16 | IND-2 | Indicators | Add micro-bench + unit checks | Backend | DONE | 3–5 symbols×TFs parity | `tests/` | MT5 running | No net installs |
 | 17 | PAR-1 | Parity | Add parity checks within tolerances | Backend | DONE | Compare last N closed bars via `tests/test_parity.py` for 3–5 symbols×TFs; enforce RSI ≤ 0.15 abs diff, EMA tail ≤ 1e-9, MACD hist ≤ 5e-4; daily_change_pct (Bid) parity ≤ 0.10% | `tests/test_parity.py` | IND-1 | Close vs Bid fixed; includes daily % change parity |
-| 18 | WS-V2-3 | WebSocket v2 | Dual-run + metrics/soak | Backend | TODO | Per-type counters; low error rate | `server.py` | WS-V2-1 | Compare vs v1 |
+| 18 | WS-V2-3 | WebSocket v2 | Dual-run + metrics/soak | Backend | DONE | Per-type counters; periodic reporter; low error rate | `server.py` | WS-V2-1 | Compare vs v1 via `obs.ws` logs (ws_metrics) |
 | 19 | ROLL-1 | Rollout | Gradual enablement; measure CPU/latency | Backend | TODO | Start 10×3; ramp | N/A | SCHED-1 | No flags needed now |
 | 20 | WS-V2-4 | WebSocket v2 | Client migration docs + v1 deprecation notice | Backend | TODO | Banner + timeline | `server.py`,`README.md` | WS-V2-1 | Short removal window |
 | 21 | WS-V2-5 | WebSocket v2 | Remove `/ws/ticks` and `/ws/market` after cutover | Backend | TODO | Delete routes/legacy glue | `server.py` | WS-V2-3/4 | Keep README updated |

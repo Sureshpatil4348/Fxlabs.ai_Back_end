@@ -94,6 +94,9 @@ async def lifespan(app: FastAPI):
     # Start 10s closed-bar indicator poller
     global _indicator_scheduler_task
     _indicator_scheduler_task = asyncio.create_task(_indicator_scheduler())
+    # Start WS metrics reporter (dual-run soak)
+    global _ws_metrics_task
+    _ws_metrics_task = asyncio.create_task(_ws_metrics_reporter())
     
     yield
     
@@ -125,6 +128,12 @@ async def lifespan(app: FastAPI):
     if _indicator_scheduler_task:
         try:
             await _indicator_scheduler_task
+        except asyncio.CancelledError:
+            pass
+    if _ws_metrics_task:
+        try:
+            _ws_metrics_task.cancel()
+            await _ws_metrics_task
         except asyncio.CancelledError:
             pass
     mt5.shutdown()
@@ -175,6 +184,23 @@ _indicator_last_bar: Dict[str, int] = {}
 
 # D1 reference cache for daily % change computations (per symbol, keyed by UTC day)
 _d1_ref_cache: Dict[str, Tuple[str, float]] = {}
+
+# WebSocket metrics (dual-run v1/v2 soak): in-memory counters per endpoint label
+_ws_metrics: Dict[str, Dict[str, int]] = {
+    "legacy": defaultdict(int),
+    "v1": defaultdict(int),
+    "v2": defaultdict(int),
+}
+_ws_metrics_task: Optional[asyncio.Task] = None
+
+def _metrics_inc(label: str, key: str, by: int = 1) -> None:
+    try:
+        if label not in _ws_metrics:
+            return
+        _ws_metrics[label][key] = _ws_metrics[label].get(key, 0) + int(by)
+    except Exception:
+        # Observability must never break runtime
+        pass
 
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
@@ -541,11 +567,27 @@ async def _indicator_scheduler() -> None:
                         for c in clients:
                             try:
                                 if getattr(c, "v2_broadcast", False):
-                                    await c._try_send_json(msg)
+                                    ok = await c._try_send_json(msg)
+                                    try:
+                                        label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
+                                        if ok:
+                                            _metrics_inc(label, "ok_indicator_update", 1)
+                                        else:
+                                            _metrics_inc(label, "fail_indicator_update", 1)
+                                    except Exception:
+                                        pass
                                     continue
                                 sub = getattr(c, "subscriptions", {}).get(symbol, {}).get(tf)
                                 if sub and "indicators" in getattr(sub, "data_types", []):
-                                    await c._try_send_json(msg)
+                                    ok = await c._try_send_json(msg)
+                                    try:
+                                        label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
+                                        if ok:
+                                            _metrics_inc(label, "ok_indicator_update", 1)
+                                        else:
+                                            _metrics_inc(label, "fail_indicator_update", 1)
+                                    except Exception:
+                                        pass
                             except Exception:
                                 # Never let a single client block the scheduler
                                 continue
@@ -585,6 +627,82 @@ async def _indicator_scheduler() -> None:
         return
     except Exception as e:
         print(f"❌ Indicator scheduler fatal error: {e}")
+
+
+async def _ws_metrics_reporter() -> None:
+    """Periodically log WebSocket send counters per endpoint label to compare v1 vs v2 during dual-run.
+
+    Resets counters after each report to emit windowed deltas.
+    """
+    try:
+        interval_s = int(os.environ.get("WS_METRICS_INTERVAL_S", "30"))
+        logger = logging.getLogger("obs.ws")
+        while True:
+            try:
+                await asyncio.sleep(interval_s)
+            except asyncio.CancelledError:
+                raise
+
+            # Snapshot and reset counters atomically enough for our purposes
+            try:
+                # Compute active connections by label
+                active: Dict[str, int] = {"legacy": 0, "v1": 0, "v2": 0}
+                async with _connected_clients_lock:
+                    for c in list(_connected_clients):
+                        label = getattr(c, "conn_label", "v1")
+                        if label in active:
+                            active[label] += 1
+
+                snap = {lbl: dict(counts) for lbl, counts in _ws_metrics.items()}
+                # Human-friendly rollup
+                def fmt(label: str) -> str:
+                    d = snap.get(label, {})
+                    ticks_ok = int(d.get("ok_ticks", 0))
+                    ticks_fail = int(d.get("fail_ticks", 0))
+                    ticks_items = int(d.get("ticks_items", 0))
+                    ind_ok = int(d.get("ok_indicator_update", 0))
+                    ind_fail = int(d.get("fail_indicator_update", 0))
+                    opened = int(d.get("connections_opened", 0))
+                    closed = int(d.get("connections_closed", 0))
+                    err_rate_ticks = (ticks_fail / max(ticks_ok + ticks_fail, 1))
+                    err_rate_ind = (ind_fail / max(ind_ok + ind_fail, 1))
+                    return (
+                        f"conns={active.get(label, 0)} opened={opened} closed={closed} "
+                        f"ticks_msgs={ticks_ok+ticks_fail} items={ticks_items} err={err_rate_ticks:.3f} "
+                        f"indicator_msgs={ind_ok+ind_fail} err={err_rate_ind:.3f}"
+                    )
+
+                logger.info(
+                    "📈 ws_metrics | window_s=%d | legacy: %s | v1: %s | v2: %s",
+                    interval_s,
+                    fmt("legacy"),
+                    fmt("v1"),
+                    fmt("v2"),
+                )
+
+                # Structured JSON snapshot at DEBUG
+                try:
+                    payload = {
+                        "event": "ws_metrics",
+                        "window_s": interval_s,
+                        "active": active,
+                        "counts": snap,
+                    }
+                    logger.debug(orjson.dumps(payload).decode("utf-8"))
+                except Exception:
+                    pass
+
+                # Reset counters for the next window
+                for k in list(_ws_metrics.keys()):
+                    _ws_metrics[k] = defaultdict(int)
+
+            except Exception:
+                # Never let metrics reporting crash the server
+                pass
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        print(f"❌ WS metrics reporter error: {e}")
 
 
 # liveRSI boundary debugger removed — logs now emitted from indicator scheduler for M1
@@ -1026,6 +1144,16 @@ class WSClient:
                     
         if updates:
             sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": updates}))
+            # Metrics: per-endpoint counters for tick messages and items
+            try:
+                label = getattr(self, "conn_label", "v1")
+                _metrics_inc(label, "ticks_items", by=len(updates))
+                if sent:
+                    _metrics_inc(label, "ok_ticks", 1)
+                else:
+                    _metrics_inc(label, "fail_ticks", 1)
+            except Exception:
+                pass
             if not sent:
                 # Stop trying if client is gone
                 return
@@ -1429,6 +1557,12 @@ async def ws_ticks_legacy(websocket: WebSocket):
             pass
 
         client = WSClient(websocket, "", supported_data_types={"ticks", "ohlc"})
+        # Tag connection for metrics
+        try:
+            setattr(client, "conn_label", "legacy")
+            _metrics_inc("legacy", "connections_opened", 1)
+        except Exception:
+            pass
         await client.start()
         async with _connected_clients_lock:
             _connected_clients.add(client)
@@ -1473,6 +1607,10 @@ async def ws_ticks_legacy(websocket: WebSocket):
                 _connected_clients.discard(client)
         except Exception:
             pass
+        try:
+            _metrics_inc("legacy", "connections_closed", 1)
+        except Exception:
+            pass
 
 @app.websocket("/ws/market")
 async def ws_market(websocket: WebSocket):
@@ -1503,6 +1641,12 @@ async def ws_market(websocket: WebSocket):
         
         # Create WSClient for real MT5 data
         client = WSClient(websocket, "", supported_data_types={"ticks", "ohlc", "indicators"})
+        # Tag connection for metrics
+        try:
+            setattr(client, "conn_label", "v1")
+            _metrics_inc("v1", "connections_opened", 1)
+        except Exception:
+            pass
         await client.start()
         async with _connected_clients_lock:
             _connected_clients.add(client)
@@ -1547,6 +1691,10 @@ async def ws_market(websocket: WebSocket):
                 _connected_clients.discard(client)
         except Exception:
             pass
+        try:
+            _metrics_inc("v1", "connections_closed", 1)
+        except Exception:
+            pass
 
 @app.websocket("/market-v2")
 async def ws_market_v2(websocket: WebSocket):
@@ -1586,6 +1734,12 @@ async def ws_market_v2(websocket: WebSocket):
 
         # Reuse the same WSClient implementation as /ws/market, enable broadcast-all for v2
         client = WSClient(websocket, "", supported_data_types={"ticks", "indicators"}, v2_broadcast=True)
+        # Tag connection for metrics
+        try:
+            setattr(client, "conn_label", "v2")
+            _metrics_inc("v2", "connections_opened", 1)
+        except Exception:
+            pass
         await client.start()
         async with _connected_clients_lock:
             _connected_clients.add(client)
@@ -1622,6 +1776,10 @@ async def ws_market_v2(websocket: WebSocket):
         try:
             async with _connected_clients_lock:
                 _connected_clients.discard(client)
+        except Exception:
+            pass
+        try:
+            _metrics_inc("v2", "connections_closed", 1)
         except Exception:
             pass
 

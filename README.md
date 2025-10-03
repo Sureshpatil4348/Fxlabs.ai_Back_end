@@ -476,6 +476,26 @@ Tick payloads include `daily_change_pct` (Bid vs broker D1 reference):
 
 Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
+#### WebSocket Dual‑Run Metrics (WS‑V2‑3)
+
+- The server emits periodic WebSocket metrics to compare v1 vs v2 behavior during dual‑run/soak.
+- Interval: `WS_METRICS_INTERVAL_S` (default 30s).
+- Log channel: INFO summary on logger `obs.ws` and DEBUG JSON snapshot.
+- Counters (per label `legacy|v1|v2`):
+  - `connections_opened`, `connections_closed`
+  - `ok_ticks`, `fail_ticks`, `ticks_items` (sum of items sent in tick lists)
+  - `ok_indicator_update`, `fail_indicator_update`
+
+Example INFO log line:
+
+```text
+📈 ws_metrics | window_s=30 | legacy: conns=0 opened=0 closed=0 ticks_msgs=0 items=0 err=0.000 indicator_msgs=0 err=0.000 | v1: conns=1 opened=1 closed=0 ticks_msgs=120 items=900 err=0.000 indicator_msgs=3 err=0.000 | v2: conns=2 opened=2 closed=0 ticks_msgs=240 items=1800 err=0.004 indicator_msgs=6 err=0.000
+```
+
+Notes:
+- Counters reset after each report (windowed deltas). Active connection counts are sampled live.
+- Low error rates are expected; persistent failures indicate client disconnects or network issues.
+
 ### REST API Endpoints
 
 | Endpoint | Method | Description | Auth Required |
