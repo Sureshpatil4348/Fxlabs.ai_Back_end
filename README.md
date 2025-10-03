@@ -49,7 +49,7 @@ This backend aligns alert evaluations with the Calculations Reference used by th
 
 - Closed‑candle policy: All RSI/correlation/heatmap evaluations use closed candles; forming candles are not used in triggers.
 - MT5 OHLC snapshots still include the forming candle as the final element with `is_closed=false`. Backend RSI calculations ignore it automatically, so frontend collectors can continue using the tail for live charting without custom trimming.
-- RSI (14, Wilder): Computed from MT5 OHLC (Bid‑based series), matching frontend logic.
+- RSI (14, Wilder): Computed from MT5 OHLC (Bid‑based series), matching frontend logic. Period is fixed to 14 across the entire system (REST/WS, alerts, emails, cache).
 - RSI Correlation (Dashboard parity):
   - Mode `rsi_threshold`: Pair‑type aware mismatch (positive: OB/OS split; negative: both OB or both OS).
   - Mode `real_correlation`: Timestamp‑aligned log‑return Pearson correlation over the rolling window. Mismatch thresholds are pair‑type aware (positive: corr < +0.25; negative: corr > −0.15). Strength labels: strong |corr|≥0.70, moderate ≥0.30, else weak.
@@ -457,7 +457,6 @@ Notes:
 
 Parameters:
 - `timeframe` (string): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W` (default `5M`)
-- `period` (int): RSI period (default `14`)
 - `count` (int): number of OHLC bars to fetch for calculation (default `300`)
 
 Response shape:
@@ -477,7 +476,7 @@ Response shape:
 ```
 
 Notes:
-- RSI is computed on closed bars only, matching MT5's default RSI(14) close/Wilder.
+- RSI is computed on closed bars only, matching MT5's default RSI(14) close/Wilder. Period is always 14 (requests ignore any other period).
 - `times_*` arrays align 1:1 with `rsi[]` and correspond to the closed bars beginning at index `period` in the closed OHLC sequence.
 - For exact parity with MT5, request the broker‑suffixed symbol (e.g., `EURUSDm`).
 

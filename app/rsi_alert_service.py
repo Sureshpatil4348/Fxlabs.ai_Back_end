@@ -101,7 +101,8 @@ class RSIAlertService:
                         # Gather config snapshot for structured start log
                         pairs_cfg = alert.get("pairs", []) or []
                         timeframes_cfg = alert.get("timeframes", ["1H"]) or ["1H"]
-                        rsi_period_cfg = alert.get("rsi_period", 14)
+                        # Enforce RSI period = 14 globally
+                        rsi_period_cfg = 14
                         rsi_ob_cfg = alert.get("rsi_overbought_threshold", 70)
                         rsi_os_cfg = alert.get("rsi_oversold_threshold", 30)
                         conditions_cfg = alert.get("alert_conditions", []) or []
@@ -190,8 +191,8 @@ class RSIAlertService:
             timeframes = alert.get("timeframes", ["1H"])
             alert_conditions = alert.get("alert_conditions", [])
             
-            # RSI settings
-            rsi_period = alert.get("rsi_period", 14)
+            # RSI settings (enforced to 14)
+            rsi_period = 14
             rsi_overbought = alert.get("rsi_overbought_threshold", 70)
             rsi_oversold = alert.get("rsi_oversold_threshold", 30)
             
@@ -818,7 +819,8 @@ class RSIAlertService:
                 "user_email": alert_data.get("user_email"),
                 "pairs": alert_data.get("pairs", []),
                 "timeframes": alert_data.get("timeframes", ["1H"]),
-                "rsi_period": alert_data.get("rsi_period", 14),
+                # Force persisted period to 14
+                "rsi_period": 14,
                 "rsi_overbought_threshold": alert_data.get("rsi_overbought_threshold", 70),
                 "rsi_oversold_threshold": alert_data.get("rsi_oversold_threshold", 30),
                 "alert_conditions": alert_data.get("alert_conditions", []),

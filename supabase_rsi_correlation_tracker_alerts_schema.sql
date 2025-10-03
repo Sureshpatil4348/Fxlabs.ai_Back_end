@@ -7,7 +7,7 @@ create table if not exists public.rsi_correlation_tracker_alerts (
   user_email text not null,
   timeframe text not null check (timeframe in ('5M','15M','30M','1H','4H','1D','1W')),
   mode text not null check (mode in ('rsi_threshold','real_correlation')),
-  rsi_period int2 check (rsi_period between 5 and 50),
+  rsi_period int2 check (rsi_period = 14),
   rsi_overbought int2 check (rsi_overbought between 60 and 90),
   rsi_oversold int2 check (rsi_oversold between 10 and 40),
   correlation_window int2 check (correlation_window in (20,50,90,120)),

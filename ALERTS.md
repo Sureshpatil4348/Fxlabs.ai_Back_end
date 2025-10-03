@@ -27,7 +27,7 @@
 **Simplified Scope (Current Support)**
 - RSI Tracker Alert (single per user)
   - Timeframe: choose exactly one (e.g., `5M`, `15M`, `30M`, `1H`, `4H`, `1D`, `1W`).
-  - RSI settings: `rsi_period` (5–50), `rsi_overbought` (60–90), `rsi_oversold` (10–40).
+  - RSI settings: period is fixed to 14; configure only `rsi_overbought` (60–90) and `rsi_oversold` (10–40).
   - Pairs: fixed set, backend uses a documented list (no per-alert selection, no env overrides).
   - Behavior: If any pair crosses into overbought/oversold on the closed candle, a trigger is recorded and emailed.
   - Supported trading pairs (MT5-suffixed): `EURUSDm, GBPUSDm, USDJPYm, USDCHFm, AUDUSDm, USDCADm, NZDUSDm, EURGBPm, EURJPYm, EURCHFm, EURAUDm, EURCADm, EURNZDm, GBPJPYm, GBPCHFm, GBPAUDm, GBPCADm, GBPNZDm, AUDJPYm, AUDCHFm, AUDCADm, AUDNZDm, NZDJPYm, NZDCHFm, NZDCADm, CADJPYm, CADCHFm, CHFJPYm, XAUUSDm, XAGUSDm, BTCUSDm, ETHUSDm`.
@@ -101,7 +101,7 @@ Single per-user alert for the RSI Correlation dashboard. User selects `mode` and
 - **Mode**: `rsi_threshold` or `real_correlation`
 - **Timeframe**: one of `1M,5M,15M,30M,1H,4H,1D,1W` (choose only one)
 - **Pairs**: no selection needed; backend auto-checks configured correlation pairs.
-- **RSI Threshold**: `rsi_period` (5–50), `rsi_overbought` (60–90), `rsi_oversold` (10–40)
+- **RSI Threshold**: period is fixed to 14; configure `rsi_overbought` (60–90), `rsi_oversold` (10–40)
 - **Real Correlation**: `correlation_window` (20, 50, 90, 120)
 - **Behavior**: Insert a trigger when a correlation pair transitions into a mismatch per rules below.
   - RSI Threshold mode: uses pair‑type aware mismatch definitions

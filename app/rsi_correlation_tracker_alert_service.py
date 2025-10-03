@@ -81,7 +81,8 @@ class RSICorrelationTrackerAlertService:
                     user_email = alert.get("user_email", "")
                     timeframe = self._normalize_timeframe(alert.get("timeframe", "1H"))
                     mode = (alert.get("mode") or "rsi_threshold").lower()
-                    rsi_period = int(alert.get("rsi_period", 14))
+                    # Enforce RSI(14)
+                    rsi_period = 14
                     rsi_ob = int(alert.get("rsi_overbought", 70))
                     rsi_os = int(alert.get("rsi_oversold", 30))
                     corr_window = int(alert.get("correlation_window", 50))

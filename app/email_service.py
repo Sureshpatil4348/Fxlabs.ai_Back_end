@@ -1662,7 +1662,8 @@ class EmailService:
         # RSI threshold mode: use provided compact RSI correlation mismatch template with RSI correlation
         # One card per triggered pair
         if calculation_mode == "rsi_threshold":
-            rsi_len = alert_config.get("rsi_period", 14)
+            # Enforce RSI(14) for display
+            rsi_len = 14
             def expected_and_rule(pair: Dict[str, Any]) -> Tuple[str, str]:
                 condition = str(pair.get("trigger_condition", "")).strip()
                 ob = alert_config.get("rsi_overbought_threshold", 70)

@@ -765,7 +765,6 @@ def get_ohlc(symbol: str, timeframe: str = Query("5M"), count: int = Query(250, 
 def get_rsi(
     symbol: str,
     timeframe: str = Query("5M"),
-    period: int = Query(14, ge=1, le=200),
     count: int = Query(300, ge=50, le=1000),
     x_api_key: Optional[str] = Depends(require_api_token_header),
 ):
@@ -779,11 +778,12 @@ def get_rsi(
         ohlc_data = get_ohlc_data(sym, tf, count)
         # Use only closed bars
         closed = [bar for bar in ohlc_data if getattr(bar, "is_closed", None) is not False]
-        if len(closed) < period + 1:
+        forced_period = 14
+        if len(closed) < forced_period + 1:
             return {
                 "symbol": sym,
                 "timeframe": timeframe,
-                "period": period,
+                "period": forced_period,
                 "bars_used": len(closed),
                 "count": 0,
                 "times_ms": [],
@@ -793,15 +793,15 @@ def get_rsi(
                 "method": "wilder",
             }
         closes = [bar.close for bar in closed]
-        series = calculate_rsi_series(closes, period)
-        # Align timestamps: RSI series starts at index `period` of closed bars
-        aligned_bars = closed[period:]
+        series = calculate_rsi_series(closes, forced_period)
+        # Align timestamps: RSI series starts at index `forced_period` of closed bars
+        aligned_bars = closed[forced_period:]
         times_ms = [int(bar.time) for bar in aligned_bars]
         times_iso = [bar.time_iso for bar in aligned_bars]
         return {
             "symbol": sym,
             "timeframe": timeframe,
-            "period": period,
+            "period": forced_period,
             "bars_used": len(closed),
             "count": len(series),
             "times_ms": times_ms,

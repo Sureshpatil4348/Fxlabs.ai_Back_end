@@ -115,7 +115,8 @@ class AlertCache:
                         "user_email": alert.get("user_email"),
                         "is_active": alert.get("is_active", True),
                         "timeframe": alert.get("timeframe", "1H"),
-                        "rsi_period": alert.get("rsi_period", 14),
+                        # Normalize to RSI(14)
+                        "rsi_period": 14,
                         "rsi_overbought": alert.get("rsi_overbought", alert.get("rsi_overbought_threshold", 70)),
                         "rsi_oversold": alert.get("rsi_oversold", alert.get("rsi_oversold_threshold", 30)),
                         "notification_methods": alert.get("notification_methods", ["email"]),
@@ -138,7 +139,8 @@ class AlertCache:
                         "is_active": alert.get("is_active", True),
                         "timeframe": alert.get("timeframe", "1H"),
                         "mode": alert.get("mode", "rsi_threshold"),
-                        "rsi_period": alert.get("rsi_period", 14),
+                        # Normalize to RSI(14) when present
+                        "rsi_period": 14,
                         "rsi_overbought": alert.get("rsi_overbought", 70),
                         "rsi_oversold": alert.get("rsi_oversold", 30),
                         "correlation_window": alert.get("correlation_window", 50),

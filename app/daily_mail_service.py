@@ -36,7 +36,8 @@ def _pair_display(symbol: str) -> str:
 
 
 def _rsi_latest_from_closes(closes: List[float], period: int = 14) -> Optional[float]:
-    return calculate_rsi_latest(closes, period)
+    # Enforce RSI(14)
+    return calculate_rsi_latest(closes, 14)
 
 
 async def _collect_core_signals() -> List[Dict[str, Any]]:
@@ -71,9 +72,9 @@ async def _collect_rsi_h4(period: int = 14) -> Tuple[List[Dict[str, Any]], List[
     overbought: List[Dict[str, Any]] = []
     for sym in RSI_SUPPORTED_SYMBOLS:
         try:
-            ohlc = get_ohlc_data(sym, Timeframe.H4, period + 20)
+            ohlc = get_ohlc_data(sym, Timeframe.H4, 14 + 20)
             closes = closed_closes(ohlc)
-            rsi_val = _rsi_latest_from_closes(closes, period)
+            rsi_val = _rsi_latest_from_closes(closes, 14)
             if rsi_val is None:
                 continue
             rsi_rounded = round(float(rsi_val), 2)

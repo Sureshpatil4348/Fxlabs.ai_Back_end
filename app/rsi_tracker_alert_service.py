@@ -374,7 +374,8 @@ class RSITrackerAlertService:
                     alert_name = alert.get("alert_name", "RSI Tracker Alert")
                     user_email = alert.get("user_email", "")
                     timeframe = self._normalize_timeframe(alert.get("timeframe", "1H"))
-                    rsi_period = int(alert.get("rsi_period", 14))
+                    # Enforce RSI(14)
+                    rsi_period = 14
                     rsi_overbought = int(alert.get("rsi_overbought", alert.get("rsi_overbought_threshold", 70)))
                     rsi_oversold = int(alert.get("rsi_oversold", alert.get("rsi_oversold_threshold", 30)))
                     # Start-of-alert evaluation log (no per-alert pairs, fixed set used)

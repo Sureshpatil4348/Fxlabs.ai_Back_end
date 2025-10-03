@@ -6,7 +6,7 @@ create table if not exists public.rsi_tracker_alerts (
   user_id uuid references auth.users(id) on delete cascade,
   user_email text not null,
   timeframe text not null check (timeframe in ('5M','15M','30M','1H','4H','1D','1W')),
-  rsi_period int2 not null check (rsi_period between 5 and 50) default 14,
+  rsi_period int2 not null check (rsi_period = 14) default 14,
   rsi_overbought int2 not null check (rsi_overbought between 60 and 90) default 70,
   rsi_oversold int2 not null check (rsi_oversold between 10 and 40) default 30,
   is_active boolean not null default true,
