@@ -1098,10 +1098,12 @@ class WSClient:
         # v2 broadcast: include rollout baseline symbols (gradual enablement)
         if self.v2_broadcast:
             try:
-                syms = _rollout_symbols()
-                tick_symbols.update(syms[:INDICATOR_ROLLOUT_MAX_SYMBOLS])
+                # Stream all allowed symbols (default: full RSI_SUPPORTED_SYMBOLS)
+                # WS_ALLOWED_SYMBOLS env var can narrow this allowlist.
+                tick_symbols.update(ALLOWED_WS_SYMBOLS)
             except Exception:
-                tick_symbols.update(RSI_SUPPORTED_SYMBOLS)
+                # Fallback to full supported list
+                tick_symbols.update([s.upper() for s in RSI_SUPPORTED_SYMBOLS])
         
         if not tick_symbols:
             return

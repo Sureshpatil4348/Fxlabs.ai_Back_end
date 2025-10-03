@@ -280,6 +280,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 - **URL**: `ws://localhost:8000/market-v2`
 - **Purpose**: Real-time tick and indicator streaming (no OHLC streaming to clients)
 - **Behavior**: Broadcast-only baseline (symbols/timeframes). `subscribe`/`unsubscribe` are ignored (server replies with `{type:"info", message:"v2 broadcast-only: subscribe/unsubscribe ignored"}`).
+  - As of v2.0.0+, tick updates include all allowed symbols every 500 ms on a delta basis (only symbols with a new tick since the last send appear in each message).
 
 Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services. Connected discovery message includes capabilities and indicators registry:
 
@@ -330,14 +331,14 @@ Internal alert tick_data shape:
 #### Market Data WebSocket v2 (`/market-v2`) — preferred
 - Use `/market-v2` for new clients. It exposes tick and indicator payloads only (no OHLC streaming), and advertises capabilities via `supported_data_types` in the greeting.
 - Current capabilities: `supported_data_types = ["ticks","indicators"]`.
-- Broadcast-All mode: v2 pushes ticks and indicators (closed‑bar) for a baseline set of symbols/timeframes to all connected clients without explicit subscriptions. OHLC is computed server‑side only for indicators/alerts.
-  - Baseline symbols: `RSI_SUPPORTED_SYMBOLS` from `app/constants.py` (broker‑suffixed)
+- Broadcast-All mode: v2 pushes ticks and indicators (closed‑bar) to all connected clients without explicit subscriptions. OHLC is computed server‑side only for indicators/alerts.
+  - Symbols: all symbols in `ALLOWED_WS_SYMBOLS` (defaults to all `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`, broker‑suffixed)
   - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1
 - Subscribe remains optional and is primarily used to receive `initial_ohlc` / `initial_indicators` snapshots on demand.
 
 Security and input validation (mirrors REST policy):
 - If `API_TOKEN` is set, WebSocket connections must include header `X-API-Key: <token>`; otherwise connections are allowed without auth.
-- Symbols allowlist: by default, only symbols in `RSI_SUPPORTED_SYMBOLS` are accepted. Override with env `WS_ALLOWED_SYMBOLS` (comma-separated, broker-suffixed).
+- Symbols allowlist: by default, all symbols in `RSI_SUPPORTED_SYMBOLS` are accepted and streamed. Override with env `WS_ALLOWED_SYMBOLS` (comma-separated, broker-suffixed) to restrict the feed.
 - Timeframe allowlist: defaults to all `app.models.Timeframe` values. Override with env `WS_ALLOWED_TIMEFRAMES` (values like `1M,5M,1H` or enum names like `M1,M5,H1`).
 - Per-connection caps (env-configurable):
   - `WS_MAX_SYMBOLS` (default 10)
