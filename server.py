@@ -928,15 +928,7 @@ async def get_indicator(
         "pairs": results,
     }
 
-@app.get("/api/tick/{symbol}")
-def get_tick(symbol: str, x_api_key: Optional[str] = Depends(require_api_token_header)):
-    sym = canonicalize_symbol(symbol)
-    ensure_symbol_selected(sym)
-    info = mt5.symbol_info_tick(sym)
-    tick = _to_tick(sym, info)
-    if tick is None:
-        raise HTTPException(status_code=404, detail="No tick available")
-    return tick.model_dump()
+
 
 @app.get("/api/symbols")
 def search_symbols(q: str = Query(..., min_length=1), x_api_key: Optional[str] = Depends(require_api_token_header)):

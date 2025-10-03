@@ -68,7 +68,7 @@ For end-to-end alert behavior and product policies, see `ALERTS.md`.
 
 ## REST Endpoints (MT5-backed)
 - `GET /api/indicator?indicator=rsi&timeframe=5M&pairs=EURUSDm` → returns latest closed‑bar indicator values for requested symbols.
-- `GET /api/tick/{symbol}` → returns latest tick.
+- Tick data is WebSocket-only via `/market-v2` (no REST tick endpoint).
 - Both require `X-API-Key` if `API_TOKEN` is set.
 
 ## Security & Operational Notes

@@ -438,7 +438,6 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 |----------|--------|-------------|---------------|
 | `/health` | GET | Health check and MT5 status | No |
 | `/api/indicator` | GET | Latest closed‑bar value(s) for a given indicator across pairs | Yes |
-| `/api/tick/{symbol}` | GET | Current tick data | Yes |
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
 | `/api/news/refresh` | POST | Manual news refresh | Yes |
@@ -705,9 +704,7 @@ ws.onmessage = (event) => {
 curl -H "X-API-Key: your_token" \
      "http://localhost:8000/api/indicator?indicator=rsi&timeframe=1H&pairs=EURUSDm&pairs=BTCUSDm"
 
-# Get current tick data
-curl -H "X-API-Key: your_token" \
-     "http://localhost:8000/api/tick/EURUSD"
+# Note: Tick data is WebSocket-only. Use `/market-v2` to receive live ticks.
 ```
 
 ## 🏗️ Architecture Details

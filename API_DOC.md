@@ -108,20 +108,7 @@ This document describes how the frontend should consume market data and indicato
     {"indicator":"macd","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"macd":0.00012,"signal":0.00010,"hist":0.00002}}]}
     ```
 
-- `GET /api/tick/{symbol}`
-  - Returns the latest tick for a symbol.
-  - Response (example):
-    ```json
-    {
-      "symbol": "EURUSDm",
-      "time": 1696229945123,
-      "time_iso": "2025-10-02T14:19:05.123Z",
-      "bid": 1.06871,
-      "ask": 1.06885,
-      "last": 1.06878,
-      "volume": 120
-    }
-    ```
+Note: Tick data is WebSocket-only via `/market-v2`. There is no REST tick endpoint.
 
 ### Recommended client usage
 
