@@ -367,3 +367,5 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 21 | WS-V2-5 | WebSocket v2 | Remove `/ws/ticks` and `/ws/market` after cutover | Backend | TODO | Delete routes/legacy glue | `server.py` | WS-V2-3/4 | Keep README updated |
 | 22 | DOC-1 | Docs | Keep README.md updated | Backend | DONE | README references this doc | `README.md` | None | Clarify current vs planned |
 | 23 | DOC-2 | Docs | Keep ALERTS.md aligned to pipeline | Backend | DONE | liveRSI note reflects task | `ALERTS.md` | None | No math duplication |
+| 24 | WS-V2-7 | WebSocket v2 | Remove per-client subscription model post cutover | Backend | TODO | Delete subscribe/unsubscribe handlers; remove `SubscriptionInfo`-based gating; v2 stays broadcast-only | `server.py`,`app/models.py` | WS-V2-5 | Keep ping/pong; retain global shaping defaults |
+| 25 | DOC-3 | Docs | Update examples to broadcast-only (remove sub flows) | Backend | TODO | Update `README.md` and `test_websocket.html` to reflect v2 broadcast; note legacy endpoints until removal | `README.md`,`test_websocket.html` | WS-V2-7 | Keep optional snapshot subscribe notes |
