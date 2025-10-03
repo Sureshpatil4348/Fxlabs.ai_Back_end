@@ -425,6 +425,10 @@ Notes:
 - Counters reset after each report (windowed deltas). Active connection counts are sampled live.
 - Low error rates are expected; persistent failures indicate client disconnects or network issues.
 
+### Full API Reference
+
+See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples, and integration guidance.
+
 ### REST API Endpoints (complete)
 
 | Endpoint | Method | Description | Auth Required |
