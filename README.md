@@ -877,6 +877,22 @@ Run a small micro-benchmark of indicator computations (latest closed bar) for 3�
 python tests/bench_indicators.py
 ```
 
+### Indicators: Parity Checks (Closed‑Bar)
+
+- Prerequisite: MT5 terminal is installed and accessible. Optionally set `MT5_TERMINAL_PATH` in your environment.
+
+Run parity checks across the last N closed bars for 3–5 symbols and multiple timeframes. Enforces tolerances from `REARCHITECTING.md`:
+
+```bash
+python tests/test_parity.py
+```
+
+Tolerances:
+- RSI (Wilder): abs diff ≤ 0.15
+- EMA(21/50/200): tail abs diff ≤ 1e‑9 (identical math)
+- MACD(12,26,9) histogram: abs diff ≤ 5e‑4
+- Daily % change (Bid): parity within ≤ 0.10%
+
 Notes:
 - These tests require a live MT5 connection and will skip gracefully if MT5 is unavailable.
 - Parity tolerances follow `REARCHITECTING.md` (e.g., RSI ≤ 0.15 abs diff; MACD hist ≤ 5e-4).
