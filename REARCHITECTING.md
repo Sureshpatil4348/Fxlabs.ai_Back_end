@@ -46,7 +46,7 @@ This document defines a simple, polling-only design that uses Python’s MetaTra
   - Indicators stream: pushes `indicator_update` when new closed-bar indicators are computed (10s poll cadence; v2-only).
   - On subscribe, server sends `initial_ohlc` when `ohlc` is requested. `initial_indicators` will be added with the indicator pipeline.
 - WebSocket v2 (`/market-v2`) — Broadcast-All Mode
-  - No explicit subscriptions required. Server broadcasts ticks, OHLC boundary updates, and indicators for a baseline set of symbols/timeframes to all connected clients.
+  - No explicit subscriptions required. Server broadcasts ticks and indicator updates for a baseline set of symbols/timeframes to all connected clients.
   - Baseline symbols: broker-suffixed `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`.
   - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1.
   - Subscription messages are still accepted for compatibility but not required in v2.
@@ -136,9 +136,7 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
     ```json
     { "type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"volume":120, "daily_change_pct": -0.12}, ... ] }
     ```
-  - OHLC updates:
-    - Live forming bar on tick: `{ "type": "ohlc_live", "data": { /* single OHLC with is_closed=false */ } }`
-    - Closed bar at boundary: `{ "type": "ohlc_update", "data": { /* single OHLC with is_closed=true */ } }`
+  - OHLC updates: not pushed in v2. OHLC is used server-side only for indicator calculations, alerts, and debugging. Legacy `/ws/market` still supports OHLC streaming.
   - Indicator update:
     ```json
     {
@@ -158,8 +156,8 @@ Daily % change calculation (matching MT5 as closely as feasible without EA):
     - Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
 Broadcast-All Notes (v2 only)
-  - Indicators are broadcast to all v2 clients for the baseline coverage; no `data_types:["indicators"]` is needed.
-- Ticks are pushed for all baseline symbols; OHLC boundary updates fire for all baseline timeframes.
+- Indicators are broadcast to all v2 clients for the baseline coverage; no `data_types:["indicators"]` is needed.
+- Ticks are pushed for all baseline symbols; OHLC is not streamed on v2.
 - Clients can still send `subscribe`/`unsubscribe`, but server behavior in v2 does not require them for receiving baseline data.
 
 - Unsubscribe and keepalive
@@ -208,7 +206,7 @@ Broadcast-All Notes (v2 only)
 
 ## Market v2 WebSocket — `/market-v2` (Backwards-Compatible Rollout)
 
-- Introduce a stable, forward‑compatible WebSocket endpoint that unifies real‑time ticks, OHLC live/closed bars, and indicator streaming.
+- Introduce a stable, forward‑compatible WebSocket endpoint that serves real‑time ticks and indicator streaming. OHLC is computed/cached server‑side only (not streamed in v2).
 - Keep existing endpoints (`/ws/market`, `/ws/ticks`) operational during migration; remove them after successful client cutover.
 
 Endpoint
@@ -219,21 +217,18 @@ Endpoint
     "type": "connected",
     "message": "WebSocket connected successfully",
     "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
-    "supported_data_types": ["ticks","ohlc","indicators"],
-    "supported_price_bases": ["last","bid","ask"],
-    "ohlc_schema": "parallel"
+    "supported_data_types": ["ticks","indicators"],
+    "supported_price_bases": ["last","bid","ask"]
   }
   ```
 
 Broadcast-All Behavior
-- Server pushes: `ticks`, `ohlc_update`, and `indicator_update` for baseline symbols/timeframes without subscription.
-- Optional: clients may still `subscribe` to receive `initial_ohlc` and `initial_indicators` snapshots for specific symbol×timeframe on demand.
+- Server pushes: `ticks` and `indicator_update` for baseline symbols/timeframes without subscription.
+- Optional: clients may still `subscribe` to receive `initial_indicators` snapshots for specific symbol×timeframe on demand. `initial_ohlc` is not sent on v2.
 
 Live Push Types
 - `ticks`: coalesced list, as in v1
-- `ohlc_live`: forming candle on tick
-- `ohlc_update`: closed candle at boundary (guaranteed)
-  - `indicator_update`: closed‑bar indicators after 10s poller detects a new bar
+- `indicator_update`: closed‑bar indicators after 10s poller detects a new bar
 
 Validation & Safety
 - Strict symbol/timeframe allowlist; per‑connection caps on total subscriptions.

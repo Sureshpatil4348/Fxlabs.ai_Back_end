@@ -875,9 +875,11 @@ class WSClient:
         # WebSocket is already accepted in the main handler
         # Start both tick and OHLC background tasks
         self._task = asyncio.create_task(self._tick_loop())
-        self._ohlc_task = asyncio.create_task(self._ohlc_loop())
+        # Only start OHLC loop when this connection supports OHLC streaming
+        if "ohlc" in self.supported_data_types:
+            self._ohlc_task = asyncio.create_task(self._ohlc_loop())
         # If v2 broadcast, pre-schedule OHLC boundary updates for baseline symbols/timeframes
-        if self.v2_broadcast:
+        if self.v2_broadcast and ("ohlc" in self.supported_data_types):
             try:
                 now = datetime.now(timezone.utc)
                 baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1]
@@ -1084,7 +1086,9 @@ class WSClient:
                 if current_time >= next_update_time:
                     try:
                         sub_info = self.subscriptions.get(symbol, {}).get(tf)
-                        if (sub_info and "ohlc" in sub_info.data_types) or self.v2_broadcast:
+                        # Only send OHLC updates when explicitly requested via subscription,
+                        # and never broadcast OHLC for v2 connections.
+                        if (sub_info and "ohlc" in sub_info.data_types) or (self.v2_broadcast and ("ohlc" in self.supported_data_types)):
                             # Refresh cache from MT5 at boundary to include zero-tick flat minutes
                             update_ohlc_cache(symbol, tf)
                             # Get current OHLC data from cache (now authoritative and closed)
@@ -1548,7 +1552,7 @@ async def ws_market(websocket: WebSocket):
 async def ws_market_v2(websocket: WebSocket):
     """Versioned Market Data WebSocket (v2)
 
-    Serves tick and OHLC streams and advertises capabilities via greeting.
+    Serves tick and indicator streams and advertises capabilities via greeting.
     """
     client = None
     try:
@@ -1565,10 +1569,9 @@ async def ws_market_v2(websocket: WebSocket):
                 "type": "connected",
                 "message": "WebSocket connected successfully",
                 "supported_timeframes": [tf.value for tf in Timeframe],
-                # WS-V2-1: ticks + ohlc + indicators supported; market_summary removed
-                "supported_data_types": ["ticks", "ohlc", "indicators"],
+                # v2: ticks + indicators only; OHLC is not streamed to frontend
+                "supported_data_types": ["ticks", "indicators"],
                 "supported_price_bases": ["last", "bid", "ask"],
-                "ohlc_schema": "parallel",
                 "indicators": {
                     "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]},
                     "ema": {"periods": [21, 50, 200]},
@@ -1582,7 +1585,7 @@ async def ws_market_v2(websocket: WebSocket):
             pass
 
         # Reuse the same WSClient implementation as /ws/market, enable broadcast-all for v2
-        client = WSClient(websocket, "", supported_data_types={"ticks", "ohlc", "indicators"}, v2_broadcast=True)
+        client = WSClient(websocket, "", supported_data_types={"ticks", "indicators"}, v2_broadcast=True)
         await client.start()
         async with _connected_clients_lock:
             _connected_clients.add(client)

@@ -394,9 +394,9 @@ Internal alert tick_data shape:
 - **Features**: Legacy client support
 
 #### Market Data WebSocket v2 (`/market-v2`)
-- Use `/market-v2` for new clients. It exposes tick and OHLC payloads, and advertises capabilities via `supported_data_types` in the greeting.
-- Current capabilities: `supported_data_types = ["ticks","ohlc","indicators"]`.
-- Broadcast-All mode: v2 pushes ticks, OHLC boundary updates, and indicators (closed‑bar) for a baseline set of symbols/timeframes to all connected clients without explicit subscriptions.
+- Use `/market-v2` for new clients. It exposes tick and indicator payloads only (no OHLC streaming), and advertises capabilities via `supported_data_types` in the greeting.
+- Current capabilities: `supported_data_types = ["ticks","indicators"]`.
+- Broadcast-All mode: v2 pushes ticks and indicators (closed‑bar) for a baseline set of symbols/timeframes to all connected clients without explicit subscriptions. OHLC is computed server‑side only for indicators/alerts.
   - Baseline symbols: `RSI_SUPPORTED_SYMBOLS` from `app/constants.py` (broker‑suffixed)
   - Baseline timeframes: M1, M5, M15, M30, H1, H4, D1
 - Subscribe remains optional and is primarily used to receive `initial_ohlc` / `initial_indicators` snapshots on demand.
@@ -418,9 +418,8 @@ V2 greeting example (capabilities + indicators registry):
   "type": "connected",
   "message": "WebSocket connected successfully",
   "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
-  "supported_data_types": ["ticks","ohlc","indicators"],
+  "supported_data_types": ["ticks","indicators"],
   "supported_price_bases": ["last","bid","ask"],
-  "ohlc_schema": "parallel",
   "indicators": {
     "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]},
     "ema": {"periods": [21, 50, 200]},
@@ -732,7 +731,7 @@ ws.onopen = () => {
         action: 'subscribe',
         symbol: 'EURUSD',
         timeframe: '1M',
-        data_types: ['ticks', 'ohlc']
+        data_types: ['ticks', 'indicators']
     }));
 };
 
