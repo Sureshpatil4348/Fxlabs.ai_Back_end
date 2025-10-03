@@ -1154,7 +1154,7 @@ All logs include timestamps with timezone offset using the format:
 You can control verbosity via `LOG_LEVEL` (default `INFO`).
 
 #### Verbosity Flags (non-critical logs)
-- `LIVE_RSI_DEBUGGING` — emits periodic closed‑bar RSI for BTC/USD 1M (default `false`).
+- `LIVE_RSI_DEBUGGING` — emits periodic closed‑bar RSI for BTC/USD 5M (default `false`).
 - `LOG_ENV_DUMP` — prints full environment snapshot at startup (default `false`; may include secrets).
 - `ALERT_VERBOSE_LOGS` — enables non‑critical alert/daily diagnostics like config echoes and no‑trigger reasons (default `false`).
 - `NEWS_VERBOSE_LOGS` — enables verbose news fetch/parse/update prints (default `false`).
@@ -1192,9 +1192,9 @@ The system provides comprehensive logging for:
   - JSON logs are emitted at DEBUG to avoid INFO spam. Set `LOG_LEVEL=DEBUG` to enable.
   - Observability errors never break scheduling; metrics/logging are best-effort only.
 
-- #### Live RSI Debugging cadence (M1 closed‑bar, cache‑aligned)
-- `🧭 liveRSI` logs are emitted directly from the indicator scheduler when it detects a new closed `1M` bar for `BTCUSDm` only. Values are sourced from the same indicator pipeline and cache used by alerts and WebSocket indicator streaming (single source of truth).
-- When `LIVE_RSI_DEBUGGING=true`, logs appear shortly after each M1 close (sub‑100 ms latency target).
+- #### Live RSI Debugging cadence (5M closed‑bar, cache‑aligned)
+- `🧭 liveRSI` logs are emitted directly from the indicator scheduler when it detects a new closed `5M` bar for `BTCUSDm` only. Values are sourced from the same indicator pipeline and cache used by alerts and WebSocket indicator streaming (single source of truth).
+- When `LIVE_RSI_DEBUGGING=true`, logs appear shortly after each 5M close (sub‑200 ms latency target).
 - Previous helper `app.mt5_utils._maybe_log_live_rsi()` and the dedicated boundary task have been removed to prevent duplicate math and drift. The gating is implemented in `server.py`.
 
 #### Alert Evaluation Cadence (Closed‑Bar)

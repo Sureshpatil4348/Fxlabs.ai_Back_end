@@ -552,12 +552,12 @@ async def _indicator_scheduler() -> None:
                         # Never allow observability to break scheduling
                         pass
 
-                    # Live RSI debug log for M1 closed bars using cache-aligned numbers
+                    # Live RSI debug log for 5M closed bars using cache-aligned numbers
                     try:
                         if (
                             LIVE_RSI_DEBUGGING
                             and symbol == "BTCUSDm"
-                            and tf == Timeframe.M1
+                            and tf == Timeframe.M5
                             and rsi_val is not None
                         ):
                             time_iso = getattr(last_closed, "time_iso", "") or ""
@@ -574,7 +574,7 @@ async def _indicator_scheduler() -> None:
                             spread_str = f"{last_closed.spread:.0f}" if getattr(last_closed, "spread", None) is not None else "-"
                             logger = logging.getLogger(__name__)
                             logger.info(
-                                "🧭 liveRSI %s 1M RSIclosed(14)=%.2f | date=%s time=%s open=%.5f high=%.5f low=%.5f close=%.5f volume=%s tick_volume=%s spread=%s",
+                                "🧭 liveRSI %s 5M RSIclosed(14)=%.2f | date=%s time=%s open=%.5f high=%.5f low=%.5f close=%.5f volume=%s tick_volume=%s spread=%s",
                                 symbol,
                                 float(rsi_val),
                                 date_part,
@@ -752,7 +752,7 @@ async def _ws_metrics_reporter() -> None:
         print(f"❌ WS metrics reporter error: {e}")
 
 
-# liveRSI boundary debugger removed — logs now emitted from indicator scheduler for M1
+# liveRSI boundary debugger removed — logs now emitted from indicator scheduler for 5M
 
 @app.get("/health")
 def health():

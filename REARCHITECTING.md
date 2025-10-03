@@ -295,9 +295,9 @@ All alert engines and live RSI debugging must reuse the same indicator pipeline 
   - Use cached EMA/RSI (and other requested indicators) to determine flips; do not recompute.
 
 - Live RSI Debugging
-  - Emit logs from the same cache: when `indicator_update` is produced for M1, log the RSIclosed value and OHLC summary for that closed bar.
+  - Emit logs from the same cache: when `indicator_update` is produced for 5M, log the RSIclosed value and OHLC summary for that closed bar.
   - Do not perform separate fetches or computations in the debug path; reuse cache values for parity.
-  - Rate-limit debug prints if needed to avoid spam (e.g., log only on new M1 bar).
+  - Rate-limit debug prints if needed to avoid spam (e.g., log only on new 5M bar).
 
 - Benefits
   - One source of truth across UI, alerts, and logs; eliminates drift.
@@ -345,7 +345,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 06 | WS-2 | WebSocket | Handle `data_types` incl. `indicators` on subscribe | Backend | DONE | Accept/validate; send snapshot+updates | `server.py` | SCHED-1 | Per-client subs |
 | 07 | WS-3 | WebSocket | Add `initial_indicators` + `indicator_update` shapes | Backend | DONE | JSON contracts finalized | `server.py`,`REARCHITECTING.md` | IND-1,SCHED-1 | Include `bar_time` ms |
 | 08 | WS-V2-2 | WebSocket v2 | Remove `market_summary` (daily_change_pct only in ticks) | Backend | DONE | No separate summary pushes; keep daily_change in tick payloads | `server.py`,`README.md` |  |  |
-| 09 | DEBUG-1 | Debug | Align liveRSI to cache; single source numbers | Backend | DONE | Log when M1 indicator updates | `server.py`,`app/mt5_utils.py` | SCHED-1 | Removed duplicate helper; logs from indicator scheduler |
+| 09 | DEBUG-1 | Debug | Align liveRSI to cache; single source numbers | Backend | DONE | Log when 5M indicator updates | `server.py`,`app/mt5_utils.py` | SCHED-1 | Removed duplicate helper; logs from indicator scheduler |
 | 10 | OBS-1 | Observability | Add metrics + structured logs | Backend | DONE | Poll durations; items; latencies | `server.py` | SCHED-1 | JSON logs optional |
 | 11 | SEC-1 | Security | WS input validation + allowlists | Backend | DONE | Validate symbol/tf; caps; optional auth | `server.py` | None | Mirrors REST auth policy: optional `X-API-Key` on WS; allowlists and caps enforced |
 | 12 | ALERT-1 | Alerts | Refactor RSI Tracker to read cache | Backend | DONE | No re-compute; closed-bar only | `app/rsi_tracker_alert_service.py` | CACHE-1 | Keep cooldown logic |
