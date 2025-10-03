@@ -356,7 +356,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 12 | ALERT-1 | Alerts | Refactor RSI Tracker to read cache | Backend | DONE | No re-compute; closed-bar only | `app/rsi_tracker_alert_service.py` | CACHE-1 | Keep cooldown logic |
 | 13 | ALERT-2 | Alerts | Refactor RSI Correlation to read cache | Backend | DONE | Ring buffers; warm-up fallback | `app/rsi_correlation_tracker_alert_service.py` | CACHE-1 | Pair handling; reads `indicator_cache.get_latest_rsi` with warm-up fallback (compute + `update_rsi`) |
 | 14 | ALERT-3 | Alerts | Refactor Heatmap (Quantum) to read cache | Backend | DONE | Cache → aggregation only | `app/heatmap_tracker_alert_service.py` | CACHE-1 | Quiet-market damping |
-| 15 | ALERT-4 | Alerts | Refactor Indicator Tracker to read cache | Backend | TODO | Flip detection from cache | `app/heatmap_indicator_tracker_alert_service.py` | CACHE-1 | K=3 window |
+| 15 | ALERT-4 | Alerts | Refactor Indicator Tracker to read cache | Backend | DONE | Flip detection from cache | `app/heatmap_indicator_tracker_alert_service.py` | CACHE-1 | K=3 window |
 | 16 | IND-2 | Indicators | Add micro-bench + unit checks | Backend | TODO | 3–5 symbols×TFs parity | `tests/` (optional) | MT5 running | No net installs |
 | 17 | PAR-1 | Parity | Add parity checks within tolerances | Backend | TODO | Compare last N closed bars | `tests/` scripts | IND-1 | Close vs Bid fixed |
 | 18 | WS-V2-3 | WebSocket v2 | Dual-run + metrics/soak | Backend | TODO | Per-type counters; low error rate | `server.py` | WS-V2-1 | Compare vs v1 |

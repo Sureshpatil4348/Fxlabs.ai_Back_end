@@ -1,7 +1,7 @@
 import asyncio
 import os
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 import logging
 import aiohttp
@@ -12,6 +12,7 @@ from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
 from .rsi_utils import calculate_rsi_series, closed_closes
+from .indicator_cache import indicator_cache
 
 
 configure_logging()
@@ -258,16 +259,20 @@ class HeatmapIndicatorTrackerAlertService:
             )
 
     async def _compute_indicator_signal(self, symbol: str, timeframe: str, indicator: str) -> str:
-        """Compute indicator signal using real OHLC where feasible.
+        """Compute indicator signal using cache-first reads over closed bars.
 
         Supported:
-        - ema21/ema50/ema200: cross of close vs EMA -> buy/sell; otherwise neutral
-        - rsi: cross of RSI(14) vs 50 -> buy/sell; otherwise neutral
+        - ema21/ema50/ema200: cross of close vs EMA -> buy/sell; otherwise neutral (cache)
+        - macd: cross of MACD vs signal with zero-line agreement -> buy/sell; otherwise neutral (cache)
+        - rsi: crossing of RSI(14) vs 50 -> buy/sell; otherwise neutral (cache with warm-up fallback)
         Unknown indicators return neutral.
         """
         try:
             from .models import Timeframe as TF
             from .mt5_utils import get_ohlc_data
+
+            # K=3 closed-bar lookback window for newness/cross checks
+            K = 3
 
             tf_map = {
                 "5M": TF.M5,
@@ -283,46 +288,77 @@ class HeatmapIndicatorTrackerAlertService:
                 return "neutral"
 
             ind = (indicator or "").lower()
-            ohlc = get_ohlc_data(symbol, mtf, 260)
-            closes = [b.close for b in ohlc] if ohlc else []
-            if len(closes) < 5:
+
+            # Fetch recent closed OHLC to align time-based series from cache
+            bars = get_ohlc_data(symbol, mtf, 300)
+            if not bars:
                 return "neutral"
+            closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
+            if len(closed_bars) < 5:
+                return "neutral"
+            closes = [float(b.close) for b in closed_bars]
+            ts_to_close: Dict[int, float] = {int(b.time): float(b.close) for b in closed_bars}
 
-            def ema_series(cl: list, period: int) -> list:
-                if len(cl) < period:
-                    return []
-                k = 2.0 / (period + 1)
-                ema_vals = [sum(cl[:period]) / float(period)]
-                for price in cl[period:]:
-                    ema_vals.append(price * k + ema_vals[-1] * (1 - k))
-                return ema_vals
-
+            # EMA family via cache
             if ind in ("ema21", "ema50", "ema200"):
-                p = int(ind.replace("ema", ""))
+                try:
+                    p = int(ind.replace("ema", ""))
+                except Exception:
+                    return "neutral"
                 if p < 2:
                     return "neutral"
-                ema_vals = ema_series(closes, p)
-                if len(ema_vals) < 2:
+                ema_recent = await indicator_cache.get_recent_ema(symbol, timeframe, p, K + 3)
+                if not ema_recent or len(ema_recent) < 2:
                     return "neutral"
-                # Align EMA with closes (ema_vals starts at index p-1)
-                idx = len(closes) - 1
-                prev_idx = idx - 1
-                ema_curr = ema_vals[-1]
-                ema_prev = ema_vals[-2]
-                close_curr = closes[idx]
-                close_prev = closes[prev_idx]
-                if close_prev <= ema_prev and close_curr > ema_curr:
+                # Align EMA to closes by timestamp
+                aligned: List[Tuple[int, float, float]] = []  # (ts, close, ema)
+                for ts, ev in ema_recent:
+                    c = ts_to_close.get(int(ts))
+                    if c is not None:
+                        aligned.append((int(ts), float(c), float(ev)))
+                if len(aligned) < 2:
+                    return "neutral"
+                _, c_prev, e_prev = aligned[-2]
+                _, c_curr, e_curr = aligned[-1]
+                if c_prev <= e_prev and c_curr > e_curr:
                     return "buy"
-                if close_prev >= ema_prev and close_curr < ema_curr:
+                if c_prev >= e_prev and c_curr < e_curr:
                     return "sell"
                 return "neutral"
 
-            if ind == "rsi":
-                closes = closed_closes(ohlc)
-                rsis = calculate_rsi_series(closes, 14)
-                if len(rsis) < 2:
+            # MACD via cache (12,26,9); return only on fresh cross (prev->curr)
+            if ind == "macd":
+                macd_recent = await indicator_cache.get_recent_macd(symbol, timeframe, 12, 26, 9, K + 3)
+                if not macd_recent or len(macd_recent) < 2:
                     return "neutral"
-                r_prev, r_curr = rsis[-2], rsis[-1]
+                _, m_prev, s_prev, _ = macd_recent[-2]
+                _, m_curr, s_curr, _ = macd_recent[-1]
+                # Require zero-line agreement like Heatmap scoring
+                if m_prev <= s_prev and m_curr > s_curr and m_curr > 0:
+                    return "buy"
+                if m_prev >= s_prev and m_curr < s_curr and m_curr < 0:
+                    return "sell"
+                return "neutral"
+
+            # RSI via cache (14); warm-up fallback compute from closed OHLC if needed
+            if ind == "rsi":
+                rsi_recent = await indicator_cache.get_recent_rsi(symbol, timeframe, 14, K + 2)
+                if (not rsi_recent) or len(rsi_recent) < 2:
+                    # Fallback: compute latest RSI from closed bars, cache it, then evaluate
+                    try:
+                        closes_closed = closed_closes(closed_bars)  # type: ignore[arg-type]
+                        rsis = calculate_rsi_series(closes_closed, 14)
+                        if rsis and len(rsis) >= 2:
+                            # Update cache with last value to converge ring quickly
+                            last_ts = int(closed_bars[-1].time)
+                            await indicator_cache.update_rsi(symbol, timeframe, 14, float(rsis[-1]), ts_ms=last_ts)
+                            rsi_recent = [(last_ts - 1, float(rsis[-2])), (last_ts, float(rsis[-1]))]
+                    except Exception:
+                        return "neutral"
+                if not rsi_recent or len(rsi_recent) < 2:
+                    return "neutral"
+                r_prev = float(rsi_recent[-2][1])
+                r_curr = float(rsi_recent[-1][1])
                 if r_prev <= 50.0 and r_curr > 50.0:
                     return "buy"
                 if r_prev >= 50.0 and r_curr < 50.0:
