@@ -939,7 +939,7 @@ class WSClient:
         self.next_ohlc_updates: Dict[str, Dict[Timeframe, datetime]] = {}
         self._task: Optional[asyncio.Task] = None
         self._ohlc_task: Optional[asyncio.Task] = None
-        self._send_interval_s: float = 0.50  # 2 Hz for ticks (500ms)
+        self._send_interval_s: float = 1.0  # 1 Hz for ticks (1000ms)
         # Supported data types for this connection (endpoint specific)
         self.supported_data_types: Set[str] = set(supported_data_types or {"ticks", "ohlc"})
         # v2 broadcast mode: server pushes all symbols/timeframes without explicit subscribe
@@ -1075,7 +1075,7 @@ class WSClient:
                 if not self._is_connected():
                     return
                 await self._send_scheduled_ohlc_updates()
-                await asyncio.sleep(0.50)  # 500ms resolution for boundary checks
+                await asyncio.sleep(1.0)  # 1000ms resolution for boundary checks
         except asyncio.CancelledError:
             return
         except Exception:

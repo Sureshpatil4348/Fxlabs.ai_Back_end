@@ -280,7 +280,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 - **URL**: `ws://localhost:8000/market-v2`
 - **Purpose**: Real-time tick and indicator streaming (no OHLC streaming to clients)
 - **Behavior**: Broadcast-only baseline (symbols/timeframes). `subscribe`/`unsubscribe` are ignored (server replies with `{type:"info", message:"v2 broadcast-only: subscribe/unsubscribe ignored"}`).
-  - As of v2.0.0+, tick updates include all allowed symbols every 500 ms on a delta basis (only symbols with a new tick since the last send appear in each message).
+  - As of v2.0.0+, tick updates include all allowed symbols every 1000 ms on a delta basis (only symbols with a new tick since the last send appear in each message).
 
 Tick push payloads to clients remain a list of ticks. Internally, for alert checks, ticks are converted to a map keyed by symbol for consistency across services. Connected discovery message includes capabilities and indicators registry:
 
