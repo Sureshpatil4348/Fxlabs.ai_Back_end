@@ -434,7 +434,7 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 | Endpoint | Method | Description | Auth Required |
 |----------|--------|-------------|---------------|
 | `/health` | GET | Health check and MT5 status | No |
-| `/api/values` | GET | Latest closed‑bar indicators and current tick per symbol for a timeframe | Yes |
+| `/api/indicator` | GET | Latest closed‑bar value(s) for a given indicator across pairs | Yes |
 | `/api/tick/{symbol}` | GET | Current tick data | Yes |
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
@@ -456,34 +456,22 @@ Notes:
 - Backend enforces closed‑bar evaluation.
 - Pairs are fixed in code via `app/constants.py` (no per-alert selection, no env overrides).
 
-### Values REST (`/api/values`)
+### Indicator REST (`/api/indicator`)
 
 Parameters:
+- `indicator` (string, required): `rsi` | `ema` | `macd`
 - `timeframe` (string, required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`
-- `symbols` (repeatable or CSV): symbols to include. If omitted, all WS‑allowed symbols are returned.
-- `pairs` (repeatable or CSV): alias for `symbols`.
+- `pairs` (repeatable or CSV): symbols (1–32). Alias: `symbols`. If omitted, defaults to WS‑allowed symbols (capped to 32).
 
-Response shape (example):
+Response shapes (examples):
 ```json
-{
-  "timeframe": "5M",
-  "requested_symbols": ["EURUSDm"],
-  "returned_count": 1,
-  "forbidden_symbols": [],
-  "symbols": [
-    {
-      "symbol": "EURUSDm",
-      "timeframe": "5M",
-      "bar_time": 1696229940000,
-      "tick": {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885},
-      "indicators": {
-        "rsi": {"14": 51.23},
-        "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
-        "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
-      }
-    }
-  ]
-}
+{"indicator":"rsi","timeframe":"5M","count":2,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"value":51.23},{"symbol":"BTCUSDm","timeframe":"5M","ts":1696229940000,"value":48.10}]}
+```
+```json
+{"indicator":"ema","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"21":1.06871,"50":1.06855,"200":1.06780}}]}
+```
+```json
+{"indicator":"macd","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"macd":0.00012,"signal":0.00010,"hist":0.00002}}]}
 ```
 
 Notes:
@@ -712,7 +700,7 @@ ws.onmessage = (event) => {
 ```bash
 # Get historical OHLC data
 curl -H "X-API-Key: your_token" \
-     "http://localhost:8000/api/values?timeframe=1H&symbols=EURUSDm"
+     "http://localhost:8000/api/indicator?indicator=rsi&timeframe=1H&pairs=EURUSDm&pairs=BTCUSDm"
 
 # Get current tick data
 curl -H "X-API-Key: your_token" \

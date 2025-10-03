@@ -11,7 +11,7 @@ This document describes how the frontend should consume market data and indicato
 - **Should the frontend use REST instead?**
   - Use both:
     - WebSocket v2 for live ticks and closed-bar `indicator_update` pushes.
-    - REST for initial state via `/api/values`.
+    - REST for initial state via `/api/indicator`.
   - v2 does not send initial OHLC or indicator snapshots on connect; fetch initial state via REST, then merge live pushes.
 
 - **Does it work properly with all supported indicators?**
@@ -89,42 +89,22 @@ This document describes how the frontend should consume market data and indicato
 
 - **Auth**: If `API_TOKEN` is set, include `X-API-Key: <token>` header in requests.
 
-- `GET /api/values?timeframe=5M&symbols=EURUSDm&symbols=BTCUSDm`
-  - Returns latest closed‑bar indicators and current tick per symbol for the given timeframe.
-  - If no `symbols`/`pairs` provided, returns for all WebSocket‑allowed symbols.
+- `GET /api/indicator?indicator=rsi&timeframe=5M&pairs=EURUSDm&pairs=BTCUSDm`
+  - Returns latest closed‑bar value for the requested indicator across provided pairs (1–32).
+  - If no `pairs`/`symbols` provided, returns for WS‑allowed symbols (capped to 32).
   - Query params:
+    - `indicator` (required): `rsi` | `ema` | `macd`
     - `timeframe` (required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
-    - `symbols` (repeatable or CSV): symbols to include.
-    - `pairs` (repeatable or CSV): alias for `symbols`.
-  - Response (example):
+    - `pairs` (repeatable or CSV): symbols to include. Alias: `symbols`.
+  - Response examples:
     ```json
-    {
-      "timeframe": "5M",
-      "requested_symbols": ["EURUSDm","BTCUSDm"],
-      "returned_count": 2,
-      "forbidden_symbols": [],
-      "symbols": [
-        {
-          "symbol": "EURUSDm",
-          "timeframe": "5M",
-          "bar_time": 1696229940000,
-          "tick": {
-            "symbol": "EURUSDm",
-            "time": 1696229945123,
-            "time_iso": "2025-10-02T14:19:05.123Z",
-            "bid": 1.06871,
-            "ask": 1.06885,
-            "last": 1.06878,
-            "volume": 120
-          },
-          "indicators": {
-            "rsi": {"14": 51.23},
-            "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
-            "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002}
-          }
-        }
-      ]
-    }
+    {"indicator":"rsi","timeframe":"5M","count":2,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"value":51.23},{"symbol":"BTCUSDm","timeframe":"5M","ts":1696229940000,"value":48.10}]}
+    ```
+    ```json
+    {"indicator":"ema","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"21":1.06871,"50":1.06855,"200":1.06780}}]}
+    ```
+    ```json
+    {"indicator":"macd","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"macd":0.00012,"signal":0.00010,"hist":0.00002}}]}
     ```
 
 - `GET /api/tick/{symbol}`
@@ -144,7 +124,7 @@ This document describes how the frontend should consume market data and indicato
 
 ### Recommended client usage
 
-1) On app load, fetch initial data via REST (`/api/values`) for selected symbols and timeframe.
+1) On app load, fetch initial data via REST (`/api/indicator`) for selected indicator, symbols, and timeframe.
 2) Open WebSocket v2 for live updates. Expect:
    - `ticks` approximately every second (coalesced).
    - `indicator_update` only when a new bar closes (≈ timeframe boundary; detection runs every ~10 seconds).
@@ -179,7 +159,7 @@ ws.onmessage = (e) => {
 ```bash
 # REST examples
 curl -H "X-API-Key: $API_TOKEN" \
-  "http://localhost:8000/api/values?timeframe=1H&symbols=EURUSDm"
+  "http://localhost:8000/api/indicator?indicator=rsi&timeframe=1H&pairs=EURUSDm"
 ```
 
 ---

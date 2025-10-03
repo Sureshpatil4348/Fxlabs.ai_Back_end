@@ -93,7 +93,7 @@ async def test_rest_api():
     try:
         print("\n🌐 Testing REST API...")
         async with aiohttp.ClientSession() as session:
-            url = "http://localhost:8000/api/values?timeframe=1M&symbols=EURUSDm"
+            url = "http://localhost:8000/api/indicator?indicator=rsi&timeframe=1M&pairs=EURUSDm"
             async with session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()

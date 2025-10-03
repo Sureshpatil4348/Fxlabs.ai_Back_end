@@ -67,7 +67,7 @@ For end-to-end alert behavior and product policies, see `ALERTS.md`.
 - Reference doc: `LIVE_RSI_DEBUGGING.md` (how to enable and sample output).
 
 ## REST Endpoints (MT5-backed)
-- `GET /api/values?timeframe=5M&symbols=EURUSDm` → returns latest closed‑bar indicators and current tick for requested symbols.
+- `GET /api/indicator?indicator=rsi&timeframe=5M&pairs=EURUSDm` → returns latest closed‑bar indicator values for requested symbols.
 - `GET /api/tick/{symbol}` → returns latest tick.
 - Both require `X-API-Key` if `API_TOKEN` is set.
 

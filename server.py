@@ -743,144 +743,122 @@ def health():
 def test_websocket():
     return {"message": "WebSocket endpoint available at /market-v2"}
 
-@app.get("/api/values")
-async def get_values(
+@app.get("/api/indicator")
+async def get_indicator(
+    indicator: str = Query(..., description="Indicator name: rsi|ema|macd"),
     timeframe: str = Query(..., description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W"),
-    symbols: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., symbols=EURUSDm&symbols=BTCUSDm) or CSV"),
-    pairs: Optional[List[str]] = Query(None, description="Alias for symbols (repeatable or CSV)"),
+    pairs: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., pairs=EURUSDm&pairs=BTCUSDm) or CSV"),
+    symbols: Optional[List[str]] = Query(None, description="Alias for pairs (repeatable or CSV)"),
     x_api_key: Optional[str] = Depends(require_api_token_header),
 ):
-    """Return latest closed-bar indicator values and current tick for requested (or allowed) symbols at the given timeframe.
+    """Return the latest closed-bar value for a single indicator across 1 to 32 pairs.
 
-    Notes:
-    - Indicators mirror WebSocket v2 coverage: RSI(14), EMA(21/50/200), MACD(12,26,9) on the last closed bar.
-    - Ticks are live (latest broker tick at request time).
-    - Timeframe must be one of the WebSocket-supported values and allowed by server policy.
-    - If no symbols provided, all allowed WebSocket symbols are returned.
+    - indicator: rsi|ema|macd
+      - rsi: fixed period 14
+      - ema: returns {21,50,200}
+      - macd: returns {macd, signal, hist} for (12,26,9)
+    - timeframe: must be WS-supported
+    - pairs/symbols: 1 to 32 symbols. Defaults to all WS-allowed symbols if omitted (capped to 32).
     """
+    # Validate timeframe
     try:
         tf = Timeframe(timeframe)
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
 
-    # Enforce WS-allowed timeframes (mirror WS policy)
+    # Enforce WS-allowed timeframes when available
     try:
         if 'ALLOWED_WS_TIMEFRAMES' in globals():
             if tf not in ALLOWED_WS_TIMEFRAMES:
                 raise HTTPException(status_code=403, detail="forbidden_timeframe")
     except Exception:
-        # If policy not available, fall back to enum validation only
         pass
 
-    # Collect and normalize requested symbols
+    # Normalize symbols
     requested: List[str] = []
-    for src in (symbols or []):
-        if src:
-            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
     for src in (pairs or []):
         if src:
             requested.extend([s for s in re.split(r"[,\s]+", src) if s])
+    for src in (symbols or []):
+        if src:
+            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
 
-    # Default to all allowed WS symbols if none requested
     if not requested:
         try:
-            symbol_list: List[str] = sorted(list(ALLOWED_WS_SYMBOLS))
+            candidates: List[str] = sorted(list(ALLOWED_WS_SYMBOLS))
         except Exception:
-            # Fallback: use RSI_SUPPORTED_SYMBOLS if ALLOWED_WS_SYMBOLS not set
-            symbol_list = sorted([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+            candidates = sorted([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
     else:
-        # Canonicalize and filter against allowed list
+        # Canonicalize
         canonical: List[str] = []
         for s in requested:
             try:
                 canonical.append(canonicalize_symbol(s))
             except Exception:
                 continue
-        allowed: Set[str] = set()
-        forbidden: List[str] = []
+        # Filter to allowed when available
         try:
             allowed_ws: Set[str] = set(ALLOWED_WS_SYMBOLS)
         except Exception:
             allowed_ws = set([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
-        for s in canonical:
-            if s in allowed_ws:
-                allowed.add(s)
-            else:
-                forbidden.append(s)
-        symbol_list = sorted(list(allowed))
-        forbidden_symbols = sorted(list(set(forbidden)))
+        candidates = [s for s in canonical if s in allowed_ws]
 
-    # Build response per symbol
+    # Enforce pair count limits: 1..32
+    if len(candidates) == 0:
+        raise HTTPException(status_code=400, detail="no_symbols")
+    if len(candidates) > 32:
+        candidates = candidates[:32]
+
+    indicator_key = indicator.strip().lower()
+    if indicator_key not in {"rsi", "ema", "macd"}:
+        raise HTTPException(status_code=400, detail="unsupported_indicator")
+
     results: List[Dict[str, Any]] = []
-    forbidden_symbols = [] if 'forbidden_symbols' not in locals() else forbidden_symbols
-
-    for sym in symbol_list:
+    for sym in candidates:
         try:
             ensure_symbol_selected(sym)
         except Exception:
             pass
 
-        # Latest tick
-        tick_obj = None
-        try:
-            info = mt5.symbol_info_tick(sym)
-            tick_obj = _to_tick(sym, info)
-        except Exception:
-            tick_obj = None
-
-        # Latest indicators from cache (closed-bar values)
-        rsi_latest = await indicator_cache.get_latest_rsi(sym, tf.value, 14)
-        ema21_latest = await indicator_cache.get_latest_ema(sym, tf.value, 21)
-        ema50_latest = await indicator_cache.get_latest_ema(sym, tf.value, 50)
-        ema200_latest = await indicator_cache.get_latest_ema(sym, tf.value, 200)
-        macd_latest = await indicator_cache.get_latest_macd(sym, tf.value, 12, 26, 9)
-
-        bar_time = None
-        if rsi_latest:
-            bar_time = int(rsi_latest[0])
-        elif ema21_latest:
-            bar_time = int(ema21_latest[0])
-        elif ema50_latest:
-            bar_time = int(ema50_latest[0])
-        elif ema200_latest:
-            bar_time = int(ema200_latest[0])
-        elif macd_latest:
-            bar_time = int(macd_latest[0])
-
-        indicators: Dict[str, Any] = {}
-        if rsi_latest and rsi_latest[1] is not None:
-            indicators["rsi"] = {"14": float(rsi_latest[1])}
-        ema_map: Dict[str, float] = {}
-        if ema21_latest and ema21_latest[1] is not None:
-            ema_map["21"] = float(ema21_latest[1])
-        if ema50_latest and ema50_latest[1] is not None:
-            ema_map["50"] = float(ema50_latest[1])
-        if ema200_latest and ema200_latest[1] is not None:
-            ema_map["200"] = float(ema200_latest[1])
-        if ema_map:
-            indicators["ema"] = ema_map
-        if macd_latest is not None:
-            _, macd_val, sig_val, hist_val = macd_latest
-            indicators["macd"] = {
-                "macd": float(macd_val),
-                "signal": float(sig_val),
-                "hist": float(hist_val),
-            }
-
-        results.append({
-            "symbol": sym,
-            "timeframe": tf.value,
-            "bar_time": bar_time,
-            "tick": tick_obj.model_dump() if tick_obj else None,
-            "indicators": indicators,
-        })
+        if indicator_key == "rsi":
+            latest = await indicator_cache.get_latest_rsi(sym, tf.value, 14)
+            value = None if not latest else float(latest[1])
+            ts_ms = None if not latest else int(latest[0])
+            results.append({"symbol": sym, "timeframe": tf.value, "ts": ts_ms, "value": value})
+        elif indicator_key == "ema":
+            ema21 = await indicator_cache.get_latest_ema(sym, tf.value, 21)
+            ema50 = await indicator_cache.get_latest_ema(sym, tf.value, 50)
+            ema200 = await indicator_cache.get_latest_ema(sym, tf.value, 200)
+            # Prefer the most recent timestamp among available EMAs
+            ts_candidates = [t for t in [ema21, ema50, ema200] if t]
+            ts_ms = int(max(ts_candidates, key=lambda x: x[0])[0]) if ts_candidates else None
+            values: Dict[str, Optional[float]] = {}
+            if ema21: values["21"] = float(ema21[1])
+            if ema50: values["50"] = float(ema50[1])
+            if ema200: values["200"] = float(ema200[1])
+            results.append({"symbol": sym, "timeframe": tf.value, "ts": ts_ms, "values": values})
+        else:  # macd
+            macd_trip = await indicator_cache.get_latest_macd(sym, tf.value, 12, 26, 9)
+            if macd_trip:
+                ts, macd_val, sig_val, hist_val = macd_trip
+                results.append({
+                    "symbol": sym,
+                    "timeframe": tf.value,
+                    "ts": int(ts),
+                    "values": {
+                        "macd": float(macd_val),
+                        "signal": float(sig_val),
+                        "hist": float(hist_val)
+                    }
+                })
+            else:
+                results.append({"symbol": sym, "timeframe": tf.value, "ts": None, "values": None})
 
     return {
+        "indicator": indicator_key,
         "timeframe": tf.value,
-        "requested_symbols": sorted(list(set([canonicalize_symbol(s) for s in requested]))) if requested else None,
-        "returned_count": len(results),
-        "forbidden_symbols": forbidden_symbols,
-        "symbols": results,
+        "count": len(results),
+        "pairs": results,
     }
 
 @app.get("/api/tick/{symbol}")
@@ -1458,7 +1436,7 @@ if __name__ == "__main__":
     print("🚀 Starting MT5 Market Data Server...")
     print("📊 Available endpoints:")
     print("   - WebSocket (v2): ws://localhost:8000/market-v2")
-    print("   - REST Values: GET /api/values?timeframe=5M&symbols=EURUSDm")
+    print("   - REST Indicator: GET /api/indicator?indicator=rsi&timeframe=5M&pairs=EURUSDm")
     print("   - News Analysis: GET /api/news/analysis")
     print("   - News Refresh: POST /api/news/refresh")
     print("   - Alert Cache: GET /api/alerts/cache")
