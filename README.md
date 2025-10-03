@@ -406,20 +406,15 @@ Note: `bar_time` is epoch milliseconds (ms) using broker server time.
   - `ok_ticks`, `fail_ticks`, `ticks_items` (sum of items sent in tick lists)
   - `ok_indicator_update`, `fail_indicator_update`
 
-#### Indicator Rollout (Gradual Enablement)
+#### Indicator Coverage
 
-- Initial rollout limits indicator processing and v2 broadcast coverage to a small baseline for safety and measurement.
-- Defaults: 10 symbols × 3 timeframes (M1,M5,M15). Override with environment variables:
+- Indicators now process for all allowed symbols (defaults to full `RSI_SUPPORTED_SYMBOLS`).
+- Timeframes are controlled via `INDICATOR_ROLLOUT_TFS`. Use `ALL` to include the full baseline `M1,M5,M15,M30,H1,H4,D1`.
 
 ```env
-# Max number of symbols included in indicator poller and v2 broadcast baseline
-INDICATOR_ROLLOUT_MAX_SYMBOLS=10
-
-# Timeframes to include (comma-separated). Accepts enum values (1M,5M,...) or names (M1,M5,...). Use ALL to include full baseline (M1,M5,M15,M30,H1,H4,D1).
+# Timeframes to include (comma-separated). Accepts enum values (1M,5M,...) or names (M1,M5,...).
+# Use ALL to include full baseline (M1,M5,M15,M30,H1,H4,D1).
 INDICATOR_ROLLOUT_TFS=M1,M5,M15
-
-# Optional explicit symbol list (comma-separated, broker-suffixed). If not set, uses RSI_SUPPORTED_SYMBOLS.
-INDICATOR_ROLLOUT_SYMBOLS=EURUSDm,GBPUSDm,USDJPYm,XAUUSDm,BTCUSDm
 ```
 
 Observability:

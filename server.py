@@ -459,9 +459,10 @@ async def _indicator_scheduler() -> None:
             pairs: Set[Tuple[str, Timeframe]] = set()
             has_v2_broadcast = any(getattr(c, "v2_broadcast", False) for c in clients)
             if has_v2_broadcast:
+                # Indicators: process all allowed symbols across selected timeframes
                 baseline_tfs: List[Timeframe] = _rollout_timeframes()
-                symbols_for_rollout = _rollout_symbols()
-                for sym in symbols_for_rollout[:INDICATOR_ROLLOUT_MAX_SYMBOLS]:
+                symbols_for_rollout: List[str] = list(ALLOWED_WS_SYMBOLS)
+                for sym in symbols_for_rollout:
                     for tf in baseline_tfs:
                         pairs.add((sym, tf))
             else:
