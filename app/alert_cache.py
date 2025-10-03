@@ -53,6 +53,14 @@ class AlertCache:
             await self._refresh_cache()
         
         return self._cache.copy()
+
+    async def get_all_alerts_snapshot(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Return the current in-memory cache snapshot without forcing a refresh.
+
+        Use this in event-driven paths (e.g., indicator-updated → evaluate alerts) to
+        avoid blocking network calls from a scheduler context.
+        """
+        return self._cache.copy()
     
     def _should_refresh(self) -> bool:
         """Check if cache should be refreshed"""

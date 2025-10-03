@@ -30,6 +30,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
+ - **Event‑Driven Alerts**: Alerts are evaluated immediately after the indicator scheduler updates the in‑memory `indicator_cache` on closed bars. A minute scheduler remains as a safety net.
 - **Smart Email Cooldown**: Value-based cooldown prevents spam while allowing significant RSI changes (email-level only; RSI Tracker pair-level cooldown removed)
 - **Intelligent Caching**: Memory-efficient selective data caching
 - **High Performance**: 99.9% bandwidth reduction through selective streaming
@@ -49,6 +50,7 @@ A high-performance, real-time financial market data streaming service built with
 This backend aligns alert evaluations with the Calculations Reference used by the frontend widgets:
 
 - Closed‑candle policy: All RSI/correlation/heatmap evaluations use closed candles; forming candles are not used in triggers.
+- Trigger cadence: Event‑driven based on indicator updates; no need to wait for 5‑minute boundary. Closed‑bar gating remains enforced.
 - MT5 OHLC snapshots still include the forming candle as the final element with `is_closed=false`. Backend RSI calculations ignore it automatically, so frontend collectors can continue using the tail for live charting without custom trimming.
 - RSI (14, Wilder): Computed from MT5 OHLC (Bid‑based series), matching frontend logic. Period is fixed to 14 across the entire system (REST/WS, alerts, emails, cache).
 - RSI Correlation (Dashboard parity):

@@ -8,6 +8,7 @@
 - Max tracked pairs per user: up to 3.
 - Trigger style: crossing into overbought/oversold; not on every bar while in‑zone.
 - Closed‑bar evaluation for RSI family: evaluate RSI on the last closed candlestick only (no intrabar/tick evaluation). Minimum supported timeframe is 5M.
+- Event‑driven alerting: as soon as the indicator scheduler detects a new closed‑bar update and writes to the in‑memory `indicator_cache`, the backend immediately evaluates relevant alerts (RSI Tracker, RSI Correlation Tracker, Indicator Tracker, Heatmap Tracker) using the current alert cache snapshot. This eliminates waiting for the 5‑minute boundary while preserving closed‑bar gating.
 - MT5 OHLC fetches include the forming candle flagged with `is_closed=false`. Alert engines strip it automatically for RSI math; client dashboards can keep using it for live rendering without extra filtering.
 - Retrigger policy: once triggered, re‑arm only after leaving the triggerable zone and trigger again only on a fresh crossing back in.
 - Timezone for display: Asia/Kolkata (tenant-aware for Daily/news: see `DAILY_TZ_NAME`).
@@ -67,7 +68,8 @@
 2) Supabase Schema
  - See `supabase_rsi_tracker_alerts_schema.sql` for `rsi_tracker_alerts` and `rsi_tracker_alert_triggers` (unique `user_id`; RLS for owner).
 3) Evaluation Cadence
-  - The server aligns evaluations to the next 5‑minute boundary and runs immediately after it. This ensures closed‑bar RSI is computed right after the candle closes. Higher TFs (15M/30M/1H/4H/1D/W1) are naturally aligned as multiples of 5 minutes.
+  - Event‑driven: runs immediately when the indicator scheduler publishes a closed‑bar update for the timeframe. This provides near‑instant triggers after candle close.
+  - Boundary alignment: a minute scheduler still runs every 5 minutes as a safety net, but primary evaluation is event‑driven.
 4) RSI Calculation
   - Values are sourced from the single source of truth `indicator_cache` (populated by the indicator scheduler using broker OHLC). Closed‑bar only; warm‑up enforced. No per-alert recomputation.
 5) Trigger Logic
@@ -183,7 +185,7 @@ Why you might not see triggers yet
 - No active alerts: Ensure rows exist in Supabase for `heatmap_tracker_alerts` and `heatmap_indicator_tracker_alerts` with `is_active=true` and non-empty `pairs` (max 3).
 - Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. With multi‑indicator aggregation, Final can concentrate near neutral on choppy days, especially in swingTrader style.
 - Arm/disarm gating: Buy disarms after a BUY trigger and rearms once RSI < (buy_threshold−5); Sell disarms after a SELL trigger and rearms once RSI > (sell_threshold+5).
-- Closed‑bar cadence: Evaluation runs every 5 minutes but uses closed bars per TF; low TFs see more opportunities.
+- Closed‑bar cadence: Evaluation is event‑driven (on each closed bar) with a 5‑minute safety scheduler; low TFs see more opportunities.
 
  
 

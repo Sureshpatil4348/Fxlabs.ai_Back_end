@@ -362,7 +362,8 @@ class RSITrackerAlertService:
         Returns a list of trigger payloads (for observability/testing).
         """
         try:
-            all_alerts = await alert_cache.get_all_alerts()
+            # Event-driven paths should not force cache refresh; use snapshot to avoid blocking
+            all_alerts = await alert_cache.get_all_alerts_snapshot()
             triggers: List[Dict[str, Any]] = []
 
             for _uid, alerts in all_alerts.items():

@@ -69,7 +69,8 @@ class RSICorrelationTrackerAlertService:
 
     async def check_rsi_correlation_tracker_alerts(self) -> List[Dict[str, Any]]:
         try:
-            all_alerts = await alert_cache.get_all_alerts()
+            # Event-driven paths should not force cache refresh; use snapshot to avoid blocking
+            all_alerts = await alert_cache.get_all_alerts_snapshot()
             triggers: List[Dict[str, Any]] = []
 
             for _uid, alerts in all_alerts.items():

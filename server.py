@@ -507,6 +507,10 @@ async def _indicator_scheduler() -> None:
 
             processed = 0
             error_count = 0
+            # Track which timeframes had new closed-bar updates per indicator kind in this poll cycle
+            tfs_rsi_updated: Set[str] = set()
+            tfs_ema_updated: Set[str] = set()
+            tfs_macd_updated: Set[str] = set()
             for symbol, tf in pairs:
                 try:
                     # Fetch recent OHLC and gate on last closed bar
@@ -532,9 +536,11 @@ async def _indicator_scheduler() -> None:
                     # Store to indicator cache (async-safe)
                     if rsi_val is not None:
                         await indicator_cache.update_rsi(symbol, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
+                        tfs_rsi_updated.add(tf.value)
                     for period, v in ema_vals.items():
                         if v is not None:
                             await indicator_cache.update_ema(symbol, tf.value, int(period), float(v), ts_ms=last_closed.time)
+                            tfs_ema_updated.add(tf.value)
                     if macd_trip is not None:
                         macd_v, sig_v, hist_v = macd_trip
                         await indicator_cache.update_macd(
@@ -548,6 +554,7 @@ async def _indicator_scheduler() -> None:
                             float(hist_v),
                             ts_ms=last_closed.time,
                         )
+                        tfs_macd_updated.add(tf.value)
 
                     _indicator_last_bar[key] = last_closed.time
                     processed += 1
@@ -691,6 +698,22 @@ async def _indicator_scheduler() -> None:
                 }
                 logger.debug(orjson.dumps(cycle_log).decode("utf-8"))
             except Exception:
+                pass
+
+            # Event-driven alert evaluation: run relevant alerts immediately when indicators update
+            try:
+                # Only use in-memory cache; do not refresh here
+                if tfs_rsi_updated:
+                    # RSI-dependent alerts
+                    asyncio.create_task(rsi_tracker_alert_service.check_rsi_tracker_alerts())
+                    asyncio.create_task(rsi_correlation_tracker_alert_service.check_rsi_correlation_tracker_alerts())
+                if tfs_ema_updated or tfs_macd_updated or tfs_rsi_updated:
+                    # Custom indicator tracker depends on EMA/MACD/RSI
+                    asyncio.create_task(heatmap_indicator_tracker_alert_service.check_heatmap_indicator_tracker_alerts())
+                    # Heatmap tracker aggregates across indicators; safe to evaluate when any updated
+                    asyncio.create_task(heatmap_tracker_alert_service.check_heatmap_tracker_alerts())
+            except Exception:
+                # Never allow alert evaluation to break the scheduler
                 pass
 
             try:
