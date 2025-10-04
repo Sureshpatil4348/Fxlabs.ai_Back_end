@@ -804,62 +804,62 @@ async def _indicator_scheduler() -> None:
                             except Exception:
                                 # Never let a single client block the scheduler
                                 continue
-                # Also compute and broadcast quantum analysis snapshot for this symbol
-                q = await compute_quantum_for_symbol(symbol)
-                q_msg = {
-                    "type": "quantum_update",
-                    "symbol": symbol,
-                    "data": q,
-                }
-                for c in clients:
-                    try:
-                        if getattr(c, "v2_broadcast", False):
-                            await c._try_send_json(q_msg)
-                            continue
-                    except Exception:
-                        continue
-
-                # After indicator broadcast, also compute and broadcast correlation for fixed pairs when RSI updated in this timeframe
-                # We piggy-back on RSI updates to avoid extra MT5 load; correlation uses OHLC closes.
-                if tf.value in tfs_rsi_updated and clients:
-                    for pair_key in RSI_CORRELATION_PAIR_KEYS:
-                        corr_key = f"{pair_key}:{tf.value}"
-                        # Compute correlation and last closed pair timestamp
-                        res = await _compute_pair_correlation_and_ts(pair_key, tf, RSI_CORRELATION_WINDOW)
-                        if not res:
-                            continue
-                        pair_ts, corr_val, strength = res
-                        if _corr_last_bar.get(corr_key) == pair_ts:
-                            continue
-                        _corr_last_bar[corr_key] = pair_ts
-                        msg = {
-                            "type": "correlation_update",
-                            "pair_key": pair_key,
-                            "timeframe": tf.value,
-                            "data": {
-                                "bar_time": pair_ts,
-                                "window": int(RSI_CORRELATION_WINDOW),
-                                "value": float(corr_val),
-                                "strength": strength,
-                                "pair_sign": RSI_CORRELATION_PAIR_SIGNS.get(pair_key),
-                            },
-                        }
-                        for c in clients:
-                            try:
-                                if getattr(c, "v2_broadcast", False):
-                                    ok = await c._try_send_json(msg)
-                                    try:
-                                        label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
-                                        if ok:
-                                            _metrics_inc(label, "ok_correlation_update", 1)
-                                        else:
-                                            _metrics_inc(label, "fail_correlation_update", 1)
-                                    except Exception:
-                                        pass
-                                    continue
-                                # Legacy per-subscription clients don't receive correlation messages
-                            except Exception:
+                    # Also compute and broadcast quantum analysis snapshot for this symbol
+                    q = await compute_quantum_for_symbol(symbol)
+                    q_msg = {
+                        "type": "quantum_update",
+                        "symbol": symbol,
+                        "data": q,
+                    }
+                    for c in clients:
+                        try:
+                            if getattr(c, "v2_broadcast", False):
+                                await c._try_send_json(q_msg)
                                 continue
+                        except Exception:
+                            continue
+
+                    # After indicator broadcast, also compute and broadcast correlation for fixed pairs when RSI updated in this timeframe
+                    # We piggy-back on RSI updates to avoid extra MT5 load; correlation uses OHLC closes.
+                    if tf.value in tfs_rsi_updated and clients:
+                        for pair_key in RSI_CORRELATION_PAIR_KEYS:
+                            corr_key = f"{pair_key}:{tf.value}"
+                            # Compute correlation and last closed pair timestamp
+                            res = await _compute_pair_correlation_and_ts(pair_key, tf, RSI_CORRELATION_WINDOW)
+                            if not res:
+                                continue
+                            pair_ts, corr_val, strength = res
+                            if _corr_last_bar.get(corr_key) == pair_ts:
+                                continue
+                            _corr_last_bar[corr_key] = pair_ts
+                            msg = {
+                                "type": "correlation_update",
+                                "pair_key": pair_key,
+                                "timeframe": tf.value,
+                                "data": {
+                                    "bar_time": pair_ts,
+                                    "window": int(RSI_CORRELATION_WINDOW),
+                                    "value": float(corr_val),
+                                    "strength": strength,
+                                    "pair_sign": RSI_CORRELATION_PAIR_SIGNS.get(pair_key),
+                                },
+                            }
+                            for c in clients:
+                                try:
+                                    if getattr(c, "v2_broadcast", False):
+                                        ok = await c._try_send_json(msg)
+                                        try:
+                                            label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
+                                            if ok:
+                                                _metrics_inc(label, "ok_correlation_update", 1)
+                                            else:
+                                                _metrics_inc(label, "fail_correlation_update", 1)
+                                        except Exception:
+                                            pass
+                                        continue
+                                    # Legacy per-subscription clients don't receive correlation messages
+                                except Exception:
+                                    continue
                 except Exception as e:
                     error_count += 1
                     print(f"❌ Indicator scheduler error for {symbol} {tf.value}: {e}")
