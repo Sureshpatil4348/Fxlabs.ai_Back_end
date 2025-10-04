@@ -63,6 +63,7 @@ from app.rsi_utils import calculate_rsi_series, closed_closes
 from app.indicator_cache import indicator_cache
 from app.price_cache import price_cache
 from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest, utbot_latest as ind_utbot_latest, ichimoku_latest as ind_ichimoku_latest
+from app.quantum import compute_quantum_for_symbol
 from app.constants import RSI_SUPPORTED_SYMBOLS, RSI_CORRELATION_PAIR_KEYS, RSI_CORRELATION_PAIR_SIGNS, RSI_CORRELATION_WINDOW
 # One-time warmup to backfill indicator cache at startup
 async def _warm_populate_indicator_cache() -> None:
@@ -803,6 +804,23 @@ async def _indicator_scheduler() -> None:
                             except Exception:
                                 # Never let a single client block the scheduler
                                 continue
+                # Also compute and broadcast quantum analysis snapshot for this symbol
+                try:
+                    q = await compute_quantum_for_symbol(symbol)
+                    q_msg = {
+                        "type": "quantum_update",
+                        "symbol": symbol,
+                        "data": q,
+                    }
+                    for c in clients:
+                        try:
+                            if getattr(c, "v2_broadcast", False):
+                                await c._try_send_json(q_msg)
+                                continue
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
                     # After indicator broadcast, also compute and broadcast correlation for fixed pairs when RSI updated in this timeframe
                     # We piggy-back on RSI updates to avoid extra MT5 load; correlation uses OHLC closes.
                     try:
@@ -992,7 +1010,7 @@ def test_websocket():
 
 @app.get("/api/indicator")
 async def get_indicator(
-    indicator: str = Query(..., description="Indicator name: rsi|ema|macd"),
+    indicator: str = Query(..., description="Indicator name: rsi|ema|macd|quantum"),
     timeframe: str = Query(..., description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W"),
     pairs: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., pairs=EURUSDm&pairs=BTCUSDm) or CSV"),
     symbols: Optional[List[str]] = Query(None, description="Alias for pairs (repeatable or CSV)"),
@@ -1057,7 +1075,7 @@ async def get_indicator(
         candidates = candidates[:32]
 
     indicator_key = indicator.strip().lower()
-    if indicator_key not in {"rsi", "ema", "macd"}:
+    if indicator_key not in {"rsi", "ema", "macd", "quantum"}:
         raise HTTPException(status_code=400, detail="unsupported_indicator")
 
     results: List[Dict[str, Any]] = []
@@ -1084,7 +1102,7 @@ async def get_indicator(
             if ema50: values["50"] = float(ema50[1])
             if ema200: values["200"] = float(ema200[1])
             results.append({"symbol": sym, "timeframe": tf.value, "ts": ts_ms, "values": values})
-        else:  # macd
+        elif indicator_key == "macd":
             macd_trip = await indicator_cache.get_latest_macd(sym, tf.value, 12, 26, 9)
             if macd_trip:
                 ts, macd_val, sig_val, hist_val = macd_trip
@@ -1100,6 +1118,18 @@ async def get_indicator(
                 })
             else:
                 results.append({"symbol": sym, "timeframe": tf.value, "ts": None, "values": None})
+        else:  # quantum
+            # Compute per-timeframe and overall quantum Buy/Sell% (closed-bar parity)
+            try:
+                q = await compute_quantum_for_symbol(sym)
+            except Exception:
+                q = None
+            results.append({
+                "symbol": sym,
+                "timeframe": tf.value,
+                "ts": None,
+                "quantum": q if q else None,
+            })
 
     return {
         "indicator": indicator_key,
@@ -1761,7 +1791,8 @@ async def ws_market_v2(websocket: WebSocket):
                     "ema": {"periods": [21, 50, 200]},
                     "macd": {"params": {"fast": 12, "slow": 26, "signal": 9}},
                     "ichimoku": {"params": {"tenkan": 9, "kijun": 26, "senkou_b": 52, "displacement": 26}},
-                    "utbot": {"params": {"ema": 50, "atr": 10, "k": 3.0}}
+                        "utbot": {"params": {"ema": 50, "atr": 10, "k": 3.0}},
+                        "quantum": {"params": {"styles": ["scalper", "swingtrader"], "k": 3, "quiet_market": {"atr_period": 10, "p": 5.0}}}
                 },
             })
         except Exception:

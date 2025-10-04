@@ -1,6 +1,6 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-WebSocket v2: Use `/market-v2` for live ticks and indicator updates (broadcast baseline). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no OHLC or indicator snapshots in v2. Ping/pong is supported for keepalive.
+WebSocket v2: Use `/market-v2` for live ticks, indicator updates, and quantum analysis updates (broadcast baseline). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no OHLC or indicator snapshots in v2. Ping/pong is supported for keepalive.
 
 Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, coalesced; OHLC is not streamed to clients in v2). No EA or external bridge required.
 
@@ -26,7 +26,7 @@ A high-performance, real-time financial market data streaming service built with
 ### Key Features
 
 - **Real-time Data Streaming**: Live tick and indicator data via WebSocket (broadcast-only)
-- **Cache-first Indicator Access**: REST `/api/indicator` serves latest indicator values from an in-memory cache populated on startup and updated on every closed-candle cycle
+- **Cache-first Indicator Access**: REST `/api/indicator` serves latest indicator values from an in-memory cache populated on startup and updated on every closed-candle cycle. Includes `indicator=quantum` to retrieve per-timeframe and overall Buy/Sell %.
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
@@ -57,7 +57,7 @@ This backend aligns alert evaluations with the Calculations Reference used by th
   - Mode `rsi_threshold`: Pair‑type aware mismatch (positive: OB/OS split; negative: both OB or both OS).
   - Mode `real_correlation`: Timestamp‑aligned log‑return Pearson correlation over a fixed rolling window of 50. Mismatch thresholds are pair‑type aware (positive: corr < +0.25; negative: corr > −0.15). Strength labels: strong |corr|≥0.70, moderate ≥0.30, else weak.
 - Heatmap/Quantum aggregation:
-  - Indicators: EMA21/50/200, MACD(12,26,9), RSI(14), UTBot(EMA50 ± 3×ATR10), Ichimoku Clone (9/26/52).
+  - Indicators: EMA21/50/200, MACD(12,26,9), RSI(14), UTBot(EMA50 ± 3×ATR10), Ichimoku Clone (9/26/52). Exposed via WS `quantum_update` and REST `indicator=quantum`.
   - Per‑cell scoring: buy=+1, sell=−1, neutral=0; new‑signal boost ±0.25 in last K=3; quiet‑market damping halves MACD/UTBot cell scores when ATR10 is below the 5th percentile of last 200 values; clamp to [−1.25,+1.25].
   - Aggregation: Σ_tf Σ_ind S(tf,ind)×W_tf×W_ind; Final=100×(Raw/1.25); Buy%=(Final+100)/2; Sell%=100−Buy%.
 

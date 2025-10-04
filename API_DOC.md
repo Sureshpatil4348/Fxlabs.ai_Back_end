@@ -15,7 +15,7 @@ This document describes how the frontend should consume market data and indicato
   - v2 does not send initial OHLC or indicator snapshots on connect; fetch initial state via REST, then merge live pushes.
 
 - **Does it work properly with all supported indicators?**
-  - WebSocket streaming includes: RSI(14), EMA(21/50/200), MACD(12,26,9), UTBot(EMA50±3×ATR10), and Ichimoku(9/26/52) on the latest closed bar for each timeframe.
+  - WebSocket streaming includes: RSI(14), EMA(21/50/200), MACD(12,26,9), UTBot(EMA50±3×ATR10), Ichimoku(9/26/52), and Quantum Analysis summary (per‑TF and overall) computed on latest closed bars.
   - Indicator implementations have unit tests and parity checks; see `tests/test_indicators.py` and `tests/test_parity.py`.
 
 ### WebSocket v2
@@ -36,7 +36,8 @@ This document describes how the frontend should consume market data and indicato
     "ema": {"periods": [21, 50, 200]},
     "macd": {"params": {"fast": 12, "slow": 26, "signal": 9}},
     "ichimoku": {"params": {"tenkan": 9, "kijun": 26, "senkou_b": 52, "displacement": 26}},
-    "utbot": {"params": {"ema": 50, "atr": 10, "k": 3.0}}
+    "utbot": {"params": {"ema": 50, "atr": 10, "k": 3.0}},
+    "quantum": {"params": {"styles": ["scalper","swingtrader"], "k": 3, "quiet_market": {"atr_period": 10, "p": 5.0}}}
   }
 }
 ```
@@ -82,6 +83,29 @@ This document describes how the frontend should consume market data and indicato
       }
     }
     ```
+  - Quantum update (computed alongside indicator updates):
+    ```json
+    {
+      "type": "quantum_update",
+      "symbol": "EURUSDm",
+      "data": {
+        "per_timeframe": {
+          "1M": {"buy_percent": 52.1, "sell_percent": 47.9, "final_score": 4.2},
+          "5M": {"buy_percent": 61.5, "sell_percent": 38.5, "final_score": 23.1},
+          "15M": {"buy_percent": 58.0, "sell_percent": 42.0, "final_score": 16.0},
+          "30M": {"buy_percent": 49.0, "sell_percent": 51.0, "final_score": -2.0},
+          "1H": {"buy_percent": 45.0, "sell_percent": 55.0, "final_score": -10.0},
+          "4H": {"buy_percent": 40.0, "sell_percent": 60.0, "final_score": -20.0},
+          "1D": {"buy_percent": 50.0, "sell_percent": 50.0, "final_score": 0.0}
+        },
+        "overall": {
+          "scalper": {"buy_percent": 57.3, "sell_percent": 42.7, "final_score": 14.6},
+          "swingtrader": {"buy_percent": 47.5, "sell_percent": 52.5, "final_score": -5.0}
+        },
+        "bar_times": {"5M": 1696229940000, "15M": 1696229700000}
+      }
+    }
+    ```
   - Notes:
     - `bar_time` is epoch milliseconds (broker server time).
     - Coverage: RSI/EMA/MACD/UTBot/Ichimoku (closed bars only).
@@ -95,7 +119,7 @@ This document describes how the frontend should consume market data and indicato
   - Cache: warm-populated on startup for all allowed symbols/timeframes and updated on each scheduler cycle (closed bars only).
   - If no `pairs`/`symbols` provided, returns for WS‑allowed symbols (capped to 32).
   - Query params:
-    - `indicator` (required): `rsi` | `ema` | `macd`
+    - `indicator` (required): `rsi` | `ema` | `macd` | `quantum`
     - `timeframe` (required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
     - `pairs` (repeatable or CSV): symbols to include. Alias: `symbols`.
   - Response examples:
@@ -107,6 +131,9 @@ This document describes how the frontend should consume market data and indicato
     ```
     ```json
     {"indicator":"macd","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"macd":0.00012,"signal":0.00010,"hist":0.00002}}]}
+    ```
+    ```json
+    {"indicator":"quantum","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":null,"quantum":{"per_timeframe":{"1M":{"buy_percent":52.1,"sell_percent":47.9,"final_score":4.2},"5M":{"buy_percent":61.5,"sell_percent":38.5,"final_score":23.1}},"overall":{"scalper":{"buy_percent":57.3,"sell_percent":42.7,"final_score":14.6},"swingtrader":{"buy_percent":47.5,"sell_percent":52.5,"final_score":-5.0}},"bar_times":{"5M":1696229940000}}}]}
     ```
 
 - `GET /api/pricing?pairs=EURUSDm&pairs=BTCUSDm`
@@ -172,7 +199,7 @@ Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` ser
 ### Notes & caveats
 
 - v2 is broadcast-only: `subscribe`/`unsubscribe` are accepted but ignored; no per-client filtering or snapshots.
-- Indicator payload coverage: RSI/EMA/MACD/UTBot/Ichimoku.
+- Indicator payload coverage: RSI/EMA/MACD/UTBot/Ichimoku; additional `quantum_update` events provide per‑TF and overall Buy/Sell%.
 - All indicator values are computed on closed bars only (no intrabar values).
 
 ### Quick examples
