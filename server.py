@@ -756,19 +756,6 @@ async def _indicator_scheduler() -> None:
                             "bar_time": last_closed.time,
                             "indicators": {
                                 "rsi": {14: rsi_val} if rsi_val is not None else {},
-                                "ema": {k: v for k, v in ema_vals.items() if v is not None},
-                                "macd": ({"macd": macd_trip[0], "signal": macd_trip[1], "hist": macd_trip[2]} if macd_trip else {}),
-                                "utbot": (
-                                    {
-                                        "baseline": utbot_vals[0],
-                                        "stop": utbot_vals[1],
-                                        "direction": utbot_vals[2],
-                                        "flip": utbot_vals[3],
-                                    }
-                                    if utbot_vals
-                                    else {}
-                                ),
-                                "ichimoku": (ich_vals if ich_vals else {}),
                             },
                         }
                         msg = {
@@ -1004,7 +991,7 @@ def test_websocket():
 
 @app.get("/api/indicator")
 async def get_indicator(
-    indicator: str = Query(..., description="Indicator name: rsi|ema|macd|quantum"),
+    indicator: str = Query(..., description="Indicator name: rsi|quantum"),
     timeframe: str = Query(..., description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W"),
     pairs: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., pairs=EURUSDm&pairs=BTCUSDm) or CSV"),
     symbols: Optional[List[str]] = Query(None, description="Alias for pairs (repeatable or CSV)"),
@@ -1012,10 +999,9 @@ async def get_indicator(
 ):
     """Return the latest closed-bar value for a single indicator across 1 to 32 pairs.
 
-    - indicator: rsi|ema|macd
+    - indicator: rsi|quantum
       - rsi: fixed period 14
-      - ema: returns {21,50,200}
-      - macd: returns {macd, signal, hist} for (12,26,9)
+      - quantum: returns per-timeframe and overall Buy/Sell% with signals
     - timeframe: must be WS-supported
     - pairs/symbols: 1 to 32 symbols. Defaults to all WS-allowed symbols if omitted (capped to 32).
     """
@@ -1069,7 +1055,7 @@ async def get_indicator(
         candidates = candidates[:32]
 
     indicator_key = indicator.strip().lower()
-    if indicator_key not in {"rsi", "ema", "macd", "quantum"}:
+    if indicator_key not in {"rsi", "quantum"}:
         raise HTTPException(status_code=400, detail="unsupported_indicator")
 
     results: List[Dict[str, Any]] = []
@@ -1084,34 +1070,6 @@ async def get_indicator(
             value = None if not latest else float(latest[1])
             ts_ms = None if not latest else int(latest[0])
             results.append({"symbol": sym, "timeframe": tf.value, "ts": ts_ms, "value": value})
-        elif indicator_key == "ema":
-            ema21 = await indicator_cache.get_latest_ema(sym, tf.value, 21)
-            ema50 = await indicator_cache.get_latest_ema(sym, tf.value, 50)
-            ema200 = await indicator_cache.get_latest_ema(sym, tf.value, 200)
-            # Prefer the most recent timestamp among available EMAs
-            ts_candidates = [t for t in [ema21, ema50, ema200] if t]
-            ts_ms = int(max(ts_candidates, key=lambda x: x[0])[0]) if ts_candidates else None
-            values: Dict[str, Optional[float]] = {}
-            if ema21: values["21"] = float(ema21[1])
-            if ema50: values["50"] = float(ema50[1])
-            if ema200: values["200"] = float(ema200[1])
-            results.append({"symbol": sym, "timeframe": tf.value, "ts": ts_ms, "values": values})
-        elif indicator_key == "macd":
-            macd_trip = await indicator_cache.get_latest_macd(sym, tf.value, 12, 26, 9)
-            if macd_trip:
-                ts, macd_val, sig_val, hist_val = macd_trip
-                results.append({
-                    "symbol": sym,
-                    "timeframe": tf.value,
-                    "ts": int(ts),
-                    "values": {
-                        "macd": float(macd_val),
-                        "signal": float(sig_val),
-                        "hist": float(hist_val)
-                    }
-                })
-            else:
-                results.append({"symbol": sym, "timeframe": tf.value, "ts": None, "values": None})
         else:  # quantum
             # Compute per-timeframe and overall quantum Buy/Sell% (closed-bar parity)
             try:
@@ -1781,12 +1739,7 @@ async def ws_market_v2(websocket: WebSocket):
                 "supported_data_types": ["ticks", "indicators"],
                 "supported_price_bases": ["last", "bid", "ask"],
                 "indicators": {
-                    "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]},
-                    "ema": {"periods": [21, 50, 200]},
-                    "macd": {"params": {"fast": 12, "slow": 26, "signal": 9}},
-                    "ichimoku": {"params": {"tenkan": 9, "kijun": 26, "senkou_b": 52, "displacement": 26}},
-                        "utbot": {"params": {"ema": 50, "atr": 10, "k": 3.0}},
-                        "quantum": {"params": {"styles": ["scalper", "swingtrader"], "k": 3, "quiet_market": {"atr_period": 10, "p": 5.0}}}
+                    "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]}
                 },
             })
         except Exception:

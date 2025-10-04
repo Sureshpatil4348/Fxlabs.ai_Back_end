@@ -25,8 +25,8 @@ A high-performance, real-time financial market data streaming service built with
 
 ### Key Features
 
-- **Real-time Data Streaming**: Live tick and indicator data via WebSocket (broadcast-only)
-- **Cache-first Indicator Access**: REST `/api/indicator` serves latest indicator values from an in-memory cache populated on startup and updated on every closed-candle cycle. Includes `indicator=quantum` to retrieve per-timeframe and overall Buy/Sell %.
+- **Real-time Data Streaming**: Live tick and RSI indicator data via WebSocket (broadcast-only)
+- **Cache-first Indicator Access**: REST `/api/indicator` serves latest RSI values from an in-memory cache populated on startup and updated on every closed-candle cycle. Also supports `indicator=quantum` to retrieve per-timeframe and overall Buy/Sell % (signals-only aggregation).
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
@@ -57,7 +57,7 @@ This backend aligns alert evaluations with the Calculations Reference used by th
   - Mode `rsi_threshold`: Pair‑type aware mismatch (positive: OB/OS split; negative: both OB or both OS).
   - Mode `real_correlation`: Timestamp‑aligned log‑return Pearson correlation over a fixed rolling window of 50. Mismatch thresholds are pair‑type aware (positive: corr < +0.25; negative: corr > −0.15). Strength labels: strong |corr|≥0.70, moderate ≥0.30, else weak.
 - Heatmap/Quantum aggregation:
-  - Indicators: EMA21/50/200, MACD(12,26,9), RSI(14), UTBot(EMA50 ± 3×ATR10), Ichimoku Clone (9/26/52). Exposed via WS `quantum_update` and REST `indicator=quantum`.
+  - Indicators: RSI(14) plus internal EMA/MACD/UTBot/Ichimoku signals for aggregation only. Exposed via WS `quantum_update` and REST `indicator=quantum`. Non-RSI raw values are not exposed via indicator APIs.
   - New fields: For each timeframe, `indicators` contains per‑indicator `{ signal: buy|sell|neutral, is_new: boolean }`. Bottom bar Buy/Sell% is provided under `overall` by style (`scalper`, `swingtrader`).
   - Per‑cell scoring: buy=+1, sell=−1, neutral=0; new‑signal boost ±0.25 in last K=3; quiet‑market damping halves MACD/UTBot cell scores when ATR10 is below the 5th percentile of last 200 values; clamp to [−1.25,+1.25].
   - Aggregation: Σ_tf Σ_ind S(tf,ind)×W_tf×W_ind; Final=100×(Raw/1.25); Buy%=(Final+100)/2; Sell%=100−Buy%.
@@ -363,11 +363,7 @@ V2 greeting example (capabilities + indicators registry):
   "removal_date": "2025-10-10",
   "removal_date_utc": "2025-10-10T00:00:00Z",
   "indicators": {
-    "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]},
-    "ema": {"periods": [21, 50, 200]},
-    "macd": {"params": {"fast": 12, "slow": 26, "signal": 9}},
-    "ichimoku": {"params": {"tenkan": 9, "kijun": 26, "senkou_b": 52, "displacement": 26}},
-    "utbot": {"params": {"ema": 50, "atr": 10, "k": 3.0}}
+    "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]}
   }
 }
 ```
@@ -378,7 +374,7 @@ Tick payloads include `daily_change_pct` (Bid vs broker D1 reference) and only c
 ```
 
 
-##### Indicator payloads (broadcast-only)
+##### Indicator payloads (broadcast-only; RSI only)
 
 Live push when a new bar is detected by the 10s poller:
 
@@ -389,13 +385,7 @@ Live push when a new bar is detected by the 10s poller:
   "timeframe": "5M",
   "data": {
     "bar_time": 1696229940000,
-    "indicators": {
-      "rsi": {"14": 51.23},
-      "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
-      "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002},
-      "utbot": {"baseline": 1.06860, "stop": 1.06920, "direction": -1, "flip": 0},
-      "ichimoku": {"tenkan": 1.06880, "kijun": 1.06895, "senkou_a": 1.06890, "senkou_b": 1.06910, "chikou": 1.06840}
-    }
+    "indicators": { "rsi": {"14": 51.23} }
   }
 }
 ```
@@ -486,7 +476,7 @@ Notes:
 ### Indicator REST (`/api/indicator`)
 
 Parameters:
-- `indicator` (string, required): `rsi` | `ema` | `macd`
+- `indicator` (string, required): `rsi` | `quantum`
 - `timeframe` (string, required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`
 - `pairs` (repeatable or CSV): symbols (1–32). Alias: `symbols`. If omitted, defaults to WS‑allowed symbols (capped to 32).
 
@@ -495,10 +485,7 @@ Response shapes (examples):
 {"indicator":"rsi","timeframe":"5M","count":2,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"value":51.23},{"symbol":"BTCUSDm","timeframe":"5M","ts":1696229940000,"value":48.10}]}
 ```
 ```json
-{"indicator":"ema","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"21":1.06871,"50":1.06855,"200":1.06780}}]}
-```
-```json
-{"indicator":"macd","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"macd":0.00012,"signal":0.00010,"hist":0.00002}}]}
+{"indicator":"quantum","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":null,"quantum":{"per_timeframe":{"5M":{"buy_percent":61.5,"sell_percent":38.5,"final_score":23.1}},"overall":{"scalper":{"buy_percent":57.3,"sell_percent":42.7,"final_score":14.6}}}}]}
 ```
 
 Notes:

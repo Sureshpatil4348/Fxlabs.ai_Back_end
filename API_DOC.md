@@ -32,12 +32,7 @@ This document describes how the frontend should consume market data and indicato
   "supported_data_types": ["ticks","indicators"],
   "supported_price_bases": ["last","bid","ask"],
   "indicators": {
-    "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]},
-    "ema": {"periods": [21, 50, 200]},
-    "macd": {"params": {"fast": 12, "slow": 26, "signal": 9}},
-    "ichimoku": {"params": {"tenkan": 9, "kijun": 26, "senkou_b": 52, "displacement": 26}},
-    "utbot": {"params": {"ema": 50, "atr": 10, "k": 3.0}},
-    "quantum": {"params": {"styles": ["scalper","swingtrader"], "k": 3, "quiet_market": {"atr_period": 10, "p": 5.0}}}
+    "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]}
   }
 }
 ```
@@ -74,11 +69,7 @@ This document describes how the frontend should consume market data and indicato
       "data": {
         "bar_time": 1696229940000,
         "indicators": {
-          "rsi": {"14": 51.23},
-          "ema": {"21": 1.06871, "50": 1.06855, "200": 1.06780},
-          "macd": {"macd": 0.00012, "signal": 0.00010, "hist": 0.00002},
-          "utbot": {"baseline": 1.06860, "stop": 1.06920, "direction": -1, "flip": 0},
-          "ichimoku": {"tenkan": 1.06880, "kijun": 1.06895, "senkou_a": 1.06890, "senkou_b": 1.06910, "chikou": 1.06840}
+          "rsi": {"14": 51.23}
         }
       }
     }
@@ -121,7 +112,7 @@ This document describes how the frontend should consume market data and indicato
   - Cache: warm-populated on startup for all allowed symbols/timeframes and updated on each scheduler cycle (closed bars only).
   - If no `pairs`/`symbols` provided, returns for WS‑allowed symbols (capped to 32).
   - Query params:
-    - `indicator` (required): `rsi` | `ema` | `macd` | `quantum`
+    - `indicator` (required): `rsi` | `quantum`
     - `timeframe` (required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
     - `pairs` (repeatable or CSV): symbols to include. Alias: `symbols`.
   - Response examples:
@@ -129,10 +120,7 @@ This document describes how the frontend should consume market data and indicato
     {"indicator":"rsi","timeframe":"5M","count":2,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"value":51.23},{"symbol":"BTCUSDm","timeframe":"5M","ts":1696229940000,"value":48.10}]}
     ```
     ```json
-    {"indicator":"ema","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"21":1.06871,"50":1.06855,"200":1.06780}}]}
-    ```
-    ```json
-    {"indicator":"macd","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"macd":0.00012,"signal":0.00010,"hist":0.00002}}]}
+    {"indicator":"quantum","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":null,"quantum":{"per_timeframe":{"5M":{"buy_percent":61.5,"sell_percent":38.5,"final_score":23.1}},"overall":{"scalper":{"buy_percent":57.3,"sell_percent":42.7,"final_score":14.6}}}}]}
     ```
     ```json
     {"indicator":"quantum","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":null,"quantum":{"per_timeframe":{"1M":{"buy_percent":52.1,"sell_percent":47.9,"final_score":4.2,"indicators":{"EMA21":{"signal":"neutral","is_new":false},"EMA50":{"signal":"buy","is_new":true},"EMA200":{"signal":"neutral","is_new":false},"MACD":{"signal":"buy","is_new":false},"RSI":{"signal":"neutral","is_new":false},"UTBOT":{"signal":"neutral","is_new":false},"ICHIMOKU":{"signal":"sell","is_new":false}},"5M":{"buy_percent":61.5,"sell_percent":38.5,"final_score":23.1,"indicators":{"EMA21":{"signal":"buy","is_new":true},"EMA50":{"signal":"buy","is_new":false},"EMA200":{"signal":"neutral","is_new":false},"MACD":{"signal":"buy","is_new":false},"RSI":{"signal":"buy","is_new":true},"UTBOT":{"signal":"neutral","is_new":false},"ICHIMOKU":{"signal":"neutral","is_new":false}}}},"overall":{"scalper":{"buy_percent":57.3,"sell_percent":42.7,"final_score":14.6},"swingtrader":{"buy_percent":47.5,"sell_percent":52.5,"final_score":-5.0}},"bar_times":{"5M":1696229940000}}}]}
