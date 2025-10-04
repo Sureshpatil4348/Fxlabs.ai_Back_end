@@ -89,6 +89,8 @@ async def _warm_populate_indicator_cache() -> None:
                     closes = [b.close for b in closed_bars]
                     highs = [b.high for b in closed_bars]
                     lows = [b.low for b in closed_bars]
+                    highs = [b.high for b in closed_bars]
+                    lows = [b.low for b in closed_bars]
                     rsi_val = ind_rsi_latest(closes, 14) if len(closes) >= 15 else None
                     if rsi_val is not None:
                         await indicator_cache.update_rsi(sym, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
@@ -98,6 +100,17 @@ async def _warm_populate_indicator_cache() -> None:
                             if ema_val is not None:
                                 await indicator_cache.update_ema(sym, tf.value, int(p), float(ema_val), ts_ms=last_closed.time)
                     macd_trip = ind_macd_latest(closes, 12, 26, 9)
+                    # Additional indicators for logging/WS snapshot (not cached)
+                    utbot_vals = None
+                    ich_vals = None
+                    try:
+                        utbot_vals = ind_utbot_latest(highs, lows, closes, 50, 10, 3.0)
+                    except Exception:
+                        utbot_vals = None
+                    try:
+                        ich_vals = ind_ichimoku_latest(highs, lows, closes, 9, 26, 52, 26)
+                    except Exception:
+                        ich_vals = None
                     # Additional indicators
                     utbot_vals = None
                     ich_vals = None
