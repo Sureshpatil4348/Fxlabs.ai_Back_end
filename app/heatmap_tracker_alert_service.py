@@ -19,6 +19,7 @@ from .indicators import (
     utbot_series as ind_utbot_series,
     ichimoku_series as ind_ichimoku_series,
 )
+from .quantum import compute_quantum_for_symbol
 
 
 configure_logging()
@@ -237,6 +238,18 @@ class HeatmapTrackerAlertService:
 
             K = 3
             tf_map = {"5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+
+            # Fast-path: reuse centralized quantum computation to ensure single source of truth.
+            try:
+                q = await compute_quantum_for_symbol(symbol)
+                overall = q.get("overall", {}) if isinstance(q, dict) else {}
+                style_key = style_l if style_l in ("scalper", "swingtrader") else "scalper"
+                v = overall.get(style_key)
+                if v and all(k in v for k in ("buy_percent", "sell_percent", "final_score")):
+                    return float(v["buy_percent"]), float(v["sell_percent"]), float(v["final_score"])
+            except Exception:
+                # Fall back to local computation below on any error
+                pass
 
             def percentile(values: list, p: float) -> float:
                 if not values:
