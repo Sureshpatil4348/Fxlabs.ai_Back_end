@@ -145,32 +145,7 @@ This document describes how the frontend should consume market data and indicato
 
 Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` serves cache-first snapshots for convenience.
 
-- `GET /api/correlation?timeframe=1H&pairs=EURUSDm_GBPUSDm`
-  - Returns latest closed-bar real correlation for requested correlation pair keys.
-  - If `pairs` omitted, returns all fixed pair keys from the RSI Correlation dashboard.
-  - Query params:
-    - `timeframe` (required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
-    - `pairs` (repeatable or CSV): pair keys like `EURUSDm_GBPUSDm`. If omitted, uses fixed set.
-    - `window` (int, optional): rolling returns window; defaults to `50`.
-  - Response example:
-    ```json
-    {
-      "indicator": "correlation",
-      "timeframe": "1H",
-      "count": 1,
-      "pairs": [
-        {
-          "pair_key": "EURUSDm_GBPUSDm",
-          "timeframe": "1H",
-          "ts": 1696229940000,
-          "window": 50,
-          "value": 0.42,
-          "strength": "moderate",
-          "pair_sign": "positive"
-        }
-      ]
-    }
-    ```
+ 
 
 ### Recommended client usage
 
@@ -178,7 +153,7 @@ Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` ser
 2) Open WebSocket v2 for live updates. Expect:
    - `ticks` approximately every second (coalesced).
    - `indicator_update` only when a new bar closes (≈ timeframe boundary; detection runs every ~10 seconds).
-   - `correlation_update` for fixed correlation pair keys when RSI updates on a timeframe; payload uses last closed pair bar time and window=50 by default.
+ 
 3) Merge live updates into your store. Keep RSI as a closed-bar value; show live price from `ticks`.
 
 ### Symbols and timeframes

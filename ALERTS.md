@@ -1,5 +1,5 @@
 **Overview**
-- Supported alerts: RSI Tracker, RSI Correlation Tracker, Quantum Analysis (Heatmap) Tracker, and Quantum Analysis: Custom Indicator Tracker. RSI/Correlation use closed-bar evaluation.
+- Supported alerts: RSI Tracker, Quantum Analysis (Heatmap) Tracker, and Quantum Analysis: Custom Indicator Tracker. RSI uses closed-bar evaluation.
 - Delivery channel: Email (IST timestamps). Telegram is out of scope.
 - Trigger philosophy: fire on threshold crossings; use per-side cooldown and threshold‑level re‑arm.
  - MT5 data source and closed-bar policy are described in `MT5.md` (see Data Fetch and WebSocket sections).
@@ -8,14 +8,13 @@
 - Max tracked pairs per user: up to 3.
 - Trigger style: crossing into overbought/oversold; not on every bar while in‑zone.
 - Closed‑bar evaluation for RSI family: evaluate RSI on the last closed candlestick only (no intrabar/tick evaluation). Minimum supported timeframe is 5M.
-- Event‑driven alerting: as soon as the indicator scheduler detects a new closed‑bar update and writes to the in‑memory `indicator_cache`, the backend immediately evaluates relevant alerts (RSI Tracker, RSI Correlation Tracker, Indicator Tracker, Heatmap Tracker) using the current alert cache snapshot. This eliminates waiting for the 5‑minute boundary while preserving closed‑bar gating.
+- Event‑driven alerting: as soon as the indicator scheduler detects a new closed‑bar update and writes to the in‑memory `indicator_cache`, the backend immediately evaluates relevant alerts (RSI Tracker, Indicator Tracker, Heatmap Tracker) using the current alert cache snapshot. This eliminates waiting for the 5‑minute boundary while preserving closed‑bar gating.
 - MT5 OHLC fetches include the forming candle flagged with `is_closed=false`. Alert engines strip it automatically for RSI math; client dashboards can keep using it for live rendering without extra filtering.
 - Retrigger policy: once triggered, re‑arm only after leaving the triggerable zone and trigger again only on a fresh crossing back in.
 - Timezone for display: Asia/Kolkata (tenant-aware for Daily/news: see `DAILY_TZ_NAME`).
 - System safeguards: rate limit 5 emails/user/hour (overflow → digest), per‑pair concurrency cap, warm‑up for RSI, skip stale TFs (last candle age > 2× TF length).
   - Startup warm‑up: On server start or first evaluation per key, alerts baseline current state and skip initial triggers for existing in‑zone conditions. Specifically:
     - RSI Tracker: baseline last closed bar per (symbol, timeframe) and require the next new bar for triggers.
-    - RSI Correlation Tracker: baseline last closed bar per (pair_key, timeframe) and current mismatch state; trigger only on a transition after baseline.
     - Heatmap Tracker: initialize armed state per (alert, symbol) from current Buy%/Sell% (disarm sides already above thresholds) and skip the first observation.
     - Indicator Tracker: baseline last signal per (alert, symbol, timeframe, indicator) and skip the first observation.
 
@@ -56,7 +55,7 @@
 - Title: RSI Alert • {PAIR} ({TF})
 - Body: zone entered (Overbought/Oversold), RSI value, price, IST time.
 - Footer: The disclaimer appears once at the bottom of the email (not per pair).
-  - RSI and RSI Correlation: "Not financial advice. © FxLabs AI"
+- RSI: "Not financial advice. © FxLabs AI"
   - Heatmap/Indicator trackers and Daily: "Education only. © FxLabs AI" (or equivalent wording)
 
 **Defaults That Work**
@@ -96,40 +95,7 @@
 
 - Evaluation and trigger insertion are performed by the backend only. The frontend solely manages alert configuration state (CRUD, validation) and must not evaluate thresholds or insert triggers.
 
-## RSI Correlation Tracker Alert
-
-Single per-user alert for the RSI Correlation dashboard. User selects `mode` and timeframe.
-
-- **Mode**: `rsi_threshold` or `real_correlation`
-- **Timeframe**: one of `1M,5M,15M,30M,1H,4H,1D,1W` (choose only one)
-- **Pairs**: no selection needed; backend auto-checks configured correlation pairs.
-- **RSI Threshold**: period is fixed to 14; configure `rsi_overbought` (60–90), `rsi_oversold` (10–40)
-- **Real Correlation**: correlation window is fixed to 50
-- **Behavior**: Insert a trigger when a correlation pair transitions into a mismatch per rules below.
-  - RSI Threshold mode: uses pair‑type aware mismatch definitions
-    - Positive pair: mismatch if one symbol is Overbought (≥OB) and the other is Oversold (≤OS)
-    - Negative pair: mismatch if both are simultaneously Overbought (≥OB) or both Oversold (≤OS)
-  - Real Correlation mode: aligns closed‑candle closes for both symbols over the last `window+1` overlapping timestamps and computes log‑return Pearson correlation
-    - Positive pair: mismatch if correlation < +0.25
-    - Negative pair: mismatch if correlation > −0.15
-    - Strength labels: strong if |corr| ≥ 0.70; moderate if ≥ 0.30; else weak
-  - Closed‑bar evaluation: evaluation runs once per closed bar for each pair/timeframe using last‑closed timestamps for both symbols; re‑triggers only after the pair leaves mismatch and then re‑enters on a subsequent closed bar.
-  - Implementation notes:
-    - RSI values are sourced from the single source of truth `indicator_cache` (closed‑bar only). If the cache is not yet warm for a `(symbol,timeframe,period)`, the service temporarily computes RSI from OHLC closed bars, updates the cache with the latest value, and proceeds. This converges the ring buffer quickly while keeping parity.
-    - Pair handling is protected by keyed async locks per `(symbol,timeframe)` and enforces one evaluation per new closed bar using the last‑closed timestamp baseline per `(alert_id,pair_key,timeframe)`.
-  
-Fixed correlation pair_keys evaluated:
-
-- Positive: `EURUSDm_GBPUSDm`, `EURUSDm_AUDUSDm`, `EURUSDm_NZDUSDm`, `GBPUSDm_AUDUSDm`, `AUDUSDm_NZDUSDm`, `USDCHFm_USDJPYm`, `XAUUSDm_XAGUSDm`, `XAUUSDm_EURUSDm`, `BTCUSDm_ETHUSDm`, `BTCUSDm_XAUUSDm`
-- Negative: `EURUSDm_USDCHFm`, `GBPUSDm_USDCHFm`, `USDJPYm_EURUSDm`, `USDJPYm_GBPUSDm`, `USDCADm_AUDUSDm`, `USDCHFm_AUDUSDm`, `XAUUSDm_USDJPYm`
-
-Configuration:
-- Single alert per user (unique by `user_id`)
-- Validate timeframe, mode, RSI bounds (correlation window is fixed to 50)
-- CRUD only on alert config; backend evaluates triggers; no DB trigger table
-
-Supabase Schema: `supabase_rsi_correlation_tracker_alerts_schema.sql`
-- `rsi_correlation_tracker_alerts` only (trigger tables removed)
+ 
 
 ## Quantum Analysis (Heatmap) Tracker Alert
 
@@ -270,8 +236,7 @@ After each alert cache refresh, the server logs a categories summary and a full 
      - id=... | name=Heatmap Tracker Alert | user=...
   • heatmap_indicator_tracker: 2
      - id=... | name=Indicator Tracker Alert | user=...
-  • rsi_correlation_tracker: 1
-     - id=... | name=RSI Correlation Tracker | user=...
+ 
 ```
 
 Additionally:

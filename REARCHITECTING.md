@@ -226,10 +226,7 @@ All alert engines and live RSI debugging must reuse the same indicator pipeline 
   - Use `indicator_cache[(symbol,timeframe)]` to read the latest closed-bar RSI value for the configured period (e.g., 14).
   - Maintain a small ring buffer in `indicator_cache` so last N RSI values are available for cross detection and warm-up.
 
-- RSI Correlation Tracker
-  - For each pair, read RSI series from the ring buffer for both symbols for the selected timeframe and period.
-  - If the buffer is not yet warm (insufficient bars), temporarily fall back to computing the series via `app/indicators.rsi_wilder` using the same OHLC source, then cache the last value to converge quickly.
-  - Always enforce closed-bar gating (no forming candles).
+ 
 
 - Heatmap / Quantum Tracker
   - Replace per-cycle computations with reads of cached EMA/MACD/UTBot/Ichimoku values and apply only the scoring/aggregation step.
@@ -293,7 +290,7 @@ Conclusion: We can get very close across indicators on closed bars, but absolute
 | 10 | OBS-1 | Observability | Add metrics + structured logs | Backend | DONE | Poll durations; items; latencies | `server.py` | SCHED-1 | JSON logs optional |
 | 11 | SEC-1 | Security | WS input validation + allowlists | Backend | DONE | Validate symbol/tf; caps; optional auth | `server.py` | None | Mirrors REST auth policy: optional `X-API-Key` on WS; allowlists and caps enforced |
 | 12 | ALERT-1 | Alerts | Refactor RSI Tracker to read cache | Backend | DONE | No re-compute; closed-bar only | `app/rsi_tracker_alert_service.py` | CACHE-1 | Keep cooldown logic |
-| 13 | ALERT-2 | Alerts | Refactor RSI Correlation to read cache | Backend | DONE | Ring buffers; warm-up fallback | `app/rsi_correlation_tracker_alert_service.py` | CACHE-1 | Pair handling; reads `indicator_cache.get_latest_rsi` with warm-up fallback (compute + `update_rsi`) |
+| 13 | ALERT-2 | Alerts | Remove RSI Correlation feature | Backend | DONE | Feature removed across code and docs |  |  |  |
 | 14 | ALERT-3 | Alerts | Refactor Heatmap (Quantum) to read cache | Backend | DONE | Cache → aggregation only | `app/heatmap_tracker_alert_service.py` | CACHE-1 | Quiet-market damping |
 | 15 | ALERT-4 | Alerts | Refactor Indicator Tracker to read cache | Backend | DONE | Flip detection from cache | `app/heatmap_indicator_tracker_alert_service.py` | CACHE-1 | K=3 window |
 | 16 | IND-2 | Indicators | Add micro-bench + unit checks | Backend | DONE | 3–5 symbols×TFs parity | `tests/` | MT5 running | No net installs |

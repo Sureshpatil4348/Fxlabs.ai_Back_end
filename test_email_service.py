@@ -79,26 +79,7 @@ class EmailServiceTester:
             }
         ]
     
-    def create_mock_rsi_correlation_alert_data(self) -> List[Dict[str, Any]]:
-        """Create mock RSI correlation alert data for testing"""
-        return [
-            {
-                "symbol1": "EURUSDm",
-                "symbol2": "GBPUSDm", 
-                "rsi1": 72.1,
-                "rsi2": 28.5,
-                "correlation": 0.85,
-                "timeframe": "1h"
-            },
-            {
-                "symbol1": "USDJPYm",
-                "symbol2": "USDCHF",
-                "rsi1_value": 68.3,  # Test the new rsi1_value field
-                "rsi2_value": 31.7,  # Test the new rsi2_value field
-                "correlation": -0.72,
-                "timeframe": "4h"
-            }
-        ]
+    # Correlation alert data creation removed (feature dropped)
     
     async def test_email_service_initialization(self):
         """Test email service initialization"""
@@ -131,10 +112,7 @@ class EmailServiceTester:
         rsi_values = self.email_service._extract_alert_values(rsi_data)
         print(f"📈 RSI values extracted: {rsi_values}")
         
-        # Test RSI correlation data (both rsi1/rsi2 and rsi1_value/rsi2_value)
-        correlation_data = self.create_mock_rsi_correlation_alert_data()
-        correlation_values = self.email_service._extract_alert_values(correlation_data)
-        print(f"🔗 Correlation values extracted: {correlation_values}")
+        # Correlation extraction removed (feature dropped)
         
         print()
     
@@ -222,15 +200,7 @@ class EmailServiceTester:
         )
         print(f"📈 RSI hash: {rsi_hash}")
         
-        # Test RSI correlation alert hash
-        correlation_data = self.create_mock_rsi_correlation_alert_data()
-        correlation_hash = self.email_service._generate_alert_hash(
-            self.test_email,
-            "RSI Correlation Alert",
-            correlation_data,
-            "rsi_correlation"
-        )
-        print(f"🔗 Correlation hash: {correlation_hash}")
+        # Correlation hash generation removed (feature dropped)
         
         print()
     

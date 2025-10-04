@@ -998,7 +998,6 @@ async def _fetch_all_user_emails() -> List[str]:
         timeout = aiohttp.ClientTimeout(connect=3, sock_read=7, total=10)
         tables = [
             "rsi_tracker_alerts",
-            "rsi_correlation_tracker_alerts",
             "heatmap_tracker_alerts",
             "heatmap_indicator_tracker_alerts",
         ]

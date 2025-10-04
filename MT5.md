@@ -52,10 +52,6 @@ Notes:
   - Closed-bar RSI(14 by default) using Wilder smoothing; triggers on threshold crossings with per-side hysteresis re-arm.
   - Enforces minimum `5M` timeframe for alerts; warm-up and per-user closed-bar gating prevent duplicate triggers.
   - Code: `app/rsi_tracker_alert_service.py` (key methods `_get_recent_rsi_series`, `_detect_rsi_crossing`, `check_rsi_tracker_alerts`).
-- RSI Correlation Tracker:
-  - Two modes: `rsi_threshold` mismatch vs. `real_correlation` (rolling log-return correlation over a fixed window of 50).
-  - Closed-bar gating and per-user state tracking; triggers logged and optionally emailed.
-  - Code: `app/rsi_correlation_tracker_alert_service.py`.
 - Shared RSI math: `app/rsi_utils.py` (`calculate_rsi_series`, `calculate_rsi_latest`, `closed_closes`).
 
 For end-to-end alert behavior and product policies, see `ALERTS.md`.

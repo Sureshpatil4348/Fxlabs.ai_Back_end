@@ -168,57 +168,7 @@ Minimum data requirements (closes/bars):
   - Get “daily open”: prefer daily timeframe (`1D/D1`) open for the current day; fallback to first bar of current day on active timeframe; final fallback to latest bar open.
   - Compute: `Daily% = (current − dailyOpen)/dailyOpen × 100`.
 
-## RSI Correlation Dashboard
-
-Two modes:
-
-### Mode A: RSI Threshold Analysis
-- For each configured pair `(A,B)`:
-  - Compute `RSI_A`, `RSI_B`.
-  - Lookup thresholds: `overbought` (default 70), `oversold` (default 30).
-  - Pair type: positive or negative, based on static list.
-- Mismatch rules:
-  - Positive pairs: mismatch if one is overbought AND the other is oversold.
-  - Negative pairs: mismatch if both are simultaneously overbought OR both oversold.
-- Display: status (`mismatch`/`neutral`), RSIs for both symbols.
-
-### Mode B: Real Rolling Correlation
-- Align closed‑candle closes for both symbols over a window `W` (default 50), using overlapping timestamps across the two series.
-- Compute log returns: `r_t = ln(P_t / P_{t−1})` for the aligned sequence.
-- Pearson correlation: `corr = cov(r1,r2) / (σ(r1)·σ(r2))`.
-- Pair type: positive or negative (from configured list).
-- Mismatch thresholds:
-  - Positive pair: `corr < +0.25` ⇒ mismatch
-  - Negative pair: `corr > −0.15` ⇒ mismatch
-- Strength classification: `|corr| ≥ 0.7 ⇒ strong`, `≥ 0.3 ⇒ moderate`, else `weak`.
-- Display: correlation as percentage `(corr·100)%`, pair type, mismatch coloring.
-
-### Static Correlation Pairs
-
-The dashboard uses the following fixed correlation list:
-
-Negative pairs
-- EURUSD vs USDCHF
-- GBPUSD vs USDCHF
-- USDJPY vs EURUSD
-- USDJPY vs GBPUSD
-- USDCAD vs AUDUSD
-- USDCHF vs AUDUSD
-- XAUUSD vs USDJPY (gold vs USDJPY moderately negative)
-
-Positive pairs
-- EURUSD vs GBPUSD
-- EURUSD vs AUDUSD
-- EURUSD vs NZDUSD
-- GBPUSD vs AUDUSD
-- AUDUSD vs NZDUSD
-- USDCHF vs USDJPY
-- XAUUSD vs XAGUSD (gold vs silver very high positive)
-- XAUUSD vs EURUSD (safe-haven vs USD)
-- BTCUSD vs ETHUSD (very high positive)
-- BTCUSD vs XAUUSD (weak/moderate positive)
-
-Window options (rolling): 20, 50, 90, 120 (default 50).
+ 
 
 ## Currency Strength Meter
 

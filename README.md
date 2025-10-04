@@ -29,7 +29,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Cache-first Indicator Access**: REST `/api/indicator` serves latest RSI values from an in-memory cache populated on startup and updated on every closed-candle cycle. Also supports `indicator=quantum` to retrieve per-timeframe and overall Buy/Sell % (signals-only aggregation). Per-indicator entries now include a concise `reason` string explaining the current signal.
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
-- **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
+- **Comprehensive Alert Systems**: Heatmap and RSI alerts with email notifications
  - **Event‑Driven Alerts**: Alerts are evaluated immediately after the indicator scheduler updates the in‑memory `indicator_cache` on closed bars. A minute scheduler remains as a safety net.
 - **Smart Email Cooldown**: Value-based cooldown prevents spam while allowing significant RSI changes (email-level only; RSI Tracker pair-level cooldown removed)
 - **Intelligent Caching**: Memory-efficient selective data caching
@@ -41,7 +41,7 @@ A high-performance, real-time financial market data streaming service built with
 - **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
   - FXLabs tenant: All alert emails are enforced to IST (Asia/Kolkata) regardless of host tz. If the OS tz database is missing, a robust +05:30 (IST) fallback is applied.
 - **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FXLabs • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
-- **Single Common Footer**: Disclaimers are rendered once at the bottom of each email (not per pair/card). RSI/Correlation use "Not financial advice. © FxLabs AI". Heatmap and Indicator trackers use "Education only. © FxLabs AI".
+- **Single Common Footer**: Disclaimers are rendered once at the bottom of each email (not per pair/card). RSI uses "Not financial advice. © FxLabs AI". Heatmap and Indicator trackers use "Education only. © FxLabs AI".
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers, per the Calculations Reference (EMA21/50/200, MACD, RSI, UTBot, Ichimoku; new‑signal boost; quiet‑market damping)
   - Per‑alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
 
@@ -49,13 +49,11 @@ A high-performance, real-time financial market data streaming service built with
 
 This backend aligns alert evaluations with the Calculations Reference used by the frontend widgets:
 
-- Closed‑candle policy: All RSI/correlation/heatmap evaluations use closed candles; forming candles are not used in triggers.
+- Closed‑candle policy: All RSI/heatmap evaluations use closed candles; forming candles are not used in triggers.
 - Trigger cadence: Event‑driven based on indicator updates; no need to wait for 5‑minute boundary. Closed‑bar gating remains enforced.
 - MT5 OHLC snapshots still include the forming candle as the final element with `is_closed=false`. Backend RSI calculations ignore it automatically, so frontend collectors can continue using the tail for live charting without custom trimming.
 - RSI (14, Wilder): Computed from MT5 OHLC (Bid‑based series), matching frontend logic. Period is fixed to 14 across the entire system (REST/WS, alerts, emails, cache).
-- RSI Correlation (Dashboard parity):
-  - Mode `rsi_threshold`: Pair‑type aware mismatch (positive: OB/OS split; negative: both OB or both OS).
-  - Mode `real_correlation`: Timestamp‑aligned log‑return Pearson correlation over a fixed rolling window of 50. Mismatch thresholds are pair‑type aware (positive: corr < +0.25; negative: corr > −0.15). Strength labels: strong |corr|≥0.70, moderate ≥0.30, else weak.
+ 
 - Heatmap/Quantum aggregation:
   - Indicators: RSI(14) plus internal EMA/MACD/UTBot/Ichimoku signals for aggregation only. Exposed via WS `quantum_update` and REST `indicator=quantum`. Non-RSI raw values are not exposed via indicator APIs.
   - New fields: For each timeframe, `indicators` contains per‑indicator `{ signal: buy|sell|neutral, is_new: boolean, reason: string }`. Bottom bar Buy/Sell% is provided under `overall` by style (`scalper`, `swingtrader`).
@@ -261,7 +259,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 #### News Reminder Behavior (High‑Impact Only)
 - The 5‑minute news reminder now filters to only AI‑normalized high‑impact items (`impact == "high"`). Medium/low impact items are skipped.
 - Source impact values and AI analysis are normalized to `high|medium|low`; only `high` qualifies for reminders.
- - Branding: News reminder emails now use the same unified green header and common footer as RSI/Correlation emails (logo + date/time in header; single disclaimer footer).
+- Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
 
 #### Auth Fetch Logging (Verbose)
 - Start: `daily_auth_fetch_start | page: 1 | per_page: 1000`
@@ -374,7 +372,7 @@ Tick payloads include `daily_change_pct` (Bid vs broker D1 reference) and only c
 ```
 
 
-##### Indicator payloads (broadcast-only; RSI only)
+##### Indicator payloads (broadcast-only)
 
 Live push when a new bar is detected by the 10s poller:
 
@@ -392,24 +390,7 @@ Live push when a new bar is detected by the 10s poller:
 
 Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
-##### Correlation payloads (broadcast-only)
-
-When RSI updates on a timeframe, the server also computes Real Correlation for the fixed correlation pair keys and broadcasts updates:
-
-```json
-{
-  "type": "correlation_update",
-  "pair_key": "EURUSDm_GBPUSDm",
-  "timeframe": "1H",
-  "data": {
-    "bar_time": 1696229940000,
-    "window": 50,
-    "value": 0.42,
-    "strength": "moderate",
-    "pair_sign": "positive"
-  }
-}
-```
+ 
 
 #### WebSocket Metrics (v2)
 
@@ -419,8 +400,7 @@ When RSI updates on a timeframe, the server also computes Real Correlation for t
 - Counters:
   - `connections_opened`, `connections_closed`
   - `ok_ticks`, `fail_ticks`, `ticks_items` (sum of items sent in tick lists)
-  - `ok_indicator_update`, `fail_indicator_update`
-  - `ok_correlation_update`, `fail_correlation_update`
+- `ok_indicator_update`, `fail_indicator_update`
 
 #### Indicator Coverage
 
@@ -511,26 +491,15 @@ Symbol normalization (canonicalization):
 Notes:
 - Multiple triggers render multiple cards in a single email.
 
-### RSI Correlation Tracker — Threshold and Real Correlation
-
-The RSI Correlation Tracker is available as a single per-user alert. Users select exactly one timeframe and a mode (`rsi_threshold` or `real_correlation`).
-  - Startup warm‑up: On first observation per (pair_key, timeframe), baseline the last closed bar and current mismatch state; trigger only when a new bar produces a transition into mismatch.
-  - Implementation: RSI Threshold mode reads closed‑bar RSI values from the centralized `indicator_cache`. When the cache is not yet warm for a `(symbol,timeframe,period)`, the service computes RSI from OHLC closed bars, updates the cache with the latest value (ring buffer), and then evaluates. This avoids duplicate math long‑term while ensuring immediate correctness.
-
-- Pair selection is not required; backend evaluates a fixed set of correlation pair keys from `app/constants.py`.
-  
-
-Closed‑bar evaluation & retriggering:
-- Evaluation runs once per new closed bar per correlation pair/timeframe by checking the last closed timestamps of both symbols; the service evaluates when a new bar is seen and avoids duplicate evaluations within the same closed bar.
-- Retrigger only after the pair returns to non‑mismatch and then transitions into mismatch again on a subsequent closed bar.
+ 
 
 ### Global Limit: Max 3 Pairs/User
 
-- The backend now enforces a global cap of 3 unique symbols per user across all active alerts (Heatmap, RSI, and RSI Correlation).
+- The backend now enforces a global cap of 3 unique symbols per user across all active alerts (Heatmap and RSI).
 - Enforcement occurs on alert creation endpoints:
   - `POST /api/heatmap-alerts`
   - `POST /api/rsi-alerts`
-  - `POST /api/rsi-correlation-alerts` (both symbols in each correlation pair are counted)
+ 
 - If adding an alert would exceed the limit, the API returns `400` with a clear message indicating current tracked count and requested additions.
 - Tip for UIs: call `GET /api/alerts/user/{user_id}` or the specific per-type list endpoints and compute the union of symbols to show remaining slots.
 
@@ -558,16 +527,9 @@ Notes:
 Notes:
 - Multiple triggers render multiple cards in a single email.
 
-### RSI Correlation Alerts — Threshold and Real Correlation
+ 
 
-- Modes:
-  - RSI Threshold: evaluate pairwise RSI combinations (e.g., positive/negative mismatches, neutral break) using per‑pair RSI settings.
-  - Real Correlation: compute Pearson correlation of returns over a fixed window of 50 using historical OHLC closes for both symbols.
-- Outputs include RSI values (threshold mode) or `correlation_value` (real correlation mode), with per‑pair details in emails.
-  - Email uses a compact, mobile‑friendly HTML template titled "RSI Correlation Mismatch" with columns: Expected, RSI Corr Now, Trigger.
-
-#### Email Template (RSI Correlation — Threshold Mode)
-- Compact per‑pair card with RSI correlation summary.
+ 
 - Fields per card:
   - **pair_a/pair_b**: `symbol1`/`symbol2`
   - **rsi_len**: `rsi_period`
@@ -576,24 +538,19 @@ Notes:
     - positive_mismatch: `one ≥ overbought` and `one ≤ oversold`
     - negative_mismatch: `both ≥ overbought` or `both ≤ oversold`
     - neutral_break: `both between oversold and overbought`
-  - **rsi_corr_now**: correlation between recent RSI series for the pair (if computed)
+ 
   - **trigger_rule**: humanized `trigger_condition`
 Notes:
 - Multiple triggered pairs render as multiple cards in one email.
 
-#### Email Template (Real Correlation)
+ 
 - Uses a compact, mobile‑friendly HTML card per triggered pair.
 - Fields per card:
 - **pair_a/pair_b**: Symbols displayed as `ABC/DEF` (e.g., `EUR/USD` vs `GBP/USD`)
   - **lookback**: fixed 50
   - **timeframe**: TF of the evaluation (e.g., `1H`)
   - **expected_corr**: Threshold expression derived from the triggered rule:
-    - strong_positive: `≥ strong_correlation_threshold`
-    - strong_negative: `≤ -strong_correlation_threshold`
-    - weak_correlation: `|corr| ≤ weak_correlation_threshold`
-    - correlation_break: `moderate_threshold ≤ |corr| < strong_threshold`
-  - **actual_corr**: Calculated `correlation_value` (rounded)
-  - **trigger_rule**: Humanized `trigger_condition` (e.g., `Strong positive correlation`)
+ 
 
 Notes:
 - Multiple triggered pairs render as multiple cards within a single email.
@@ -636,17 +593,17 @@ Notes:
 - End‑of‑timeframe evaluation only: scheduler runs every 5 minutes; alerts are evaluated on timeframe closes (5M/15M/30M/1H/4H/1D). Tick-driven checks are disabled by default. Note: 1M is supported for market data streaming but alerts are restricted to 5M and higher.
 - Crossing/Flip triggers: fire when the metric crosses into the condition from the opposite side (or a regime flip occurs), not on every bar while in‑zone.
 
-See `ALERTS.md` for canonical Supabase table schemas and exact frontend implementation requirements (Type A/Type B/RSI/RSI‑Correlation), including field lists, endpoints, validation, and delivery channel setup.
+See `ALERTS.md` for canonical Supabase table schemas and exact frontend implementation requirements (Heatmap/Indicator/RSI), including field lists, endpoints, validation, and delivery channel setup.
 - Re‑arm on exit then re‑cross: once fired, do not re‑fire while the condition persists; re‑arm after leaving the zone and fire again only on a new cross‑in. Changing the configured threshold re‑arms immediately.
 - Cooldowns, concurrency, and alert frequency (once/hourly/daily) apply consistently across alert types. Per-user rate limits and digest have been removed.
 
 See `ALERTS.md` for the consolidated alerts product & tech spec.
 
 ### Troubleshooting: Only RSI Tracker and Daily emails arrive
-- No active alerts: Ensure you have rows in Supabase for `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`, or `rsi_correlation_tracker_alerts` with `is_active=true` and non‑empty `pairs` (max 3).
+- No active alerts: Ensure you have rows in Supabase for `heatmap_tracker_alerts` or `heatmap_indicator_tracker_alerts` with `is_active=true` and non‑empty `pairs` (max 3).
 - Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. On higher TFs, RSI may hover mid‑band for long periods.
 - Arm/disarm gating: After a trigger, that side disarms and rearms only after leaving the zone (threshold−5).
-- Correlation triggers: Fire only on transitions into a mismatch state; steady regimes won't re‑trigger.
+ 
 
 ### 📰 News API Usage (External Source + Internal Endpoints)
 
@@ -716,9 +673,7 @@ ws.onmessage = (event) => {
 curl -H "X-API-Key: your_token" \
      "http://localhost:8000/api/indicator?indicator=rsi&timeframe=1H&pairs=EURUSDm&pairs=BTCUSDm"
 
-# Correlation (real correlation over returns; window defaults to 50)
-curl -H "X-API-Key: your_token" \
-     "http://localhost:8000/api/correlation?timeframe=1H&pairs=EURUSDm_GBPUSDm"
+ 
 
 # Note: Tick data is WebSocket-only. Use `/market-v2` to receive live ticks.
 ```
@@ -906,7 +861,7 @@ Fxlabs.ai_Back_end/
 │   ├── email_service.py               # SendGrid email service for alerts
 │   ├── heatmap_alert_service.py       # Heatmap alert processing
 │   ├── rsi_alert_service.py           # RSI alert processing
-│   ├── rsi_correlation_tracker_alert_service.py # RSI correlation alert processing
+ 
 │   └── indicators.py                  # Centralized indicator math (RSI/EMA/MACD/Ichimoku/UT Bot)
 ├── server.py                          # FastAPI app, routes & websockets (imports from app/*)
 ├── requirements.txt                   # Python dependencies
@@ -1153,7 +1108,7 @@ At DEBUG level, evaluators emit concise reasons when a trigger does not fire, so
   - `rsi_insufficient_data` — fewer than 2 RSI points available
   - `rsi_rearm_overbought` / `rsi_rearm_oversold` — armed state toggled after exiting threshold
   - `rsi_no_trigger` — includes reason (`no_cross | disarmed_overbought | disarmed_oversold | already_overbought | already_oversold | within_neutral_band`) and values (`prev_rsi`, `curr_rsi`, thresholds, armed flags)
-- RSI Correlation Tracker
+ 
   - `corr_no_mismatch` — computed condition did not indicate mismatch; includes `label` and `value`
   - `corr_persisting_mismatch` — mismatch persisted from previous bar (no new trigger)
 - Heatmap Tracker
@@ -1165,7 +1120,7 @@ At DEBUG level, evaluators emit concise reasons when a trigger does not fire, so
 
 At INFO level, the scheduler emits compact batch summaries after each evaluation cycle:
 - `rsi_tracker_eval | triggers: <n>`
-- `rsi_correlation_eval | triggers: <n>`
+ 
 - `heatmap_tracker_eval | triggers: <n>`
 - `indicator_tracker_eval | triggers: <n>`
 
@@ -1184,7 +1139,7 @@ Notes:
 - Email send failures no longer log raw provider response bodies.
 - Third‑party verbose clients (e.g., SendGrid `python_http_client`) are set to WARNING to suppress payload dumps. To see them again, manually set `logging.getLogger("python_http_client").setLevel(logging.DEBUG)` in your session.
 
-Modules instrumented: `rsi_alert_service`, `rsi_tracker_alert_service`, `rsi_correlation_tracker_alert_service`, `heatmap_tracker_alert_service`, `heatmap_indicator_tracker_alert_service`, `alert_cache`, and `email_service` (queue/send summaries).
+Modules instrumented: `rsi_alert_service`, `rsi_tracker_alert_service`, `heatmap_tracker_alert_service`, `heatmap_indicator_tracker_alert_service`, `alert_cache`, and `email_service` (queue/send summaries).
 
 To enable DEBUG‑level detailed evaluations, set:
 ```bash
@@ -1214,7 +1169,7 @@ export LOG_LEVEL=DEBUG
 **Specific Changes Made**:
 - **Heatmap Alert Service**: Changed "Check Complete: X alerts processed, 0 triggered" from INFO to DEBUG level
 - **RSI Alert Service**: Changed "Check Complete: X alerts processed, 0 triggered" from INFO to DEBUG level  
-- **RSI Correlation Alert Service**: Changed "Check Complete: X alerts processed, 0 triggered" from INFO to DEBUG level
+ 
 - **Conditional Logic**: Only log at INFO level when alerts are actually triggered, reducing terminal noise by 95%
 
 ## 🤝 Contributing
@@ -1269,9 +1224,9 @@ self.rsi_threshold = 5.0        # RSI difference threshold for breakthrough
 ```
 
 ### Technical Details
-- **Multi-alert support**: Works with RSI, Heatmap, and RSI Correlation alerts
+- **Multi-alert support**: Works with RSI and Heatmap alerts
 - **Smart value extraction**: Handles different data structures for each alert type
-- **Hash generation**: Includes actual values (RSI, strength, correlation) rounded to 1 decimal
+- **Hash generation**: Includes actual values (RSI, strength) rounded to 1 decimal
 - **Value comparison**: Compares current vs last sent values for breakthrough detection
 - **Breakthrough logic**: If any value difference ≥ threshold, alert is sent
 - **Memory management**: Automatic cleanup prevents memory leaks
@@ -1279,7 +1234,7 @@ self.rsi_threshold = 5.0        # RSI difference threshold for breakthrough
 ### Alert Type Support
 - **RSI Alerts**: Tracks `rsi` values (e.g., 70.1 → 75.1 = breakthrough)
 - **Heatmap Alerts**: Tracks `strength` values and RSI from indicators
-- **RSI Correlation Alerts**: Tracks `rsi1` and `rsi2` values separately
+ 
 
 ## 🆘 Support
 
@@ -1298,8 +1253,7 @@ For support and questions:
 ### SyntaxError at server.py:808 "try:" on startup (Windows)
 - Symptom: Startup fails with a traceback pointing to `server.py` around line ~808 with `try:` highlighted.
 - Cause: A nested `try` block was placed inside an `except` in the indicator scheduler, which could lead to parser confusion and brittle indentation handling in some environments.
-- Fix: Update to the latest code. The quantum broadcast now runs without an inner `try/except`, and the correlation broadcast block has been moved outside that exception path.
-  - If patching manually, relocate the correlation broadcast to run unconditionally after indicator updates and remove the inner `try/except` around quantum.
+ 
 - Verify: `python fxlabs-server.py` starts cleanly; `/health` returns `{"status":"ok", ...}`.
 ### Ctrl+C hangs at "Waiting for application shutdown"
 - Symptom: After pressing Ctrl+C, logs show `INFO:     Shutting down`, `connection closed` lines, and then `INFO:     Waiting for application shutdown.` without exiting.
@@ -1323,16 +1277,7 @@ Expected logs when working:
   - `📤 Queueing email send for RSI Tracker ...`
   - Email service logs like `📧 RSI Alert Email Service - Starting email process` and `📊 SendGrid response: Status 202`.
 
-### "RSI Correlation Tracker: no emails/logs"
-- Note: DB trigger tables have been removed. The correlation tracker logs triggers and email queueing; check LOG_LEVEL and email config.
-- **Checklist**:
-  - **Pairs configured**: Set `RSI_CORR_TRACKER_DEFAULT_PAIRS` (e.g., `EURUSD_GBPUSD,USDJPY_GBPUSD`).
-  - **notification_methods**: Ensure includes `"email"`.
-  - **Email service configured** and **LOG_LEVEL** set appropriately.
-  - **Mode & thresholds**: `mode` is `rsi_threshold` or `real_correlation`; for real correlation, we treat `|corr| < 0.25` as mismatch by default.
-- **Expected logs**:
-  - `🚨 RSI Correlation Tracker trigger: ...`
-  - `📤 Queueing email send for RSI Correlation Tracker ...`
+ 
 
 ### "SendGrid not configured, skipping RSI alert email"
 - Cause: `EmailService` didn't initialize a SendGrid client (`self.sg is None`). This happens when either the SendGrid library isn't installed or tenant-specific credentials are missing.

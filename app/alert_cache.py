@@ -10,7 +10,7 @@ import builtins
 from .logging_config import configure_logging
 from .alert_logging import log_debug, log_info, log_warning, log_error
 from .config import ALERT_VERBOSE_LOGS
-from .constants import RSI_CORRELATION_WINDOW
+ 
 
 class AlertCache:
     """Simple in-memory cache for user alert configurations"""
@@ -100,8 +100,7 @@ class AlertCache:
             
             # Fetch RSI Tracker alerts (single-alert model)
             rsi_tracker_alerts = await self._fetch_rsi_tracker_alerts(headers)
-            # Fetch RSI Correlation Tracker alerts (single-alert model)
-            rsi_corr_tracker_alerts = await self._fetch_rsi_correlation_tracker_alerts(headers)
+            # Correlation tracker removed
             # Fetch Heatmap/Quantum Tracker alerts (single-alert model)
             heatmap_tracker_alerts = await self._fetch_heatmap_tracker_alerts(headers)
             # Fetch Heatmap Custom Indicator Tracker alerts (single-alert model)
@@ -133,30 +132,7 @@ class AlertCache:
                         "updated_at": alert.get("updated_at"),
                     })
 
-            # Process RSI correlation tracker alerts (single alert per user)
-            for alert in rsi_corr_tracker_alerts:
-                user_id = alert.get("user_id")
-                if user_id:
-                    if user_id not in new_cache:
-                        new_cache[user_id] = []
-                    new_cache[user_id].append({
-                        "type": "rsi_correlation_tracker",
-                        "id": alert.get("id"),
-                        "alert_name": alert.get("alert_name", "RSI Correlation Tracker Alert"),
-                        "user_id": alert.get("user_id"),
-                        "user_email": alert.get("user_email"),
-                        "is_active": alert.get("is_active", True),
-                        "timeframe": alert.get("timeframe", "1H"),
-                        "mode": alert.get("mode", "rsi_threshold"),
-                        # Normalize to RSI(14) when present
-                        "rsi_period": 14,
-                        "rsi_overbought": alert.get("rsi_overbought", 70),
-                        "rsi_oversold": alert.get("rsi_oversold", 30),
-                        "correlation_window": RSI_CORRELATION_WINDOW,
-                        "notification_methods": alert.get("notification_methods", ["email"]),
-                        "created_at": alert.get("created_at"),
-                        "updated_at": alert.get("updated_at"),
-                    })
+            # Correlation tracker removed
 
             # Process Heatmap/Quantum tracker alerts (single alert per user)
             for alert in heatmap_tracker_alerts:
@@ -234,12 +210,7 @@ class AlertCache:
                                     f"ob={a.get('rsi_overbought', a.get('rsi_overbought_threshold', 70))} | "
                                     f"os={a.get('rsi_oversold', a.get('rsi_oversold_threshold', 30))}"
                                 )
-                            elif atype == "rsi_correlation_tracker":
-                                cfg = (
-                                    f"tf={a.get('timeframe','')} | mode={(a.get('mode') or 'rsi_threshold').lower()} | "
-                                    f"period={a.get('rsi_period', 14)} | ob={a.get('rsi_overbought', 70)} | os={a.get('rsi_oversold', 30)} | "
-                                    f"window={RSI_CORRELATION_WINDOW}"
-                                )
+                            
                             elif atype == "heatmap_tracker":
                                 pairs = a.get('pairs', []) or []
                                 cfg = (
@@ -263,7 +234,6 @@ class AlertCache:
                     logger,
                     "alert_cache_categories",
                     rsi_tracker=len(categories.get("rsi_tracker", [])),
-                    rsi_correlation_tracker=len(categories.get("rsi_correlation_tracker", [])),
                     heatmap_tracker=len(categories.get("heatmap_tracker", [])),
                     heatmap_indicator_tracker=len(categories.get("heatmap_indicator_tracker", [])),
                 )
@@ -325,24 +295,7 @@ class AlertCache:
             print(f"❌ Error fetching RSI tracker alerts: {e}")
             return []
 
-    async def _fetch_rsi_correlation_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Fetch RSI Correlation Tracker alerts from Supabase"""
-        try:
-            url = f"{self.supabase_url}/rest/v1/rsi_correlation_tracker_alerts"
-            params = {
-                "select": "*",
-                "is_active": "eq.true",
-            }
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.get(url, headers=headers, params=params) as response:
-                    if response.status == 200:
-                        return await response.json()
-                    else:
-                        print(f"❌ Failed to fetch RSI correlation tracker alerts: {response.status}")
-                        return []
-        except Exception as e:
-            print(f"❌ Error fetching RSI correlation tracker alerts: {e}")
-            return []
+    
 
     async def _fetch_heatmap_tracker_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
         """Fetch Heatmap/Quantum tracker alerts from Supabase"""

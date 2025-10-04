@@ -161,56 +161,10 @@ class RSIAlertResponse(BaseModel):
     updated_at: datetime
 
 
-class RSICorrelationAlertRequest(BaseModel):
-    alert_name: str
-    user_id: Optional[str] = None
-    user_email: str
-    pairs: List[List[str]] = Field(alias="correlation_pairs")  # List of [symbol1, symbol2] pairs
-    timeframes: List[str] = ["1H"]
-    calculation_mode: str = "rsi_threshold"  # "rsi_threshold" or "real_correlation"
-    rsi_period: int = 14
-    rsi_overbought_threshold: int = 70
-    rsi_oversold_threshold: int = 30
-    correlation_window: Literal[50] = 50
-    alert_conditions: List[str]
-    strong_correlation_threshold: float = 0.70
-    moderate_correlation_threshold: float = 0.30
-    weak_correlation_threshold: float = 0.15
-    notification_methods: List[str] = ["email"]
-    alert_frequency: str = "once"
-    
-    # Pydantic v2 config
-    model_config = {
-        "populate_by_name": True
-    }
+# Correlation alert request removed
 
 
-class RSICorrelationAlertResponse(BaseModel):
-    id: str
-    alert_name: str
-    user_id: Optional[str] = None
-    user_email: str
-    pairs: List[List[str]] = Field(alias="correlation_pairs")
-    timeframes: List[str]
-    calculation_mode: str
-    rsi_period: int
-    rsi_overbought_threshold: int
-    rsi_oversold_threshold: int
-    correlation_window: Literal[50]
-    alert_conditions: List[str]
-    strong_correlation_threshold: float
-    moderate_correlation_threshold: float
-    weak_correlation_threshold: float
-    notification_methods: List[str]
-    alert_frequency: str
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-    
-    # Pydantic v2 config
-    model_config = {
-        "populate_by_name": True
-    }
+# Correlation alert response removed
 
 
 class HeatmapAlertTrigger(BaseModel):

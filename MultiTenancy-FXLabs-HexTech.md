@@ -55,7 +55,7 @@ Run two instances of the backend with separate env files and domains.
 - Supabase schema
   - Apply the same SQL schemas to the HexTech project:
     - `supabase_rsi_tracker_alerts_schema.sql`
-    - `supabase_rsi_correlation_tracker_alerts_schema.sql`
+    
     - `supabase_heatmap_tracker_alerts_schema.sql`
     - `supabase_heatmap_indicator_tracker_alerts_schema.sql`
   - Auth: users live in each Supabase project’s Auth; daily/news emails query that tenant’s `auth.admin` API
