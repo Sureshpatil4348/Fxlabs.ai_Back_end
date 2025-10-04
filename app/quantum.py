@@ -108,11 +108,19 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
                 except Exception:
                     rsi_recent = None
 
-            def rsi_signal_from_recent() -> Tuple[str, bool]:
+            def rsi_signal_from_recent() -> Tuple[str, bool, str]:
                 if not rsi_recent or len(rsi_recent) < 2:
-                    return "neutral", False
+                    return "neutral", False, "Insufficient data"
                 r = float(rsi_recent[-1][1])
-                sig = "buy" if r <= 30.0 else ("sell" if r >= 70.0 else "neutral")
+                if r <= 30.0:
+                    sig = "buy"
+                    reason = "RSI <= 30 (oversold)"
+                elif r >= 70.0:
+                    sig = "sell"
+                    reason = "RSI >= 70 (overbought)"
+                else:
+                    sig = "neutral"
+                    reason = "RSI in 30-70 range"
                 is_new = False
                 window = [float(v) for _, v in rsi_recent[- (K + 1):]]
                 for i in range(1, len(window)):
@@ -123,7 +131,7 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
                     if (prev > 70.0 and curr <= 70.0) or (prev < 30.0 and curr >= 30.0) or (prev <= 70.0 and curr > 70.0) or (prev >= 30.0 and curr < 30.0):
                         is_new = True
                         break
-                return sig, is_new
+                return sig, is_new, reason
 
             # EMA(21/50/200) from cache aligned by timestamps
             ema_recent_21 = await indicator_cache.get_recent_ema(symbol, tf_code, 21, K + 3)
@@ -132,19 +140,25 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
 
             ts_to_close: Dict[int, float] = {int(b.time): float(b.close) for b in closed_bars}
 
-            def ema_signal_from_recent(ema_recent: Optional[List[Tuple[int, float]]]) -> Tuple[str, bool]:
+            def ema_signal_from_recent(ema_recent: Optional[List[Tuple[int, float]]]) -> Tuple[str, bool, str]:
                 if not ema_recent or len(ema_recent) < 2:
-                    return "neutral", False
+                    return "neutral", False, "Insufficient data"
                 aligned: List[Tuple[int, float, float]] = []  # (ts, close, ema)
                 for ts, ev in ema_recent:
                     c = ts_to_close.get(int(ts))
                     if c is not None:
                         aligned.append((int(ts), float(c), float(ev)))
                 if len(aligned) < 2:
-                    return "neutral", False
+                    return "neutral", False, "Insufficient data"
                 _, c_prev, e_prev = aligned[-2]
                 _, c_curr, e_curr = aligned[-1]
                 sig = "buy" if c_curr > e_curr else ("sell" if c_curr < e_curr else "neutral")
+                if c_curr > e_curr:
+                    reason = "Price above EMA"
+                elif c_curr < e_curr:
+                    reason = "Price below EMA"
+                else:
+                    reason = "Price near EMA"
                 is_new = False
                 for i in range(1, min(K, len(aligned) - 1) + 1):
                     _, cp, ep = aligned[-(i + 1)]
@@ -152,16 +166,22 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
                     if (cp <= ep and cc > ec) or (cp >= ep and cc < ec):
                         is_new = True
                         break
-                return sig, is_new
+                return sig, is_new, reason
 
             # MACD from cache (12,26,9)
             macd_recent = await indicator_cache.get_recent_macd(symbol, tf_code, 12, 26, 9, K + 3)
 
-            def macd_signal_from_recent() -> Tuple[str, bool]:
+            def macd_signal_from_recent() -> Tuple[str, bool, str]:
                 if not macd_recent or len(macd_recent) < 1:
-                    return "neutral", False
+                    return "neutral", False, "Insufficient data"
                 _, m, s, _h = macd_recent[-1]
                 sig = "buy" if (m > s and m > 0) else ("sell" if (m < s and m < 0) else "neutral")
+                if sig == "buy":
+                    reason = "MACD > signal and > 0"
+                elif sig == "sell":
+                    reason = "MACD < signal and < 0"
+                else:
+                    reason = "MACD near signal or mixed"
                 is_new = False
                 for i in range(1, min(K, len(macd_recent) - 1) + 1):
                     _, m_prev, s_prev, _ = macd_recent[-(i + 1)]
@@ -169,54 +189,67 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
                     if (m_prev <= s_prev and m_curr > s_curr) or (m_prev >= s_prev and m_curr < s_curr):
                         is_new = True
                         break
-                return sig, is_new
+                return sig, is_new, reason
 
             # UTBot via centralized helper
-            def utbot_signal() -> Tuple[str, bool]:
+            def utbot_signal() -> Tuple[str, bool, str]:
                 res = ind_utbot_series(highs, lows, closes, 50, 10, 3.0)
                 base = res.get("baseline") or []
                 l = res.get("long_stop") or []
                 s = res.get("short_stop") or []
                 flips = res.get("buy_sell_signal") or []
                 if not (base and l and s):
-                    return "neutral", False
+                    return "neutral", False, "Insufficient data"
                 price = closes[-1]
                 pos = "buy" if price > s[-1] else ("sell" if price < l[-1] else "neutral")
+                if pos == "buy":
+                    reason = "Price above stop (UTBot)"
+                elif pos == "sell":
+                    reason = "Price below stop (UTBot)"
+                else:
+                    reason = "No UTBot trigger"
                 is_new = any(v != 0 for v in flips[-K:]) if flips else False
-                return pos, is_new
+                return pos, is_new, reason
 
             # Ichimoku via centralized helper
-            def ichimoku_signal() -> Tuple[str, bool]:
+            def ichimoku_signal() -> Tuple[str, bool, str]:
                 series = ind_ichimoku_series(highs, lows, closes, 9, 26, 52, 26)
                 tenkan = series.get("tenkan") or []
                 kijun = series.get("kijun") or []
                 sa = series.get("senkou_a") or []
                 sb = series.get("senkou_b") or []
                 if not (tenkan and kijun and sa and sb):
-                    return "neutral", False
+                    return "neutral", False, "Insufficient data"
                 up_cloud = max(sa[-1], sb[-1])
                 dn_cloud = min(sa[-1], sb[-1])
                 price = closes[-1]
                 if price > up_cloud:
                     sig = "buy"
+                    reason = "Price above cloud"
                 elif price < dn_cloud:
                     sig = "sell"
+                    reason = "Price below cloud"
                 else:
                     sig = "neutral"
+                    reason = "In cloud / mixed; TK/cloud bias"
                     for i in range(1, min(K, len(tenkan) - 1, len(kijun) - 1) + 1):
                         t_prev, k_prev = tenkan[-(i + 1)], kijun[-(i + 1)]
                         t_curr, k_curr = tenkan[-i], kijun[-i]
                         if t_prev <= k_prev and t_curr > k_curr:
                             sig = "buy"
+                            reason = "Tenkan/Kijun bullish cross"
                             break
                         if t_prev >= k_prev and t_curr < k_curr:
                             sig = "sell"
+                            reason = "Tenkan/Kijun bearish cross"
                             break
                     if sig == "neutral":
                         if sa[-1] > sb[-1]:
                             sig = "buy"
+                            reason = "Bullish cloud (A>B)"
                         elif sa[-1] < sb[-1]:
                             sig = "sell"
+                            reason = "Bearish cloud (A<B)"
                 # New if TK cross or cloud breakout in last K
                 is_new = False
                 for i in range(1, min(K, len(tenkan) - 1, len(kijun) - 1) + 1):
@@ -233,16 +266,16 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
                         if pr > up_c or pr < dn_c:
                             is_new = True
                             break
-                return sig, is_new
+                return sig, is_new, reason
 
             # Compute per-indicator signals (and newness) once for this timeframe
-            ema21_sig, ema21_new = ema_signal_from_recent(ema_recent_21)
-            ema50_sig, ema50_new = ema_signal_from_recent(ema_recent_50)
-            ema200_sig, ema200_new = ema_signal_from_recent(ema_recent_200)
-            macd_sig, macd_new = macd_signal_from_recent()
-            rsi_sig, rsi_new = rsi_signal_from_recent()
-            utbot_sig, utbot_new = utbot_signal()
-            ichi_sig, ichi_new = ichimoku_signal()
+            ema21_sig, ema21_new, ema21_reason = ema_signal_from_recent(ema_recent_21)
+            ema50_sig, ema50_new, ema50_reason = ema_signal_from_recent(ema_recent_50)
+            ema200_sig, ema200_new, ema200_reason = ema_signal_from_recent(ema_recent_200)
+            macd_sig, macd_new, macd_reason = macd_signal_from_recent()
+            rsi_sig, rsi_new, rsi_reason = rsi_signal_from_recent()
+            utbot_sig, utbot_new, utbot_reason = utbot_signal()
+            ichi_sig, ichi_new, ichi_reason = ichimoku_signal()
 
             # Aggregate per-timeframe
             per_tf_sum = 0.0
@@ -264,13 +297,13 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
                 "sell_percent": float(sell_pct),
                 "final_score": float(final),
                 "indicators": {
-                    "EMA21": {"signal": ema21_sig, "is_new": bool(ema21_new)},
-                    "EMA50": {"signal": ema50_sig, "is_new": bool(ema50_new)},
-                    "EMA200": {"signal": ema200_sig, "is_new": bool(ema200_new)},
-                    "MACD": {"signal": macd_sig, "is_new": bool(macd_new)},
-                    "RSI": {"signal": rsi_sig, "is_new": bool(rsi_new)},
-                    "UTBOT": {"signal": utbot_sig, "is_new": bool(utbot_new)},
-                    "ICHIMOKU": {"signal": ichi_sig, "is_new": bool(ichi_new)},
+                    "EMA21": {"signal": ema21_sig, "is_new": bool(ema21_new), "reason": ema21_reason},
+                    "EMA50": {"signal": ema50_sig, "is_new": bool(ema50_new), "reason": ema50_reason},
+                    "EMA200": {"signal": ema200_sig, "is_new": bool(ema200_new), "reason": ema200_reason},
+                    "MACD": {"signal": macd_sig, "is_new": bool(macd_new), "reason": macd_reason},
+                    "RSI": {"signal": rsi_sig, "is_new": bool(rsi_new), "reason": rsi_reason},
+                    "UTBOT": {"signal": utbot_sig, "is_new": bool(utbot_new), "reason": utbot_reason},
+                    "ICHIMOKU": {"signal": ichi_sig, "is_new": bool(ichi_new), "reason": ichi_reason},
                 },
             }
             bar_times[tf_code] = int(ts_list[-1]) if ts_list else None

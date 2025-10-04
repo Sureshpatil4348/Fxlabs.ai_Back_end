@@ -26,7 +26,7 @@ A high-performance, real-time financial market data streaming service built with
 ### Key Features
 
 - **Real-time Data Streaming**: Live tick and RSI indicator data via WebSocket (broadcast-only)
-- **Cache-first Indicator Access**: REST `/api/indicator` serves latest RSI values from an in-memory cache populated on startup and updated on every closed-candle cycle. Also supports `indicator=quantum` to retrieve per-timeframe and overall Buy/Sell % (signals-only aggregation).
+- **Cache-first Indicator Access**: REST `/api/indicator` serves latest RSI values from an in-memory cache populated on startup and updated on every closed-candle cycle. Also supports `indicator=quantum` to retrieve per-timeframe and overall Buy/Sell % (signals-only aggregation). Per-indicator entries now include a concise `reason` string explaining the current signal.
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap, RSI, and RSI Correlation alerts with email notifications
@@ -58,7 +58,7 @@ This backend aligns alert evaluations with the Calculations Reference used by th
   - Mode `real_correlation`: Timestamp‑aligned log‑return Pearson correlation over a fixed rolling window of 50. Mismatch thresholds are pair‑type aware (positive: corr < +0.25; negative: corr > −0.15). Strength labels: strong |corr|≥0.70, moderate ≥0.30, else weak.
 - Heatmap/Quantum aggregation:
   - Indicators: RSI(14) plus internal EMA/MACD/UTBot/Ichimoku signals for aggregation only. Exposed via WS `quantum_update` and REST `indicator=quantum`. Non-RSI raw values are not exposed via indicator APIs.
-  - New fields: For each timeframe, `indicators` contains per‑indicator `{ signal: buy|sell|neutral, is_new: boolean }`. Bottom bar Buy/Sell% is provided under `overall` by style (`scalper`, `swingtrader`).
+  - New fields: For each timeframe, `indicators` contains per‑indicator `{ signal: buy|sell|neutral, is_new: boolean, reason: string }`. Bottom bar Buy/Sell% is provided under `overall` by style (`scalper`, `swingtrader`).
   - Per‑cell scoring: buy=+1, sell=−1, neutral=0; new‑signal boost ±0.25 in last K=3; quiet‑market damping halves MACD/UTBot cell scores when ATR10 is below the 5th percentile of last 200 values; clamp to [−1.25,+1.25].
   - Aggregation: Σ_tf Σ_ind S(tf,ind)×W_tf×W_ind; Final=100×(Raw/1.25); Buy%=(Final+100)/2; Sell%=100−Buy%.
 
@@ -485,7 +485,7 @@ Response shapes (examples):
 {"indicator":"rsi","timeframe":"5M","count":2,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"value":51.23},{"symbol":"BTCUSDm","timeframe":"5M","ts":1696229940000,"value":48.10}]}
 ```
 ```json
-{"indicator":"quantum","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":null,"quantum":{"per_timeframe":{"5M":{"buy_percent":61.5,"sell_percent":38.5,"final_score":23.1}},"overall":{"scalper":{"buy_percent":57.3,"sell_percent":42.7,"final_score":14.6}}}}]}
+{"indicator":"quantum","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":null,"quantum":{"per_timeframe":{"5M":{"buy_percent":61.5,"sell_percent":38.5,"final_score":23.1,"indicators":{"EMA21":{"signal":"buy","is_new":true,"reason":"Price above EMA"}}}},"overall":{"scalper":{"buy_percent":57.3,"sell_percent":42.7,"final_score":14.6}}}}]}
 ```
 
 Notes:
