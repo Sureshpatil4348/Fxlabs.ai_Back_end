@@ -767,6 +767,25 @@ Concurrency:
 - Access is async‑safe using keyed locks via `app.concurrency.pair_locks` with keys `ind:{symbol}:{timeframe}`.
 - Avoid holding other `pair_locks` with the same key simultaneously to prevent deadlocks.
 
+### High-Concurrency Architecture & Scaling
+
+- **ASGI + FastAPI**: Single-process, event-loop concurrency handles many simultaneous REST and WebSocket clients without blocking. Background tasks (news, daily emails, minute alerts, indicator poller) are started via the app lifespan and run concurrently.
+- **Broadcast WebSockets (v2)**: A single producer pipeline computes closed-bar indicators every ~10s and broadcasts snapshots to all connected clients. Each client has a paced tick loop (~1 Hz), avoiding per-client heavy work.
+- **In-memory caches**: `app/price_cache.py` and `app/indicator_cache.py` serve reads in O(1) with keyed asyncio locks to keep updates consistent under load. REST endpoints read from these caches instead of recomputing.
+- **Shaping caps and allowlists**: Environment-driven caps limit work per connection and per request.
+  - `ALLOWED_WS_SYMBOLS`, `ALLOWED_WS_TIMEFRAMES`
+  - `WS_MAX_SYMBOLS`, `WS_MAX_TFS_PER_SYMBOL`, `WS_MAX_SUBSCRIPTIONS`
+  - REST endpoints cap symbols to 32 and validate timeframes.
+- **Backpressure/timeouts**:
+  - WebSocket send loops pace at ~1s intervals and use best-effort non-blocking sends.
+  - External calls (e.g., Supabase via `AlertCache`) use strict client timeouts.
+- **Security & isolation**: `X-API-Key` required for REST; WebSocket mirrors REST auth optionally. CORS origins are configured per deployment. Multi-tenancy uses separate entry points (`fxlabs-server.py` / `hextech-server.py`) with tenant-scoped credentials and branding.
+- **Observability**: Periodic WebSocket metrics and per-update indicator logs track throughput, failures, and latency without affecting hot paths.
+
+Operational guidance:
+- Start with conservative allowlists and caps; increase gradually while monitoring CPU, memory, and send loop latencies.
+- For higher fan-out, scale vertically (CPU/RAM) first. If horizontally scaling processes, ensure only one instance performs heavy indicator polling per market feed or stagger instances by symbol/timeframe to avoid duplicate work.
+
 ### Performance Characteristics
 
 | Metric | Before Optimization | After Optimization | Improvement |
