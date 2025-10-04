@@ -109,7 +109,24 @@ This document describes how the frontend should consume market data and indicato
     {"indicator":"macd","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"macd":0.00012,"signal":0.00010,"hist":0.00002}}]}
     ```
 
-Note: Tick data is WebSocket-only via `/market-v2`. There is no REST tick endpoint.
+- `GET /api/pricing?pairs=EURUSDm&pairs=BTCUSDm`
+  - Returns latest cached price snapshot per pair with `bid`, `ask`, `time`, `time_iso`, and `daily_change_pct` (Bid vs D1 reference).
+  - If cache miss, falls back to a live MT5 tick for that symbol and backfills the cache.
+  - If no `pairs`/`symbols` provided, returns for WS‑allowed symbols (capped to 32).
+  - Query params:
+    - `pairs` (repeatable or CSV): symbols to include. Alias: `symbols`.
+  - Response example:
+    ```json
+    {
+      "count": 2,
+      "pairs": [
+        {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"daily_change_pct":-0.12},
+        {"symbol":"BTCUSDm","time":1696229946123,"time_iso":"2025-10-02T14:19:06.123Z","bid":27123.5,"ask":27124.1,"daily_change_pct":0.35}
+      ]
+    }
+    ```
+
+Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` serves cache-first snapshots for convenience.
 
 ### Recommended client usage
 

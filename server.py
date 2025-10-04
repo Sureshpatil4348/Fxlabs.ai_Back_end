@@ -61,6 +61,7 @@ from app.mt5_utils import (
 )
 from app.rsi_utils import calculate_rsi_series, closed_closes
 from app.indicator_cache import indicator_cache
+from app.price_cache import price_cache
 from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest, utbot_latest as ind_utbot_latest, ichimoku_latest as ind_ichimoku_latest
 from app.constants import RSI_SUPPORTED_SYMBOLS
 # One-time warmup to backfill indicator cache at startup
@@ -964,6 +965,85 @@ async def get_indicator(
     }
 
 
+@app.get("/api/pricing")
+async def get_pricing(
+    pairs: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., pairs=EURUSDm&pairs=BTCUSDm) or CSV"),
+    symbols: Optional[List[str]] = Query(None, description="Alias for pairs (repeatable or CSV)"),
+    x_api_key: Optional[str] = Depends(require_api_token_header),
+):
+    """Return latest cached price and daily_change_pct for 1 to 32 pairs.
+
+    - Sources the latest value from in-memory price cache, falling back to MT5 tick on miss.
+    - Response arrays are ordered by the canonicalized symbol list.
+    """
+    # Normalize symbols
+    requested: List[str] = []
+    for src in (pairs or []):
+        if src:
+            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
+    for src in (symbols or []):
+        if src:
+            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
+
+    if not requested:
+        try:
+            candidates: List[str] = sorted(list(ALLOWED_WS_SYMBOLS))
+        except Exception:
+            candidates = sorted([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+    else:
+        # Canonicalize and cap to 32
+        candidates = []
+        for s in requested:
+            cs = canonicalize_symbol(s)
+            if cs not in candidates:
+                candidates.append(cs)
+        candidates = candidates[:32]
+        # Filter to allowed when available
+        try:
+            allowed_ws: Set[str] = set(ALLOWED_WS_SYMBOLS)
+        except Exception:
+            allowed_ws = set([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+        candidates = [s for s in candidates if s in allowed_ws]
+
+    results: List[Dict[str, Any]] = []
+    for sym in candidates:
+        try:
+            # Prefer cache
+            snap = await price_cache.get_latest(sym)
+            if not snap:
+                # Fallback to live MT5 tick
+                ensure_symbol_selected(sym)
+                info = mt5.symbol_info_tick(sym)
+                if info is not None:
+                    ts_ms = getattr(info, "time_msc", 0) or int(getattr(info, "time", 0)) * 1000
+                    dt_iso = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).isoformat()
+                    bid = getattr(info, "bid", None)
+                    ask = getattr(info, "ask", None)
+                    dcp = get_daily_change_pct_bid(sym)
+                    snap = {
+                        "symbol": sym,
+                        "time": ts_ms,
+                        "time_iso": dt_iso,
+                        "bid": float(bid) if bid is not None else None,
+                        "ask": float(ask) if ask is not None else None,
+                        "daily_change_pct": float(dcp) if dcp is not None else None,
+                    }
+                    try:
+                        await price_cache.update(sym, time_ms=ts_ms, time_iso=dt_iso, bid=bid, ask=ask, daily_change_pct=dcp)
+                    except Exception:
+                        pass
+            if snap:
+                results.append(snap)
+            else:
+                results.append({"symbol": sym, "time": None, "time_iso": None, "bid": None, "ask": None, "daily_change_pct": None})
+        except Exception:
+            results.append({"symbol": sym, "time": None, "time_iso": None, "bid": None, "ask": None, "daily_change_pct": None})
+
+    return {
+        "count": len(results),
+        "pairs": results,
+    }
+
 
 @app.get("/api/symbols")
 def search_symbols(q: str = Query(..., min_length=1), x_api_key: Optional[str] = Depends(require_api_token_header)):
@@ -1287,6 +1367,18 @@ class WSClient:
                                 update_ohlc_cache(sym, tf)
                         except Exception:
                             pass
+                    # Update latest price cache for REST pricing endpoint
+                    try:
+                        await price_cache.update(
+                            sym,
+                            time_ms=ts_ms,
+                            time_iso=tick_dict.get("time_iso"),
+                            bid=tick_dict.get("bid"),
+                            ask=tick_dict.get("ask"),
+                            daily_change_pct=tick_dict.get("daily_change_pct"),
+                        )
+                    except Exception:
+                        pass
                         
             except HTTPException:
                 # symbol disappeared or invalid; drop it
