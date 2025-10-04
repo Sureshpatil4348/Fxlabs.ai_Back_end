@@ -1307,6 +1307,12 @@ For support and questions:
 **Compatibility**: Python 3.8+, MT5 Python API, FastAPI 0.100+
 
 ## 🛠️ Troubleshooting
+### SyntaxError at server.py:808 "try:" on startup (Windows)
+- Symptom: Startup fails with a traceback pointing to `server.py` around line ~808 with `try:` highlighted.
+- Cause: A nested `try` block was placed inside an `except` in the indicator scheduler, which could lead to parser confusion and brittle indentation handling in some environments.
+- Fix: Update to the latest code. The quantum broadcast now runs without an inner `try/except`, and the correlation broadcast block has been moved outside that exception path.
+  - If patching manually, relocate the correlation broadcast to run unconditionally after indicator updates and remove the inner `try/except` around quantum.
+- Verify: `python fxlabs-server.py` starts cleanly; `/health` returns `{"status":"ok", ...}`.
 ### Ctrl+C hangs at "Waiting for application shutdown"
 - Symptom: After pressing Ctrl+C, logs show `INFO:     Shutting down`, `connection closed` lines, and then `INFO:     Waiting for application shutdown.` without exiting.
 - Cause: Background schedulers (e.g., indicators/news) must be cancelled so the lifespan shutdown can complete. If any long-running task isn't cancelled, the server waits indefinitely.
