@@ -401,6 +401,25 @@ Live push when a new bar is detected by the 10s poller:
 
 Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
+##### Correlation payloads (broadcast-only)
+
+When RSI updates on a timeframe, the server also computes Real Correlation for the fixed correlation pair keys and broadcasts updates:
+
+```json
+{
+  "type": "correlation_update",
+  "pair_key": "EURUSDm_GBPUSDm",
+  "timeframe": "1H",
+  "data": {
+    "bar_time": 1696229940000,
+    "window": 50,
+    "value": 0.42,
+    "strength": "moderate",
+    "pair_sign": "positive"
+  }
+}
+```
+
 #### WebSocket Metrics (v2)
 
 - The server emits periodic WebSocket metrics for v2 connections.
@@ -410,6 +429,7 @@ Note: `bar_time` is epoch milliseconds (ms) using broker server time.
   - `connections_opened`, `connections_closed`
   - `ok_ticks`, `fail_ticks`, `ticks_items` (sum of items sent in tick lists)
   - `ok_indicator_update`, `fail_indicator_update`
+  - `ok_correlation_update`, `fail_correlation_update`
 
 #### Indicator Coverage
 
@@ -707,6 +727,10 @@ ws.onmessage = (event) => {
 # Get historical OHLC data
 curl -H "X-API-Key: your_token" \
      "http://localhost:8000/api/indicator?indicator=rsi&timeframe=1H&pairs=EURUSDm&pairs=BTCUSDm"
+
+# Correlation (real correlation over returns; window defaults to 50)
+curl -H "X-API-Key: your_token" \
+     "http://localhost:8000/api/correlation?timeframe=1H&pairs=EURUSDm_GBPUSDm"
 
 # Note: Tick data is WebSocket-only. Use `/market-v2` to receive live ticks.
 ```

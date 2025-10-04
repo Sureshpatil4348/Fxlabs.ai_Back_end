@@ -63,7 +63,7 @@ from app.rsi_utils import calculate_rsi_series, closed_closes
 from app.indicator_cache import indicator_cache
 from app.price_cache import price_cache
 from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest, utbot_latest as ind_utbot_latest, ichimoku_latest as ind_ichimoku_latest
-from app.constants import RSI_SUPPORTED_SYMBOLS
+from app.constants import RSI_SUPPORTED_SYMBOLS, RSI_CORRELATION_PAIR_KEYS, RSI_CORRELATION_PAIR_SIGNS, RSI_CORRELATION_WINDOW
 # One-time warmup to backfill indicator cache at startup
 async def _warm_populate_indicator_cache() -> None:
     try:
@@ -243,6 +243,9 @@ _connected_clients = set()
 _connected_clients_lock = asyncio.Lock()
 # Last processed closed-bar timestamp per (symbol:tf)
 _indicator_last_bar: Dict[str, int] = {}
+
+# Last processed closed-bar timestamp per (pair_key:tf) for correlation broadcasts
+_corr_last_bar: Dict[str, int] = {}
 
 # D1 reference cache for daily % change computations (per symbol, keyed by UTC day)
 _d1_ref_cache: Dict[str, Tuple[str, float]] = {}
@@ -611,6 +614,76 @@ async def _indicator_scheduler() -> None:
                         # Never allow observability to break scheduling
                         pass
 
+# -----------------------------
+# Correlation helpers (Real correlation over log returns)
+# -----------------------------
+async def _compute_pair_correlation_and_ts(pair_key: str, tf: Timeframe, window: int) -> Optional[Tuple[int, float, str]]:
+    """Compute log-return Pearson correlation over a rolling window for a pair key.
+
+    Returns (pair_bar_time_ms, correlation_value, strength_label) or None on failure.
+    pair_bar_time is the min of both symbols' last closed bar timestamps.
+    """
+    try:
+        parts = pair_key.split("_")
+        if len(parts) != 2:
+            return None
+        s1, s2 = parts[0], parts[1]
+
+        # Ensure symbols are selected in MT5 (best-effort)
+        try:
+            ensure_symbol_selected(s1)
+        except Exception:
+            pass
+        try:
+            ensure_symbol_selected(s2)
+        except Exception:
+            pass
+
+        count = max(int(window) + 50, int(window) + 10)
+        o1 = get_ohlc_data(s1, tf, count)
+        o2 = get_ohlc_data(s2, tf, count)
+        if not o1 or not o2:
+            return None
+
+        # Align by closed-bar timestamps
+        m1 = {b.time: b.close for b in o1}
+        m2 = {b.time: b.close for b in o2}
+        common_ts = sorted(set(m1.keys()) & set(m2.keys()))
+        if len(common_ts) < int(window) + 1:
+            return None
+        sel_ts = common_ts[-(int(window) + 1):]
+        c1 = [m1[t] for t in sel_ts]
+        c2 = [m2[t] for t in sel_ts]
+
+        import math
+        r1 = [math.log(c1[i] / c1[i - 1]) for i in range(1, len(c1)) if c1[i - 1] > 0]
+        r2 = [math.log(c2[i] / c2[i - 1]) for i in range(1, len(c2)) if c2[i - 1] > 0]
+        m = min(len(r1), len(r2), int(window))
+        if m < 2:
+            return None
+        r1 = r1[-m:]
+        r2 = r2[-m:]
+        mean1 = sum(r1) / m
+        mean2 = sum(r2) / m
+        num = sum((a - mean1) * (b - mean2) for a, b in zip(r1, r2))
+        den1 = (sum((a - mean1) ** 2 for a in r1)) ** 0.5
+        den2 = (sum((b - mean2) ** 2 for b in r2)) ** 0.5
+        if den1 == 0 or den2 == 0:
+            corr = 0.0
+        else:
+            corr = num / (den1 * den2)
+            if corr > 1:
+                corr = 1.0
+            if corr < -1:
+                corr = -1.0
+
+        # Pair bar time: min of both last closed bars
+        pair_ts = int(min(o1[-1].time, o2[-1].time))
+        strength = "strong" if abs(corr) >= 0.70 else ("moderate" if abs(corr) >= 0.30 else "weak")
+        return pair_ts, float(corr), strength
+    except Exception:
+        return None
+
                     # Live RSI debug log for 5M closed bars using cache-aligned numbers
                     try:
                         if (
@@ -704,6 +777,51 @@ async def _indicator_scheduler() -> None:
                             except Exception:
                                 # Never let a single client block the scheduler
                                 continue
+                    # After indicator broadcast, also compute and broadcast correlation for fixed pairs when RSI updated in this timeframe
+                    # We piggy-back on RSI updates to avoid extra MT5 load; correlation uses OHLC closes.
+                    try:
+                        if tf.value in tfs_rsi_updated and clients:
+                            for pair_key in RSI_CORRELATION_PAIR_KEYS:
+                                corr_key = f"{pair_key}:{tf.value}"
+                                # Compute correlation and last closed pair timestamp
+                                res = await _compute_pair_correlation_and_ts(pair_key, tf, RSI_CORRELATION_WINDOW)
+                                if not res:
+                                    continue
+                                pair_ts, corr_val, strength = res
+                                if _corr_last_bar.get(corr_key) == pair_ts:
+                                    continue
+                                _corr_last_bar[corr_key] = pair_ts
+                                msg = {
+                                    "type": "correlation_update",
+                                    "pair_key": pair_key,
+                                    "timeframe": tf.value,
+                                    "data": {
+                                        "bar_time": pair_ts,
+                                        "window": int(RSI_CORRELATION_WINDOW),
+                                        "value": float(corr_val),
+                                        "strength": strength,
+                                        "pair_sign": RSI_CORRELATION_PAIR_SIGNS.get(pair_key),
+                                    },
+                                }
+                                for c in clients:
+                                    try:
+                                        if getattr(c, "v2_broadcast", False):
+                                            ok = await c._try_send_json(msg)
+                                            try:
+                                                label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
+                                                if ok:
+                                                    _metrics_inc(label, "ok_correlation_update", 1)
+                                                else:
+                                                    _metrics_inc(label, "fail_correlation_update", 1)
+                                            except Exception:
+                                                pass
+                                            continue
+                                        # Legacy per-subscription clients don't receive correlation messages
+                                    except Exception:
+                                        continue
+                    except Exception:
+                        # Never allow correlation streaming to break the scheduler
+                        pass
                 except Exception as e:
                     error_count += 1
                     print(f"❌ Indicator scheduler error for {symbol} {tf.value}: {e}")
@@ -959,6 +1077,78 @@ async def get_indicator(
 
     return {
         "indicator": indicator_key,
+        "timeframe": tf.value,
+        "count": len(results),
+        "pairs": results,
+    }
+
+
+@app.get("/api/correlation")
+async def get_correlation(
+    timeframe: str = Query(..., description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W"),
+    pairs: Optional[List[str]] = Query(None, description="Repeatable pair_key (e.g., pairs=EURUSDm_GBPUSDm) or CSV. If omitted, returns all fixed pair keys."),
+    window: int = Query(RSI_CORRELATION_WINDOW, description="Rolling window size for log-return correlation; fixed default 50."),
+    x_api_key: Optional[str] = Depends(require_api_token_header),
+):
+    """Return latest closed-bar real correlation for fixed pair keys.
+
+    - Computes timestamp-aligned log-return Pearson correlation over the last `window` returns (window+1 closes).
+    - Pair keys must be of the form "SYMBOLA_SYMBOLB" using broker-suffixed symbols.
+    - If `pairs` is omitted, the fixed set from constants is used.
+    """
+    # Validate timeframe
+    try:
+        tf = Timeframe(timeframe)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
+
+    # Normalize requested pair keys
+    requested: List[str] = []
+    for src in (pairs or []):
+        if src:
+            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
+    pair_keys: List[str]
+    if not requested:
+        pair_keys = list(RSI_CORRELATION_PAIR_KEYS)
+    else:
+        # Filter to known fixed keys only
+        allowed_keys = set(RSI_CORRELATION_PAIR_KEYS)
+        pair_keys = [pk for pk in requested if pk in allowed_keys]
+        if not pair_keys:
+            raise HTTPException(status_code=400, detail="no_valid_pair_keys")
+
+    # Compute correlations
+    results: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    for pk in pair_keys:
+        if pk in seen:
+            continue
+        seen.add(pk)
+        res = await _compute_pair_correlation_and_ts(pk, tf, int(window))
+        if not res:
+            results.append({
+                "pair_key": pk,
+                "timeframe": tf.value,
+                "ts": None,
+                "window": int(window),
+                "value": None,
+                "strength": None,
+                "pair_sign": RSI_CORRELATION_PAIR_SIGNS.get(pk),
+            })
+            continue
+        pair_ts, corr_val, strength = res
+        results.append({
+            "pair_key": pk,
+            "timeframe": tf.value,
+            "ts": int(pair_ts),
+            "window": int(window),
+            "value": float(corr_val),
+            "strength": strength,
+            "pair_sign": RSI_CORRELATION_PAIR_SIGNS.get(pk),
+        })
+
+    return {
+        "indicator": "correlation",
         "timeframe": tf.value,
         "count": len(results),
         "pairs": results,
