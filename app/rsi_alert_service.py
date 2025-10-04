@@ -618,17 +618,7 @@ class RSIAlertService:
                 logger.warning(f"   Alert: {alert_name} (ID: {alert_id})")
                 # Email diagnostics removed per spec
             
-            # Log the trigger in database
-            logger.info(f"📝 Logging RSI alert trigger to database...")
-            await self._log_rsi_alert_trigger(trigger_data)
-            logger.info(f"✅ RSI alert trigger logged to database")
-            log_info(
-                logger,
-                "db_trigger_logged",
-                alert_type="rsi",
-                alert_id=alert_id,
-                pairs=len(triggered_pairs),
-            )
+            # DB trigger logging removed per product decision
             
         except Exception as e:
             log_error(
@@ -637,64 +627,7 @@ class RSIAlertService:
                 error=str(e),
             )
     
-    async def _log_rsi_alert_trigger(self, trigger_data: Dict[str, Any]):
-        """Log RSI alert trigger to database"""
-        
-        try:
-            if not self.supabase_service_key:
-                logger.warning("Supabase service key not configured, skipping trigger logging")
-                return
-            
-            headers = {
-                "apikey": self.supabase_service_key,
-                "Authorization": f"Bearer {self.supabase_service_key}",
-                "Content-Type": "application/json"
-            }
-            
-            url = f"{self.supabase_url}/rest/v1/rsi_alert_triggers"
-            
-            # Log each triggered pair
-            for pair_data in trigger_data.get("triggered_pairs", []):
-                trigger_record = {
-                    "alert_id": trigger_data.get("alert_id"),
-                    "trigger_condition": pair_data.get("trigger_condition"),
-                    "symbol": pair_data.get("symbol"),
-                    "timeframe": pair_data.get("timeframe"),
-                    "rsi_value": pair_data.get("rsi_value"),
-                    "current_price": pair_data.get("current_price"),
-                    "price_change_percent": pair_data.get("price_change_percent"),
-                    "triggered_at": datetime.now(timezone.utc).isoformat()
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, headers=headers, json=trigger_record) as response:
-                        if response.status not in [200, 201]:
-                            log_error(
-                                logger,
-                                "db_trigger_log_failed",
-                                status=response.status,
-                                alert_type="rsi",
-                                alert_id=trigger_data.get("alert_id"),
-                                symbol=pair_data.get("symbol"),
-                                timeframe=pair_data.get("timeframe"),
-                            )
-                        else:
-                            log_info(
-                                logger,
-                                "db_trigger_logged",
-                                alert_type="rsi",
-                                alert_id=trigger_data.get("alert_id"),
-                                symbol=pair_data.get("symbol"),
-                                timeframe=pair_data.get("timeframe"),
-                            )
-            
-        except Exception as e:
-            log_error(
-                logger,
-                "db_trigger_log_error",
-                alert_type="rsi",
-                error=str(e),
-            )
+    # DB trigger logging removed
 
     async def _get_last_closed_bar_ts(self, symbol: str, timeframe: str) -> Optional[int]:
         """Return timestamp (ms) of the last closed bar using MT5 OHLC data; None if unavailable."""

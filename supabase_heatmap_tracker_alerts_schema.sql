@@ -20,18 +20,7 @@ create table if not exists public.heatmap_tracker_alerts (
 
 create index if not exists idx_heatmap_tracker_alerts_email on public.heatmap_tracker_alerts (user_email);
 
--- 2) Triggers table (append-only)
-create table if not exists public.heatmap_tracker_alert_triggers (
-  id uuid primary key default gen_random_uuid(),
-  alert_id uuid not null references public.heatmap_tracker_alerts(id) on delete cascade,
-  triggered_at timestamptz not null default now(),
-  symbol text not null,
-  trigger_type text not null check (trigger_type in ('buy','sell')),
-  buy_percent numeric(5,2) null,
-  sell_percent numeric(5,2) null,
-  final_score numeric(6,2) null,
-  created_at timestamptz not null default now()
-);
+-- Triggers table removed per product decision
 
 -- updated_at trigger
 create or replace function public.set_updated_at()
@@ -49,7 +38,7 @@ for each row execute function public.set_updated_at();
 
 -- RLS
 alter table public.heatmap_tracker_alerts enable row level security;
-alter table public.heatmap_tracker_alert_triggers enable row level security;
+-- (no trigger table)
 
 -- Policies: alerts (owner by user_id or user_email)
 drop policy if exists heatmap_tracker_alerts_select on public.heatmap_tracker_alerts;
@@ -78,29 +67,6 @@ create policy heatmap_tracker_alerts_del on public.heatmap_tracker_alerts
     (auth.uid() is not null and user_id = auth.uid()) or (auth.jwt()->>'email') = user_email
   );
 
--- Policies: triggers (read/insert own only)
-drop policy if exists heatmap_triggers_select on public.heatmap_tracker_alert_triggers;
-create policy heatmap_triggers_select on public.heatmap_tracker_alert_triggers
-  for select using (
-    exists (
-      select 1 from public.heatmap_tracker_alerts a
-      where a.id = alert_id
-        and (
-          (auth.uid() is not null and a.user_id = auth.uid()) or (auth.jwt()->>'email') = a.user_email
-        )
-    )
-  );
-
-drop policy if exists heatmap_triggers_insert on public.heatmap_tracker_alert_triggers;
-create policy heatmap_triggers_insert on public.heatmap_tracker_alert_triggers
-  for insert with check (
-    exists (
-      select 1 from public.heatmap_tracker_alerts a
-      where a.id = alert_id
-        and (
-          (auth.uid() is not null and a.user_id = auth.uid()) or (auth.jwt()->>'email') = a.user_email
-        )
-    )
-  );
+-- (no trigger policies)
 
 

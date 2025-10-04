@@ -3,7 +3,6 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 
-import aiohttp
 import logging
 
 from .logging_config import configure_logging
@@ -29,7 +28,6 @@ class RSITrackerAlertService:
       present, fallback to env `RSI_TRACKER_DEFAULT_PAIRS` (comma-separated symbols).
     - Trigger on threshold crossings at closed candles with threshold-level re-arm per side.
     - Per (alert, symbol, timeframe, side) cooldown in minutes to avoid rapid repeats.
-    - Log triggers to Supabase `rsi_tracker_alert_triggers` and optionally email the user.
     """
 
     def __init__(self) -> None:
@@ -287,59 +285,6 @@ class RSITrackerAlertService:
         # No fallback: require real MT5 data
         return None
 
-    async def _log_trigger(self, alert_id: str, symbol: str, timeframe: str, rsi_value: float, trigger_condition: str) -> None:
-        if not self.supabase_url or not self.supabase_service_key:
-            return
-        try:
-            headers = {
-                "apikey": self.supabase_service_key,
-                "Authorization": f"Bearer {self.supabase_service_key}",
-                "Content-Type": "application/json",
-            }
-            url = f"{self.supabase_url}/rest/v1/rsi_tracker_alert_triggers"
-            payload = {
-                "alert_id": alert_id,
-                "triggered_at": datetime.now(timezone.utc).isoformat(),
-                "trigger_condition": trigger_condition,
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "rsi_value": round(float(rsi_value), 2),
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload) as resp:
-                    if resp.status not in (200, 201):
-                        txt = await resp.text()
-                        log_error(
-                            logger,
-                            "db_trigger_log_failed",
-                            status=resp.status,
-                            body=txt,
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            trigger_condition=trigger_condition,
-                        )
-                    else:
-                        log_info(
-                            logger,
-                            "db_trigger_logged",
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            trigger_condition=trigger_condition,
-                            rsi_value=round(float(rsi_value), 2),
-                        )
-        except Exception as e:
-            log_error(
-                logger,
-                "db_trigger_log_error",
-                alert_id=alert_id,
-                symbol=symbol,
-                timeframe=timeframe,
-                trigger_condition=trigger_condition,
-                error=str(e),
-            )
-
     async def _send_notification(self, user_email: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], alert_config: Dict[str, Any]) -> None:
         if not user_email:
             return
@@ -481,8 +426,6 @@ class RSITrackerAlertService:
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             }
                             triggered_pairs.append(item)
-                            # Fire-and-forget DB log
-                            asyncio.create_task(self._log_trigger(alert_id, symbol, timeframe, item["rsi_value"], cond))
 
                     if triggered_pairs:
                         log_info(

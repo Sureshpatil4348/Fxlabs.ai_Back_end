@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any, Tuple
 
 import logging
-import aiohttp
 
 from .logging_config import configure_logging
 from .alert_cache import alert_cache
@@ -157,15 +156,7 @@ class HeatmapIndicatorTrackerAlertService:
                             "triggered_at": datetime.now(timezone.utc).isoformat(),
                         }
                         triggers.append(payload)
-                        # Fire-and-forget DB trigger logs
-                        for item in per_alert_triggers:
-                            asyncio.create_task(self._log_trigger(
-                                alert_id=alert_id,
-                                symbol=item.get("symbol", ""),
-                                timeframe=item.get("timeframe", ""),
-                                indicator=item.get("indicator", ""),
-                                signal=item.get("trigger_condition", ""),
-                            ))
+                        # DB trigger logging removed per product decision
                         methods = alert.get("notification_methods") or ["email"]
                         if "email" in methods:
                             log_info(
@@ -197,67 +188,7 @@ class HeatmapIndicatorTrackerAlertService:
             logger.error(f"Error checking Indicator Tracker alerts: {e}")
             return []
 
-    async def _log_trigger(
-        self,
-        alert_id: str,
-        symbol: str,
-        timeframe: str,
-        indicator: str,
-        signal: str,
-    ) -> None:
-        if not self.supabase_url or not self.supabase_service_key:
-            return
-        try:
-            headers = {
-                "apikey": self.supabase_service_key,
-                "Authorization": f"Bearer {self.supabase_service_key}",
-                "Content-Type": "application/json",
-            }
-            url = f"{self.supabase_url}/rest/v1/heatmap_indicator_tracker_alert_triggers"
-            payload = {
-                "alert_id": alert_id,
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "indicator": indicator,
-                "signal": signal,
-                "triggered_at": datetime.now(timezone.utc).isoformat(),
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload) as resp:
-                    if resp.status not in (200, 201):
-                        txt = await resp.text()
-                        log_error(
-                            logger,
-                            "db_trigger_log_failed",
-                            status=resp.status,
-                            body=txt,
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            indicator=indicator,
-                            signal=signal,
-                        )
-                    else:
-                        log_info(
-                            logger,
-                            "db_trigger_logged",
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            indicator=indicator,
-                            signal=signal,
-                        )
-        except Exception as e:
-            log_error(
-                logger,
-                "db_trigger_log_error",
-                alert_id=alert_id,
-                symbol=symbol,
-                timeframe=timeframe,
-                indicator=indicator,
-                signal=signal,
-                error=str(e),
-            )
+    # DB trigger logging removed
 
     async def _compute_indicator_signal(self, symbol: str, timeframe: str, indicator: str) -> str:
         """Compute indicator signal using cache-first reads over closed bars.

@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
 import logging
-import aiohttp
 
 from .logging_config import configure_logging
 from .alert_cache import alert_cache
@@ -177,16 +176,7 @@ class HeatmapTrackerAlertService:
                             "triggered_at": datetime.now(timezone.utc).isoformat(),
                         }
                         triggers.append(payload)
-                        # Fire-and-forget DB log per triggered row
-                        for item in per_alert_triggers:
-                            asyncio.create_task(self._log_trigger(
-                                alert_id=alert_id,
-                                symbol=item.get("symbol", ""),
-                                trigger_type=item.get("trigger_condition", ""),
-                                buy_percent=item.get("buy_percent"),
-                                sell_percent=item.get("sell_percent"),
-                                final_score=item.get("final_score"),
-                            ))
+                        # DB trigger logging removed per product decision
                         # Send email if enabled
                         methods = alert.get("notification_methods") or ["email"]
                         if "email" in methods:
@@ -219,66 +209,7 @@ class HeatmapTrackerAlertService:
             logger.error(f"Error checking Heatmap Tracker alerts: {e}")
             return []
 
-    async def _log_trigger(
-        self,
-        alert_id: str,
-        symbol: str,
-        trigger_type: str,
-        buy_percent: Optional[float],
-        sell_percent: Optional[float],
-        final_score: Optional[float],
-    ) -> None:
-        if not self.supabase_url or not self.supabase_service_key:
-            return
-        try:
-            headers = {
-                "apikey": self.supabase_service_key,
-                "Authorization": f"Bearer {self.supabase_service_key}",
-                "Content-Type": "application/json",
-            }
-            url = f"{self.supabase_url}/rest/v1/heatmap_tracker_alert_triggers"
-            payload = {
-                "alert_id": alert_id,
-                "symbol": symbol,
-                "trigger_type": trigger_type,
-                "buy_percent": buy_percent,
-                "sell_percent": sell_percent,
-                "final_score": final_score,
-                "triggered_at": datetime.now(timezone.utc).isoformat(),
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload) as resp:
-                    if resp.status not in (200, 201):
-                        txt = await resp.text()
-                        log_error(
-                            logger,
-                            "db_trigger_log_failed",
-                            status=resp.status,
-                            body=txt,
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            trigger_type=trigger_type,
-                        )
-                    else:
-                        log_info(
-                            logger,
-                            "db_trigger_logged",
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            trigger_type=trigger_type,
-                            buy_percent=buy_percent,
-                            sell_percent=sell_percent,
-                            final_score=final_score,
-                        )
-        except Exception as e:
-            log_error(
-                logger,
-                "db_trigger_log_error",
-                alert_id=alert_id,
-                symbol=symbol,
-                trigger_type=trigger_type,
-                error=str(e),
-            )
+    # DB trigger logging removed
 
     async def _compute_buy_sell_percent(self, symbol: str, style: str) -> (float, float, float):
         """Compute Buy%/Sell% using cache-derived indicators and centralized helpers.

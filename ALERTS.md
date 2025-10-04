@@ -66,7 +66,7 @@
 1) Configuration
   - Single alert per user: timeframe (one), RSI period, OB/OS thresholds.
 2) Supabase Schema
- - See `supabase_rsi_tracker_alerts_schema.sql` for `rsi_tracker_alerts` and `rsi_tracker_alert_triggers` (unique `user_id`; RLS for owner).
+- See `supabase_rsi_tracker_alerts_schema.sql` for `rsi_tracker_alerts` (unique `user_id`; RLS for owner). Trigger tables are removed.
 3) Evaluation Cadence
   - Event‑driven: runs immediately when the indicator scheduler publishes a closed‑bar update for the timeframe. This provides near‑instant triggers after candle close.
   - Boundary alignment: a minute scheduler still runs every 5 minutes as a safety net, but primary evaluation is event‑driven.
@@ -126,10 +126,10 @@ Fixed correlation pair_keys evaluated:
 Configuration:
 - Single alert per user (unique by `user_id`)
 - Validate timeframe, mode, RSI bounds (correlation window is fixed to 50)
-- CRUD only on alert config; backend evaluates and inserts triggers
+- CRUD only on alert config; backend evaluates triggers; no DB trigger table
 
 Supabase Schema: `supabase_rsi_correlation_tracker_alerts_schema.sql`
-- `rsi_correlation_tracker_alerts` and `rsi_correlation_tracker_alert_triggers` with owner RLS
+- `rsi_correlation_tracker_alerts` only (trigger tables removed)
 
 ## Quantum Analysis (Heatmap) Tracker Alert
 
@@ -143,10 +143,10 @@ Single per-user alert for the All-in-One/Quantum Analysis heatmap. Users select 
 Configuration:
 - Single alert per user (unique by `user_id`)
 - Validate pairs (≤3), trading style, and thresholds
-- CRUD only on alert config; backend evaluates and inserts triggers
+- CRUD only on alert config; backend evaluates triggers; no DB trigger table
 
 Supabase Schema: `supabase_heatmap_tracker_alerts_schema.sql`
-- `heatmap_tracker_alerts` and `heatmap_tracker_alert_triggers` with owner RLS
+- `heatmap_tracker_alerts` only (trigger tables removed)
 
 ## Quantum Analysis: Custom Indicator Tracker Alert (Simplified)
 
@@ -159,10 +159,10 @@ Single per-user alert targeting one indicator on one timeframe across up to 3 pa
 Configuration:
 - Single alert per user (unique by `user_id`)
 - Validate pairs (≤3), timeframe, indicator
-- CRUD only on alert config; backend evaluates and inserts triggers
+- CRUD only on alert config; backend evaluates triggers; no DB trigger table
 
 Supabase Schema: `supabase_heatmap_indicator_tracker_alerts_schema.sql`
-- `heatmap_indicator_tracker_alerts` and `heatmap_indicator_tracker_alert_triggers` with owner RLS
+- `heatmap_indicator_tracker_alerts` only (trigger tables removed)
 
 Implementation details (backend alignment with Calculations Reference):
  - Cache and centralization:

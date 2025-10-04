@@ -509,7 +509,7 @@ The RSI Correlation Tracker is available as a single per-user alert. Users selec
   - Implementation: RSI Threshold mode reads closed‑bar RSI values from the centralized `indicator_cache`. When the cache is not yet warm for a `(symbol,timeframe,period)`, the service computes RSI from OHLC closed bars, updates the cache with the latest value (ring buffer), and then evaluates. This avoids duplicate math long‑term while ensuring immediate correctness.
 
 - Pair selection is not required; backend evaluates a fixed set of correlation pair keys from `app/constants.py`.
-- Triggers insert into `rsi_correlation_tracker_alert_triggers` and emails reuse a compact template.
+  
 
 Closed‑bar evaluation & retriggering:
 - Evaluation runs once per new closed bar per correlation pair/timeframe by checking the last closed timestamps of both symbols; the service evaluates when a new bar is seen and avoids duplicate evaluations within the same closed bar.
@@ -1163,7 +1163,7 @@ Key events (examples):
 - `🎯 rsi_tracker_triggers | alert_id: abc123 | count: 3`
 - `📤 email_queue | alert_type: rsi | alert_id: abc123`
 - `⚠️ market_data_stale | symbol: EURUSD | age_minutes: 12`
-- `📝 db_trigger_logged | alert_id: abc123 | symbol: EURUSD`
+  
 
 Notes:
 - Complex objects (lists/dicts) are not dumped; shown as `…` to avoid noisy logs and accidental payload leaks.
@@ -1289,9 +1289,7 @@ For support and questions:
 - Tip: If you still see a hang, check for any custom added loops without `CancelledError` handling. All loops should `await asyncio.sleep(...)` and properly handle `asyncio.CancelledError`.
 
 ### "RSI Tracker: triggers exist in DB but no emails/logs"
-- **What it means**: Records appear in `rsi_tracker_alert_triggers`, but you don't see corresponding console logs or emails.
-- **Why it happened previously**: The tracker didn't log info-level messages on successful triggers, and exceptions during email scheduling could be swallowed without a visible log.
-- **Fix in code**: The tracker now logs when triggers are detected and when emails are queued, and logs any exceptions during email scheduling.
+- Note: DB trigger tables have been removed. Use INFO/DEBUG logs and email diagnostics instead.
 - **Quick checks**:
   - **notification_methods**: Ensure your alert has `"notification_methods": ["email"]`. If it's `"browser"` only, emails won't send.
     - Supabase check example: verify the `notification_methods` column for your alert row includes `"email"`.
@@ -1306,9 +1304,8 @@ Expected logs when working:
   - `📤 Queueing email send for RSI Tracker ...`
   - Email service logs like `📧 RSI Alert Email Service - Starting email process` and `📊 SendGrid response: Status 202`.
 
-### "RSI Correlation Tracker: triggers exist in DB but no emails/logs"
-- **Symptom**: Rows appear in `rsi_correlation_tracker_alert_triggers` but you don't see emails or logs.
-- **Fix in code**: The correlation tracker now logs when a trigger occurs and when an email is queued; errors are logged during send.
+### "RSI Correlation Tracker: no emails/logs"
+- Note: DB trigger tables have been removed. The correlation tracker logs triggers and email queueing; check LOG_LEVEL and email config.
 - **Checklist**:
   - **Pairs configured**: Set `RSI_CORR_TRACKER_DEFAULT_PAIRS` (e.g., `EURUSD_GBPUSD,USDJPY_GBPUSD`).
   - **notification_methods**: Ensure includes `"email"`.

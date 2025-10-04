@@ -3,7 +3,6 @@ import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
-import aiohttp
 import logging
 
 from .logging_config import configure_logging
@@ -243,9 +242,7 @@ class RSICorrelationTrackerAlertService:
                                         "triggered_at": datetime.now(timezone.utc).isoformat(),
                                     }
                                     triggers.append(payload)
-                                    # Map to schema-compliant trigger_type for DB
-                                    db_trig_type = "rsi_mismatch" if mode == "rsi_threshold" else "real_mismatch"
-                                    asyncio.create_task(self._log_trigger(alert_id, timeframe, mode, db_trig_type, pair_key, val))
+                                    # DB trigger logging removed per product decision
                                     # Optional email reusing RSI template (single card); symbol shown as pair_key
                                     methods = alert.get("notification_methods") or ["email"]
                                     if "email" in methods:
@@ -436,59 +433,7 @@ class RSICorrelationTrackerAlertService:
         except Exception:
             return None
 
-    async def _log_trigger(self, alert_id: str, timeframe: str, mode: str, trigger_type: str, pair_key: str, value: Optional[float]) -> None:
-        if not self.supabase_url or not self.supabase_service_key:
-            return
-        try:
-            headers = {
-                "apikey": self.supabase_service_key,
-                "Authorization": f"Bearer {self.supabase_service_key}",
-                "Content-Type": "application/json",
-            }
-            url = f"{self.supabase_url}/rest/v1/rsi_correlation_tracker_alert_triggers"
-            payload = {
-                "alert_id": alert_id,
-                "mode": mode,
-                "trigger_type": trigger_type,
-                "pair_key": pair_key,
-                "timeframe": timeframe,
-                "value": value,
-                "triggered_at": datetime.now(timezone.utc).isoformat(),
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload) as resp:
-                    if resp.status not in (200, 201):
-                        txt = await resp.text()
-                        log_error(
-                            logger,
-                            "db_trigger_log_failed",
-                            status=resp.status,
-                            body=txt,
-                            alert_id=alert_id,
-                            pair_key=pair_key,
-                            timeframe=timeframe,
-                            trigger_type=trigger_type,
-                        )
-                    else:
-                        log_info(
-                            logger,
-                            "db_trigger_logged",
-                            alert_id=alert_id,
-                            pair_key=pair_key,
-                            timeframe=timeframe,
-                            trigger_type=trigger_type,
-                            value=value,
-                        )
-        except Exception as e:
-            log_error(
-                logger,
-                "db_trigger_log_error",
-                alert_id=alert_id,
-                pair_key=pair_key,
-                timeframe=timeframe,
-                trigger_type=trigger_type,
-                error=str(e),
-            )
+    # DB trigger logging removed
 
     async def _send_email(self, user_email: str, payload: Dict[str, Any]) -> None:
         try:

@@ -18,17 +18,7 @@ create table if not exists public.rsi_tracker_alerts (
 
 create index if not exists idx_rsi_tracker_alerts_email on public.rsi_tracker_alerts (user_email);
 
--- 2) Triggers table (append-only)
-create table if not exists public.rsi_tracker_alert_triggers (
-  id uuid primary key default gen_random_uuid(),
-  alert_id uuid not null references public.rsi_tracker_alerts(id) on delete cascade,
-  triggered_at timestamptz not null default now(),
-  trigger_condition text not null check (trigger_condition in ('overbought','oversold')),
-  symbol text not null,
-  timeframe text not null check (timeframe in ('5M','15M','30M','1H','4H','1D','1W')),
-  rsi_value numeric(5,2) not null check (rsi_value >= 0 and rsi_value <= 100),
-  created_at timestamptz not null default now()
-);
+-- Triggers table removed per product decision
 
 -- updated_at trigger
 create or replace function public.set_updated_at()
@@ -46,7 +36,7 @@ for each row execute function public.set_updated_at();
 
 -- RLS
 alter table public.rsi_tracker_alerts enable row level security;
-alter table public.rsi_tracker_alert_triggers enable row level security;
+-- (no trigger table)
 
 -- Policies: alerts (owner by user_id or user_email)
 drop policy if exists rsi_tracker_alerts_select on public.rsi_tracker_alerts;
@@ -75,29 +65,6 @@ create policy rsi_tracker_alerts_del on public.rsi_tracker_alerts
     (auth.uid() is not null and user_id = auth.uid()) or (auth.jwt()->>'email') = user_email
   );
 
--- Policies: triggers (read/insert own only)
-drop policy if exists rsi_tracker_triggers_select on public.rsi_tracker_alert_triggers;
-create policy rsi_tracker_triggers_select on public.rsi_tracker_alert_triggers
-  for select using (
-    exists (
-      select 1 from public.rsi_tracker_alerts a
-      where a.id = alert_id
-        and (
-          (auth.uid() is not null and a.user_id = auth.uid()) or (auth.jwt()->>'email') = a.user_email
-        )
-    )
-  );
-
-drop policy if exists rsi_tracker_triggers_insert on public.rsi_tracker_alert_triggers;
-create policy rsi_tracker_triggers_insert on public.rsi_tracker_alert_triggers
-  for insert with check (
-    exists (
-      select 1 from public.rsi_tracker_alerts a
-      where a.id = alert_id
-        and (
-          (auth.uid() is not null and a.user_id = auth.uid()) or (auth.jwt()->>'email') = a.user_email
-        )
-    )
-  );
+-- (no trigger policies)
 
 

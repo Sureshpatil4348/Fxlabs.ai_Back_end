@@ -30,7 +30,6 @@ def _event_emoji(event: str) -> str:
         "email_queue": "📤",
         "email_disabled": "📪",
         "rsi_tracker_triggers": "🎯",
-        "rsi_alert_triggers": "🎯",
         "heatmap_tracker_trigger": "🔥",
         "indicator_tracker_trigger": "🧭",
         "alert_eval_start": "🧪",
