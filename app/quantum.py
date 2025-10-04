@@ -235,22 +235,24 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
                             break
                 return sig, is_new
 
+            # Compute per-indicator signals (and newness) once for this timeframe
+            ema21_sig, ema21_new = ema_signal_from_recent(ema_recent_21)
+            ema50_sig, ema50_new = ema_signal_from_recent(ema_recent_50)
+            ema200_sig, ema200_new = ema_signal_from_recent(ema_recent_200)
+            macd_sig, macd_new = macd_signal_from_recent()
+            rsi_sig, rsi_new = rsi_signal_from_recent()
+            utbot_sig, utbot_new = utbot_signal()
+            ichi_sig, ichi_new = ichimoku_signal()
+
             # Aggregate per-timeframe
             per_tf_sum = 0.0
-            sig, is_new = ema_signal_from_recent(ema_recent_21)
-            per_tf_sum += score_cell(sig, is_new, "EMA21", is_quiet) * ind_weight
-            sig, is_new = ema_signal_from_recent(ema_recent_50)
-            per_tf_sum += score_cell(sig, is_new, "EMA50", is_quiet) * ind_weight
-            sig, is_new = ema_signal_from_recent(ema_recent_200)
-            per_tf_sum += score_cell(sig, is_new, "EMA200", is_quiet) * ind_weight
-            sig, is_new = macd_signal_from_recent()
-            per_tf_sum += score_cell(sig, is_new, "MACD", is_quiet) * ind_weight
-            sig, is_new = rsi_signal_from_recent()
-            per_tf_sum += score_cell(sig, is_new, "RSI", is_quiet) * ind_weight
-            sig, is_new = utbot_signal()
-            per_tf_sum += score_cell(sig, is_new, "UTBOT", is_quiet) * ind_weight
-            sig, is_new = ichimoku_signal()
-            per_tf_sum += score_cell(sig, is_new, "ICHIMOKU", is_quiet) * ind_weight
+            per_tf_sum += score_cell(ema21_sig, ema21_new, "EMA21", is_quiet) * ind_weight
+            per_tf_sum += score_cell(ema50_sig, ema50_new, "EMA50", is_quiet) * ind_weight
+            per_tf_sum += score_cell(ema200_sig, ema200_new, "EMA200", is_quiet) * ind_weight
+            per_tf_sum += score_cell(macd_sig, macd_new, "MACD", is_quiet) * ind_weight
+            per_tf_sum += score_cell(rsi_sig, rsi_new, "RSI", is_quiet) * ind_weight
+            per_tf_sum += score_cell(utbot_sig, utbot_new, "UTBOT", is_quiet) * ind_weight
+            per_tf_sum += score_cell(ichi_sig, ichi_new, "ICHIMOKU", is_quiet) * ind_weight
 
             final = 100.0 * (per_tf_sum / 1.25)
             final = _clamp(final, -100.0, 100.0)
@@ -261,6 +263,15 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
                 "buy_percent": float(buy_pct),
                 "sell_percent": float(sell_pct),
                 "final_score": float(final),
+                "indicators": {
+                    "EMA21": {"signal": ema21_sig, "is_new": bool(ema21_new)},
+                    "EMA50": {"signal": ema50_sig, "is_new": bool(ema50_new)},
+                    "EMA200": {"signal": ema200_sig, "is_new": bool(ema200_new)},
+                    "MACD": {"signal": macd_sig, "is_new": bool(macd_new)},
+                    "RSI": {"signal": rsi_sig, "is_new": bool(rsi_new)},
+                    "UTBOT": {"signal": utbot_sig, "is_new": bool(utbot_new)},
+                    "ICHIMOKU": {"signal": ichi_sig, "is_new": bool(ichi_new)},
+                },
             }
             bar_times[tf_code] = int(ts_list[-1]) if ts_list else None
         except Exception:

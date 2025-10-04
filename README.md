@@ -58,6 +58,7 @@ This backend aligns alert evaluations with the Calculations Reference used by th
   - Mode `real_correlation`: Timestamp‑aligned log‑return Pearson correlation over a fixed rolling window of 50. Mismatch thresholds are pair‑type aware (positive: corr < +0.25; negative: corr > −0.15). Strength labels: strong |corr|≥0.70, moderate ≥0.30, else weak.
 - Heatmap/Quantum aggregation:
   - Indicators: EMA21/50/200, MACD(12,26,9), RSI(14), UTBot(EMA50 ± 3×ATR10), Ichimoku Clone (9/26/52). Exposed via WS `quantum_update` and REST `indicator=quantum`.
+  - New fields: For each timeframe, `indicators` contains per‑indicator `{ signal: buy|sell|neutral, is_new: boolean }`. Bottom bar Buy/Sell% is provided under `overall` by style (`scalper`, `swingtrader`).
   - Per‑cell scoring: buy=+1, sell=−1, neutral=0; new‑signal boost ±0.25 in last K=3; quiet‑market damping halves MACD/UTBot cell scores when ATR10 is below the 5th percentile of last 200 values; clamp to [−1.25,+1.25].
   - Aggregation: Σ_tf Σ_ind S(tf,ind)×W_tf×W_ind; Final=100×(Raw/1.25); Buy%=(Final+100)/2; Sell%=100−Buy%.
 

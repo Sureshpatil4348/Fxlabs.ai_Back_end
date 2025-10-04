@@ -90,8 +90,10 @@ This document describes how the frontend should consume market data and indicato
       "symbol": "EURUSDm",
       "data": {
         "per_timeframe": {
-          "1M": {"buy_percent": 52.1, "sell_percent": 47.9, "final_score": 4.2},
-          "5M": {"buy_percent": 61.5, "sell_percent": 38.5, "final_score": 23.1},
+          "1M": {"buy_percent": 52.1, "sell_percent": 47.9, "final_score": 4.2,
+                  "indicators": {"EMA21":{"signal":"neutral","is_new":false},"EMA50":{"signal":"buy","is_new":true},"EMA200":{"signal":"neutral","is_new":false},"MACD":{"signal":"buy","is_new":false},"RSI":{"signal":"neutral","is_new":false},"UTBOT":{"signal":"neutral","is_new":false},"ICHIMOKU":{"signal":"sell","is_new":false}}},
+          "5M": {"buy_percent": 61.5, "sell_percent": 38.5, "final_score": 23.1,
+                  "indicators": {"EMA21":{"signal":"buy","is_new":true},"EMA50":{"signal":"buy","is_new":false},"EMA200":{"signal":"neutral","is_new":false},"MACD":{"signal":"buy","is_new":false},"RSI":{"signal":"buy","is_new":true},"UTBOT":{"signal":"neutral","is_new":false},"ICHIMOKU":{"signal":"neutral","is_new":false}}},
           "15M": {"buy_percent": 58.0, "sell_percent": 42.0, "final_score": 16.0},
           "30M": {"buy_percent": 49.0, "sell_percent": 51.0, "final_score": -2.0},
           "1H": {"buy_percent": 45.0, "sell_percent": 55.0, "final_score": -10.0},
@@ -133,7 +135,7 @@ This document describes how the frontend should consume market data and indicato
     {"indicator":"macd","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":1696229940000,"values":{"macd":0.00012,"signal":0.00010,"hist":0.00002}}]}
     ```
     ```json
-    {"indicator":"quantum","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":null,"quantum":{"per_timeframe":{"1M":{"buy_percent":52.1,"sell_percent":47.9,"final_score":4.2},"5M":{"buy_percent":61.5,"sell_percent":38.5,"final_score":23.1}},"overall":{"scalper":{"buy_percent":57.3,"sell_percent":42.7,"final_score":14.6},"swingtrader":{"buy_percent":47.5,"sell_percent":52.5,"final_score":-5.0}},"bar_times":{"5M":1696229940000}}}]}
+    {"indicator":"quantum","timeframe":"5M","count":1,"pairs":[{"symbol":"EURUSDm","timeframe":"5M","ts":null,"quantum":{"per_timeframe":{"1M":{"buy_percent":52.1,"sell_percent":47.9,"final_score":4.2,"indicators":{"EMA21":{"signal":"neutral","is_new":false},"EMA50":{"signal":"buy","is_new":true},"EMA200":{"signal":"neutral","is_new":false},"MACD":{"signal":"buy","is_new":false},"RSI":{"signal":"neutral","is_new":false},"UTBOT":{"signal":"neutral","is_new":false},"ICHIMOKU":{"signal":"sell","is_new":false}},"5M":{"buy_percent":61.5,"sell_percent":38.5,"final_score":23.1,"indicators":{"EMA21":{"signal":"buy","is_new":true},"EMA50":{"signal":"buy","is_new":false},"EMA200":{"signal":"neutral","is_new":false},"MACD":{"signal":"buy","is_new":false},"RSI":{"signal":"buy","is_new":true},"UTBOT":{"signal":"neutral","is_new":false},"ICHIMOKU":{"signal":"neutral","is_new":false}}}},"overall":{"scalper":{"buy_percent":57.3,"sell_percent":42.7,"final_score":14.6},"swingtrader":{"buy_percent":47.5,"sell_percent":52.5,"final_score":-5.0}},"bar_times":{"5M":1696229940000}}}]}
     ```
 
 - `GET /api/pricing?pairs=EURUSDm&pairs=BTCUSDm`
