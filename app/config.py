@@ -15,12 +15,34 @@ API_TOKEN = os.environ.get("API_TOKEN", "")
 ALLOWED_ORIGINS = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
 MT5_TERMINAL_PATH = os.environ.get("MT5_TERMINAL_PATH", "")
 
+# Live RSI debugging toggle (defaults off)
+LIVE_RSI_DEBUGGING = os.environ.get("LIVE_RSI_DEBUGGING", "false").lower() == "true"
+
+# Verbose logging toggles (defaults off)
+# - LOG_ENV_DUMP: print full environment snapshot at startup (potentially sensitive)
+# - ALERT_VERBOSE_LOGS: emit non-critical alert/daily diagnostics (config echoes, no-trigger reasons, etc.)
+# - NEWS_VERBOSE_LOGS: emit verbose news fetch/parse/update scheduler prints
+LOG_ENV_DUMP = os.environ.get("LOG_ENV_DUMP", "false").lower() == "true"
+ALERT_VERBOSE_LOGS = os.environ.get("ALERT_VERBOSE_LOGS", "false").lower() == "true"
+NEWS_VERBOSE_LOGS = os.environ.get("NEWS_VERBOSE_LOGS", "false").lower() == "true"
+
+# Email alert bypass toggle (defaults off)
+# - BYPASS_EMAIL_ALERTS: bypass all email alerts and log when alerts are bypassed
+BYPASS_EMAIL_ALERTS = os.environ.get("BYPASS_EMAIL_ALERTS", "false").lower() == "true"
+
 # News analysis configuration
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "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")
 JBLANKED_API_URL = os.environ.get("JBLANKED_API_URL", "https://www.jblanked.com/news/api/forex-factory/calendar/week/")
 JBLANKED_API_KEY = os.environ.get("JBLANKED_API_KEY", "OZaABMUo")
-NEWS_UPDATE_INTERVAL_HOURS = int(os.environ.get("NEWS_UPDATE_INTERVAL_HOURS", "1"))
+# Allow fractional hours (e.g., 0.5 for 30 minutes)
+try:
+    NEWS_UPDATE_INTERVAL_HOURS = float(os.environ.get("NEWS_UPDATE_INTERVAL_HOURS", "0.5"))
+except Exception:
+    NEWS_UPDATE_INTERVAL_HOURS = 0.5
 NEWS_CACHE_MAX_ITEMS = int(os.environ.get("NEWS_CACHE_MAX_ITEMS", "500"))
+
+# Indicator cache configuration
+INDICATOR_RING_SIZE = int(os.environ.get("INDICATOR_RING_SIZE", "256"))
 
 # Supabase configuration (tenant-aware)
 _ten = get_tenant_config()

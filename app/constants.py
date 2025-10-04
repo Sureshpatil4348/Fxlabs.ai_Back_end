@@ -24,28 +24,5 @@ RSI_SUPPORTED_SYMBOLS: List[str] = [
 ]
 
 
-# Fixed set of correlation pair keys monitored by the RSI Correlation dashboard
-# Pair key format: "SYMBOL_A_SYMBOL_B" using broker-suffixed symbols
-RSI_CORRELATION_PAIR_KEYS: List[str] = [
-    # Positive correlations (10)
-    "EURUSDm_GBPUSDm",
-    "EURUSDm_AUDUSDm",
-    "EURUSDm_NZDUSDm",
-    "GBPUSDm_AUDUSDm",
-    "AUDUSDm_NZDUSDm",
-    "USDCHFm_USDJPYm",
-    "XAUUSDm_XAGUSDm",
-    "XAUUSDm_EURUSDm",
-    "BTCUSDm_ETHUSDm",
-    "BTCUSDm_XAUUSDm",
-    # Negative correlations (7)
-    "EURUSDm_USDCHFm",
-    "GBPUSDm_USDCHFm",
-    "USDJPYm_EURUSDm",
-    "USDJPYm_GBPUSDm",
-    "USDCADm_AUDUSDm",
-    "USDCHFm_AUDUSDm",
-    "XAUUSDm_USDJPYm",
-]
-
+# Correlation pairs and window removed per product decision
 

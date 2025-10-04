@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Tuple, Any
 import re
+import time
 
 try:
     import MetaTrader5 as mt5
@@ -27,11 +28,11 @@ from app.config import (
     API_TOKEN,
     ALLOWED_ORIGINS,
     MT5_TERMINAL_PATH,
+    LIVE_RSI_DEBUGGING,
 )
 import app.news as news
 from app.alert_cache import alert_cache
 from app.rsi_tracker_alert_service import rsi_tracker_alert_service
-from app.rsi_correlation_tracker_alert_service import rsi_correlation_tracker_alert_service
 from app.heatmap_tracker_alert_service import heatmap_tracker_alert_service
 from app.heatmap_indicator_tracker_alert_service import heatmap_indicator_tracker_alert_service
 from app.email_service import email_service
@@ -40,7 +41,6 @@ from app.models import (
     Timeframe,
     Tick,
     OHLC,
-    SubscriptionInfo,
     NewsItem,
     NewsAnalysis,
     PriceBasis,
@@ -55,7 +55,82 @@ from app.mt5_utils import (
     calculate_next_update_time,
     update_ohlc_cache,
     get_cached_ohlc,
+    get_daily_change_pct_bid,
+    canonicalize_symbol,
 )
+from app.rsi_utils import calculate_rsi_series, closed_closes
+from app.indicator_cache import indicator_cache
+from app.price_cache import price_cache
+from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest, utbot_latest as ind_utbot_latest, ichimoku_latest as ind_ichimoku_latest
+from app.quantum import compute_quantum_for_symbol
+from app.constants import RSI_SUPPORTED_SYMBOLS
+# One-time warmup to backfill indicator cache at startup
+async def _warm_populate_indicator_cache() -> None:
+    try:
+        logger = logging.getLogger("obs.indicator")
+        baseline_tfs: List[Timeframe] = _rollout_timeframes()
+        try:
+            symbols_for_rollout: List[str] = list(ALLOWED_WS_SYMBOLS)
+        except Exception:
+            symbols_for_rollout = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+        total_pairs = len(symbols_for_rollout) * len(baseline_tfs)
+        logger.info("🚀 indicator_warmup | pairs=%d", total_pairs)
+        processed = 0
+        for sym in symbols_for_rollout:
+            for tf in baseline_tfs:
+                try:
+                    bars = get_ohlc_data(sym, tf, 300)
+                    if not bars:
+                        continue
+                    closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
+                    if not closed_bars:
+                        continue
+                    last_closed = closed_bars[-1]
+                    closes = [b.close for b in closed_bars]
+                    highs = [b.high for b in closed_bars]
+                    lows = [b.low for b in closed_bars]
+                    highs = [b.high for b in closed_bars]
+                    lows = [b.low for b in closed_bars]
+                    rsi_val = ind_rsi_latest(closes, 14) if len(closes) >= 15 else None
+                    if rsi_val is not None:
+                        await indicator_cache.update_rsi(sym, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
+                    for p in (21, 50, 200):
+                        if len(closes) >= p:
+                            ema_val = ind_ema_latest(closes, p)
+                            if ema_val is not None:
+                                await indicator_cache.update_ema(sym, tf.value, int(p), float(ema_val), ts_ms=last_closed.time)
+                    macd_trip = ind_macd_latest(closes, 12, 26, 9)
+                    # Additional indicators for logging/WS snapshot (not cached)
+                    utbot_vals = None
+                    ich_vals = None
+                    try:
+                        utbot_vals = ind_utbot_latest(highs, lows, closes, 50, 10, 3.0)
+                    except Exception:
+                        utbot_vals = None
+                    try:
+                        ich_vals = ind_ichimoku_latest(highs, lows, closes, 9, 26, 52, 26)
+                    except Exception:
+                        ich_vals = None
+                    # Additional indicators
+                    utbot_vals = None
+                    ich_vals = None
+                    try:
+                        utbot_vals = ind_utbot_latest(highs, lows, closes, 50, 10, 3.0)
+                    except Exception:
+                        utbot_vals = None
+                    try:
+                        ich_vals = ind_ichimoku_latest(highs, lows, closes, 9, 26, 52, 26)
+                    except Exception:
+                        ich_vals = None
+                    if macd_trip is not None:
+                        macd_v, sig_v, hist_v = macd_trip
+                        await indicator_cache.update_macd(sym, tf.value, 12, 26, 9, float(macd_v), float(sig_v), float(hist_v), ts_ms=last_closed.time)
+                    processed += 1
+                except Exception:
+                    continue
+        logger.info("✅ indicator_warmup_done | processed=%d", processed)
+    except Exception as e:
+        print(f"❌ Indicator warmup error: {e}")
 
 # Ensure logging has timestamps across the app
 configure_logging()
@@ -80,10 +155,23 @@ async def lifespan(app: FastAPI):
     # Start daily morning brief scheduler (09:00 IST)
     daily_task = asyncio.create_task(daily_mail_scheduler())
 
-    # Start minute alerts scheduler (fetch + evaluate RSI Tracker)
+    # Warm populate indicator cache on startup (best-effort, non-blocking)
+    try:
+        asyncio.create_task(_warm_populate_indicator_cache())
+    except Exception:
+        pass
+
+    # Start minute alerts scheduler (fetch + evaluate RSI Tracker) — boundary-aligned
     global _minute_scheduler_task, _minute_scheduler_running
     _minute_scheduler_running = True
     _minute_scheduler_task = asyncio.create_task(_minute_alerts_scheduler())
+    
+    # Start 10s closed-bar indicator poller (always computes across all allowed symbols/timeframes)
+    global _indicator_scheduler_task
+    _indicator_scheduler_task = asyncio.create_task(_indicator_scheduler())
+    # Start WS metrics reporter (dual-run soak)
+    global _ws_metrics_task
+    _ws_metrics_task = asyncio.create_task(_ws_metrics_reporter())
     
     yield
     
@@ -93,6 +181,8 @@ async def lifespan(app: FastAPI):
     daily_task.cancel()
     if _minute_scheduler_task:
         _minute_scheduler_task.cancel()
+    if _indicator_scheduler_task:
+        _indicator_scheduler_task.cancel()
     try:
         await news_task
     except asyncio.CancelledError:
@@ -108,6 +198,17 @@ async def lifespan(app: FastAPI):
     if _minute_scheduler_task:
         try:
             await _minute_scheduler_task
+        except asyncio.CancelledError:
+            pass
+    if _indicator_scheduler_task:
+        try:
+            await _indicator_scheduler_task
+        except asyncio.CancelledError:
+            pass
+    if _ws_metrics_task:
+        try:
+            _ws_metrics_task.cancel()
+            await _ws_metrics_task
         except asyncio.CancelledError:
             pass
     mt5.shutdown()
@@ -126,14 +227,13 @@ app.add_middleware(
 
 """OHLC model is imported from app.models"""
 
-"""SubscriptionInfo model is imported from app.models"""
+"""SubscriptionInfo model removed; v2 is broadcast-only"""
 
 """NewsItem model is imported from app.models"""
 
 """NewsAnalysis model is imported from app.models"""
 
-# Global OHLC cache: {symbol: {timeframe: deque([OHLC_bars])}}
-global_ohlc_cache: Dict[str, Dict[str, deque]] = {}
+# OHLC caching is centralized in app.mt5_utils (get_cached_ohlc/update_ohlc_cache)
 
 # Global news cache
 global_news_cache: List[NewsAnalysis] = []
@@ -143,10 +243,39 @@ news_cache_metadata: Dict[str, any] = {
     "is_updating": False
 }
 
-# Minute-based alert scheduler
+# Minute-based alert scheduler (boundary aligned)
 ENABLE_TICK_TRIGGERED_ALERTS = False  # Tick-driven checks disabled
 _minute_scheduler_task: Optional[asyncio.Task] = None
 _minute_scheduler_running: bool = False
+
+# Indicator scheduler state
+_indicator_scheduler_task: Optional[asyncio.Task] = None
+# 
+# Track connected WS clients to discover subscribed symbol×timeframe sets for indicators
+_connected_clients = set()
+_connected_clients_lock = asyncio.Lock()
+# Last processed closed-bar timestamp per (symbol:tf)
+_indicator_last_bar: Dict[str, int] = {}
+
+ 
+
+# D1 reference cache for daily % change computations (per symbol, keyed by UTC day)
+_d1_ref_cache: Dict[str, Tuple[str, float]] = {}
+
+# WebSocket metrics (v2 only): in-memory counters per endpoint label
+_ws_metrics: Dict[str, Dict[str, int]] = {
+    "v2": defaultdict(int),
+}
+_ws_metrics_task: Optional[asyncio.Task] = None
+
+def _metrics_inc(label: str, key: str, by: int = 1) -> None:
+    try:
+        if label not in _ws_metrics:
+            return
+        _ws_metrics[label][key] = _ws_metrics[label].get(key, 0) + int(by)
+    except Exception:
+        # Observability must never break runtime
+        pass
 
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
@@ -156,6 +285,61 @@ TEST_EMAIL_RATE_WINDOW = timedelta(hours=1)
 # Allowed domains for test emails (configurable via environment)
 ALLOWED_EMAIL_DOMAINS = os.environ.get("ALLOWED_EMAIL_DOMAINS", "gmail.com,yahoo.com,outlook.com,hotmail.com").split(",")
 ALLOWED_EMAIL_DOMAINS = [domain.strip().lower() for domain in ALLOWED_EMAIL_DOMAINS if domain.strip()]
+
+# WebSocket security and shaping caps (environment configurable)
+# Allowed symbols: defaults to RSI_SUPPORTED_SYMBOLS; override via WS_ALLOWED_SYMBOLS (comma-separated, broker-suffixed)
+_ws_allowed_symbols_env = [
+    canonicalize_symbol(s) for s in os.environ.get("WS_ALLOWED_SYMBOLS", "").split(",") if s.strip()
+]
+ALLOWED_WS_SYMBOLS: Set[str] = set(_ws_allowed_symbols_env or [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+WS_MAX_SYMBOLS: int = int(os.environ.get("WS_MAX_SYMBOLS", "10"))
+WS_MAX_SUBSCRIPTIONS: int = int(os.environ.get("WS_MAX_SUBSCRIPTIONS", "32"))
+WS_MAX_TFS_PER_SYMBOL: int = int(os.environ.get("WS_MAX_TFS_PER_SYMBOL", "7"))
+
+# Allowed timeframes for WS (defaults to all model-defined timeframes)
+_ws_allowed_tfs_env = [
+    t.strip().upper() for t in os.environ.get("WS_ALLOWED_TIMEFRAMES", "").split(",") if t.strip()
+]
+if _ws_allowed_tfs_env:
+    env_tf_values: Set[str] = set(_ws_allowed_tfs_env)
+    ALLOWED_WS_TIMEFRAMES: Set[Timeframe] = set()
+    for tf in Timeframe:
+        # accept both enum value (e.g., "5M") and name (e.g., "M5")
+        if (tf.value.upper() in env_tf_values) or (tf.name.upper() in env_tf_values):
+            ALLOWED_WS_TIMEFRAMES.add(tf)
+else:
+    ALLOWED_WS_TIMEFRAMES = set(Timeframe)
+
+# Indicator rollout (gradual enablement) — defaults: 10 symbols × 3 timeframes (M1,M5,M15)
+_rollout_symbols_env = [
+    s.strip().upper() for s in os.environ.get("INDICATOR_ROLLOUT_SYMBOLS", "").split(",") if s.strip()
+]
+INDICATOR_ROLLOUT_MAX_SYMBOLS: int = int(os.environ.get("INDICATOR_ROLLOUT_MAX_SYMBOLS", "10"))
+_rollout_tfs_env = [
+    t.strip().upper() for t in os.environ.get("INDICATOR_ROLLOUT_TFS", "M1,M5,M15").split(",") if t.strip()
+]
+
+def _rollout_timeframes() -> List[Timeframe]:
+    # Always use full baseline timeframes; no rollout/env control
+    return [
+        Timeframe.M1,
+        Timeframe.M5,
+        Timeframe.M15,
+        Timeframe.M30,
+        Timeframe.H1,
+        Timeframe.H4,
+        Timeframe.D1,
+        Timeframe.W1,
+    ]
+
+def _rollout_symbols() -> List[str]:
+    # If explicitly provided, honor env list (filtered to supported symbols); else use default supported list
+    base = [canonicalize_symbol(s) for s in (_rollout_symbols_env or RSI_SUPPORTED_SYMBOLS)]
+    # Filter to allowlist to protect MT5 IPC
+    filtered = [s for s in base if s in set(RSI_SUPPORTED_SYMBOLS)]
+    if not filtered:
+        filtered = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+    return filtered
 
 def require_api_token_header(x_api_key: Optional[str] = None):
     # For REST: expect header "X-API-Key"
@@ -183,6 +367,24 @@ def check_test_email_rate_limit(api_key: str) -> bool:
     test_email_rate_limits[api_key].append(now)
     return True
 
+
+def _ws_is_authorized(websocket: WebSocket) -> bool:
+    """Mirror REST auth policy for WebSockets using X-API-Key header (optional).
+
+    If API_TOKEN is set, require header X-API-Key to match; otherwise allow.
+    """
+    try:
+        # Starlette headers are case-insensitive
+        x_api_key = websocket.headers.get("x-api-key")
+        if not x_api_key:
+            x_api_key = websocket.headers.get("X-API-Key")
+        if API_TOKEN and (x_api_key or "") != API_TOKEN:
+            return False
+        return True
+    except Exception:
+        # Fail closed when API_TOKEN is set
+        return False if API_TOKEN else True
+
 def validate_test_email_recipient(email: str) -> bool:
     """Validate that email recipient is allowed"""
     if not email or not isinstance(email, str):
@@ -199,231 +401,7 @@ def validate_test_email_recipient(email: str) -> bool:
     # Check if domain is allowed
     return domain in ALLOWED_EMAIL_DOMAINS
 
-def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
-    """Convert MT5 rate data to OHLC model"""
-    if rate_data is None:
-        return None
-    
-    # MT5 returns numpy structured arrays, access by index: (time, open, high, low, close, tick_volume, spread, real_volume)
-    try:
-        ts_ms = int(rate_data[0]) * 1000  # time is at index 0
-        dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
-        # Base OHLC (MT5 bars are typically Bid-based for FX; we keep as canonical/"last")
-        open_val = float(rate_data[1])    # open is at index 1
-        high_val = float(rate_data[2])    # high is at index 2
-        low_val = float(rate_data[3])     # low is at index 3
-        close_val = float(rate_data[4])   # close is at index 4
-        vol_val = float(rate_data[5])     # tick_volume is at index 5
-
-        # Derive approximate bid/ask parallel fields using spread when available.
-        # We assume canonical OHLC represent mid/last; we split spread equally.
-        try:
-            spread_points = float(rate_data[6])
-        except Exception:
-            spread_points = None
-
-        point = None
-        try:
-            sym_info = mt5.symbol_info(symbol)
-            point = getattr(sym_info, "point", None) if sym_info else None
-        except Exception:
-            point = None
-
-        # Fallback using current tick if spread absent
-        if spread_points in (None, 0) and point:
-            try:
-                tinfo = mt5.symbol_info_tick(symbol)
-                if tinfo and getattr(tinfo, "bid", None) is not None and getattr(tinfo, "ask", None) is not None:
-                    spread_points = (float(getattr(tinfo, "ask")) - float(getattr(tinfo, "bid"))) / float(point)
-            except Exception:
-                pass
-
-        half_spread = (spread_points * point / 2.0) if (spread_points and point) else 0.0
-
-        open_bid = open_val - half_spread if half_spread else None
-        high_bid = high_val - half_spread if half_spread else None
-        low_bid = low_val - half_spread if half_spread else None
-        close_bid = close_val - half_spread if half_spread else None
-
-        open_ask = open_val + half_spread if half_spread else None
-        high_ask = high_val + half_spread if half_spread else None
-        low_ask = low_val + half_spread if half_spread else None
-        close_ask = close_val + half_spread if half_spread else None
-
-        # Candle is considered closed if current time is beyond the bar's end
-        tf_seconds_map = {
-            "1M": 60,
-            "5M": 300,
-            "15M": 900,
-            "30M": 1800,
-            "1H": 3600,
-            "4H": 14400,
-            "1D": 86400,
-            "1W": 604800,
-        }
-        tf_secs = tf_seconds_map.get(timeframe, 60)
-        bar_end_ms = ts_ms + (tf_secs * 1000)
-        is_closed = int(datetime.now(timezone.utc).timestamp() * 1000) >= bar_end_ms
-
-        return OHLC(
-            symbol=symbol,
-            timeframe=timeframe,
-            time=ts_ms,
-            time_iso=dt.isoformat(),
-            open=open_val,
-            high=high_val,
-            low=low_val,
-            close=close_val,
-            volume=vol_val,
-            openBid=open_bid,
-            highBid=high_bid,
-            lowBid=low_bid,
-            closeBid=close_bid,
-            openAsk=open_ask,
-            highAsk=high_ask,
-            lowAsk=low_ask,
-            closeAsk=close_ask,
-            is_closed=is_closed,
-        )
-    except (IndexError, ValueError, TypeError) as e:
-        print(f"Error converting rate data to OHLC: {e}")
-        print(f"Rate data type: {type(rate_data)}")
-        print(f"Rate data: {rate_data}")
-        return None
-
-def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[OHLC]:
-    """Get OHLC data from MT5"""
-    
-    ensure_symbol_selected(symbol)
-    
-    mt5_timeframe = MT5_TIMEFRAMES.get(timeframe)
-    if mt5_timeframe is None:
-        raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
-    
-    # Get rates from MT5
-    rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, count)
-    
-    if rates is None or len(rates) == 0:
-        # Only log at debug level to reduce noise
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"⚠️ No rates from MT5 for {symbol}")
-        return []
-    
-    
-    # Convert to OHLC objects
-    ohlc_data = []
-    for rate in rates:
-        ohlc = _to_ohlc(symbol, timeframe.value, rate)
-        if ohlc:
-            ohlc_data.append(ohlc)
-    
-    return ohlc_data
-
-def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
-    """Get current (most recent) OHLC bar"""
-    data = get_ohlc_data(symbol, timeframe, 1)
-    return data[0] if data else None
-
-def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe) -> datetime:
-    """Calculate when the next OHLC update should be sent"""
-    if timeframe == Timeframe.M1:
-        # Next minute boundary
-        next_update = subscription_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
-    elif timeframe == Timeframe.M5:
-        # Next 5-minute boundary
-        current_minute = subscription_time.minute
-        next_minute = ((current_minute // 5) + 1) * 5
-        if next_minute >= 60:
-            next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        else:
-            next_update = subscription_time.replace(minute=next_minute, second=0, microsecond=0)
-    elif timeframe == Timeframe.M15:
-        # Next 15-minute boundary
-        current_minute = subscription_time.minute
-        next_minute = ((current_minute // 15) + 1) * 15
-        if next_minute >= 60:
-            next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        else:
-            next_update = subscription_time.replace(minute=next_minute, second=0, microsecond=0)
-    elif timeframe == Timeframe.M30:
-        # Next 30-minute boundary
-        current_minute = subscription_time.minute
-        next_minute = ((current_minute // 30) + 1) * 30
-        if next_minute >= 60:
-            next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-        else:
-            next_update = subscription_time.replace(minute=next_minute, second=0, microsecond=0)
-    elif timeframe == Timeframe.H1:
-        # Next hour boundary
-        next_update = subscription_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    elif timeframe == Timeframe.H4:
-        # Next 4-hour boundary
-        current_hour = subscription_time.hour
-        next_hour = ((current_hour // 4) + 1) * 4
-        if next_hour >= 24:
-            next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        else:
-            next_update = subscription_time.replace(hour=next_hour, minute=0, second=0, microsecond=0)
-    elif timeframe == Timeframe.D1:
-        # Next day boundary (midnight UTC)
-        next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-    elif timeframe == Timeframe.W1:
-        # Next Monday midnight UTC
-        days_ahead = 7 - subscription_time.weekday()
-        if days_ahead == 7:  # Already Monday
-            days_ahead = 7
-        next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
-    else:
-        # Default to 1 minute
-        next_update = subscription_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
-    
-    return next_update
-
-def update_ohlc_cache(symbol: str, timeframe: Timeframe, max_bars: int = 100):
-    """Update the global OHLC cache for a symbol/timeframe"""
-    global global_ohlc_cache
-    
-    if symbol not in global_ohlc_cache:
-        global_ohlc_cache[symbol] = {}
-    
-    if timeframe.value not in global_ohlc_cache[symbol]:
-        global_ohlc_cache[symbol][timeframe.value] = deque(maxlen=max_bars)
-    
-    # Get current OHLC data
-    current_ohlc = get_current_ohlc(symbol, timeframe)
-    if current_ohlc is None:
-        return
-    
-    cache = global_ohlc_cache[symbol][timeframe.value]
-    
-    # If cache is empty or this is a new time period, add the bar
-    if not cache or cache[-1].time != current_ohlc.time:
-        cache.append(current_ohlc)
-    else:
-        # Update the current bar (same time period)
-        cache[-1] = current_ohlc
-
-def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 100) -> List[OHLC]:
-    """Get OHLC data from cache, fetch from MT5 if not cached"""
-    global global_ohlc_cache
-    
-    if symbol not in global_ohlc_cache:
-        global_ohlc_cache[symbol] = {}
-    
-    if timeframe.value not in global_ohlc_cache[symbol]:
-        # Not cached, fetch from MT5
-        # Only log cache miss at debug level to reduce noise
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.debug(f"📡 Cache miss - fetching from MT5: {symbol} {timeframe.value}")
-        ohlc_data = get_ohlc_data(symbol, timeframe, count)
-        global_ohlc_cache[symbol][timeframe.value] = deque(ohlc_data, maxlen=count)
-        return ohlc_data
-    
-    # Return cached data
-    cached_data = list(global_ohlc_cache[symbol][timeframe.value])
-    return cached_data
+    # (helpers removed; using app.mt5_utils for OHLC conversion, fetch, caching, and scheduling)
 
 
 async def _get_user_tracked_symbols(user_email: str) -> Set[str]:
@@ -469,10 +447,29 @@ async def _get_user_tracked_symbols(user_email: str) -> Set[str]:
 
 
 async def _minute_alerts_scheduler():
-    """Every 5 minutes: refresh alerts and evaluate all alert types."""
+    """Align evaluations to timeframe boundaries so closed-bar RSI is processed immediately after candle close.
+
+    Strategy: sleep until the next 5-minute boundary (covers 5M/15M/30M/1H/4H/1D/W1 boundaries),
+    then run all evaluators once. Services gate on last closed bar timestamps, so redundant calls are cheap.
+    """
     try:
         logger = logging.getLogger(__name__)
+        # Lazy import to avoid cycles
+        from app.models import Timeframe as TF
+        from app.mt5_utils import calculate_next_update_time
+
+        # Compute the very next 5-minute boundary from now
+        next_run = calculate_next_update_time(datetime.now(timezone.utc), TF.M5)
         while _minute_scheduler_running:
+            # Sleep until boundary with a short floor to avoid tight-looping
+            now = datetime.now(timezone.utc)
+            delay = max((next_run - now).total_seconds(), 0.05)
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                raise
+
+            # Re-check time and run evaluations
             try:
                 await alert_cache._refresh_cache()
             except Exception:
@@ -482,11 +479,7 @@ async def _minute_alerts_scheduler():
                 logger.info("🔎 rsi_tracker_eval | triggers: %d", len(rsi_trig))
             except Exception as e:
                 print(f"❌ RSI Tracker evaluation error: {e}")
-            try:
-                corr_trig = await rsi_correlation_tracker_alert_service.check_rsi_correlation_tracker_alerts()
-                logger.info("🔎 rsi_correlation_eval | triggers: %d", len(corr_trig))
-            except Exception as e:
-                print(f"❌ RSI Correlation Tracker evaluation error: {e}")
+            # RSI Correlation tracker removed
             try:
                 heatmap_trig = await heatmap_tracker_alert_service.check_heatmap_tracker_alerts()
                 logger.info("🔎 heatmap_tracker_eval | triggers: %d", len(heatmap_trig))
@@ -497,11 +490,376 @@ async def _minute_alerts_scheduler():
                 logger.info("🔎 indicator_tracker_eval | triggers: %d", len(indicator_trig))
             except Exception as e:
                 print(f"❌ Indicator Tracker evaluation error: {e}")
-            await asyncio.sleep(300)
+
+            # Schedule next 5-minute boundary from current time
+            next_run = calculate_next_update_time(datetime.now(timezone.utc), TF.M5)
     except asyncio.CancelledError:
         return
     except Exception as e:
         print(f"❌ Minute scheduler error: {e}")
+
+
+async def _indicator_scheduler() -> None:
+    """Every ~10 seconds detect newly closed bars for subscribed symbol×timeframe sets,
+    compute closed-bar indicators, store them in the indicator cache, and broadcast updates.
+
+    Indicators computed (latest closed bar only):
+    - RSI(14)
+    - EMA(21/50/200)
+    - MACD(12,26,9)
+    """
+    try:
+        poll_interval_s = 10.0
+        logger = logging.getLogger("obs.indicator")
+        while True:
+            started_at = datetime.now(timezone.utc)
+            cpu_t0 = time.process_time()
+            poll_time_ms = int(started_at.timestamp() * 1000)
+            # Snapshot clients safely
+            async with _connected_clients_lock:
+                clients = list(_connected_clients)
+
+            # Build the unique set of (symbol, timeframe) to compute indicators across ALL allowed symbols/timeframes
+            pairs: Set[Tuple[str, Timeframe]] = set()
+            baseline_tfs: List[Timeframe] = _rollout_timeframes()
+            try:
+                symbols_for_rollout: List[str] = list(ALLOWED_WS_SYMBOLS)
+            except Exception:
+                symbols_for_rollout = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+            for sym in symbols_for_rollout:
+                for tf in baseline_tfs:
+                    pairs.add((sym, tf))
+
+            processed = 0
+            error_count = 0
+            # Track which timeframes had new closed-bar updates per indicator kind in this poll cycle
+            tfs_rsi_updated: Set[str] = set()
+            tfs_ema_updated: Set[str] = set()
+            tfs_macd_updated: Set[str] = set()
+            for symbol, tf in pairs:
+                try:
+                    # Fetch recent OHLC and gate on last closed bar
+                    bars = get_ohlc_data(symbol, tf, 300)
+                    if not bars:
+                        continue
+                    closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
+                    if not closed_bars:
+                        continue
+                    last_closed = closed_bars[-1]
+                    key = f"{symbol}:{tf.value}"
+                    if _indicator_last_bar.get(key) == last_closed.time:
+                        continue
+
+                    closes = [b.close for b in closed_bars]
+                    highs = [b.high for b in closed_bars]
+                    lows = [b.low for b in closed_bars]
+                    # Compute indicators for latest closed bar
+                    rsi_val = ind_rsi_latest(closes, 14) if len(closes) >= 15 else None
+                    ema_vals: Dict[int, Optional[float]] = {}
+                    for p in (21, 50, 200):
+                        ema_vals[p] = ind_ema_latest(closes, p) if len(closes) >= p else None
+                    macd_trip = ind_macd_latest(closes, 12, 26, 9)
+                    # Additional indicators for logging/WS snapshot (not cached)
+                    utbot_vals = None
+                    ich_vals = None
+                    try:
+                        utbot_vals = ind_utbot_latest(highs, lows, closes, 50, 10, 3.0)
+                    except Exception:
+                        utbot_vals = None
+                    try:
+                        ich_vals = ind_ichimoku_latest(highs, lows, closes, 9, 26, 52, 26)
+                    except Exception:
+                        ich_vals = None
+
+                    # Store to indicator cache (async-safe)
+                    if rsi_val is not None:
+                        await indicator_cache.update_rsi(symbol, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
+                        tfs_rsi_updated.add(tf.value)
+                    for period, v in ema_vals.items():
+                        if v is not None:
+                            await indicator_cache.update_ema(symbol, tf.value, int(period), float(v), ts_ms=last_closed.time)
+                            tfs_ema_updated.add(tf.value)
+                    if macd_trip is not None:
+                        macd_v, sig_v, hist_v = macd_trip
+                        await indicator_cache.update_macd(
+                            symbol,
+                            tf.value,
+                            12,
+                            26,
+                            9,
+                            float(macd_v),
+                            float(sig_v),
+                            float(hist_v),
+                            ts_ms=last_closed.time,
+                        )
+                        tfs_macd_updated.add(tf.value)
+
+                    _indicator_last_bar[key] = last_closed.time
+                    processed += 1
+
+                    # Structured per-update metrics (DEBUG level): latency and values snapshot
+                    try:
+                        latency_ms = max(poll_time_ms - int(last_closed.time), 0)
+                        item_log = {
+                            "event": "indicator_item",
+                            "sym": symbol,
+                            "tf": tf.value,
+                            "bar_time": int(last_closed.time),
+                            "latency_ms": int(latency_ms),
+                            "rsi14": (float(rsi_val) if rsi_val is not None else None),
+                            "ema": {k: (float(v) if v is not None else None) for k, v in ema_vals.items()},
+                            "macd": (
+                                {
+                                    "macd": float(macd_trip[0]),
+                                    "signal": float(macd_trip[1]),
+                                    "hist": float(macd_trip[2]),
+                                }
+                                if macd_trip
+                                else None
+                            ),
+                            "utbot": (
+                                {
+                                    "baseline": float(utbot_vals[0]),
+                                    "stop": float(utbot_vals[1]),
+                                    "direction": int(utbot_vals[2]),
+                                    "flip": int(utbot_vals[3]),
+                                }
+                                if utbot_vals
+                                else None
+                            ),
+                            "ichimoku": (ich_vals if ich_vals else None),
+                        }
+                        # JSON logs optional; emit at DEBUG to avoid INFO spam
+                        logger.debug(orjson.dumps(item_log).decode("utf-8"))
+                    except Exception:
+                        # Never allow observability to break scheduling
+                        pass
+
+                    # Live RSI debug log for 5M closed bars using cache-aligned numbers
+                    try:
+                        if (
+                            LIVE_RSI_DEBUGGING
+                            and symbol == "BTCUSDm"
+                            and tf == Timeframe.M5
+                            and rsi_val is not None
+                        ):
+                            time_iso = getattr(last_closed, "time_iso", "") or ""
+                            if "T" in time_iso:
+                                parts = time_iso.split("T", 1)
+                                date_part = parts[0]
+                                time_part = parts[1]
+                            else:
+                                date_part = time_iso
+                                time_part = ""
+                            time_part = time_part.replace("+00:00", "Z")
+                            volume_str = f"{last_closed.volume:.2f}" if getattr(last_closed, "volume", None) is not None else "-"
+                            tick_volume_str = f"{last_closed.tick_volume:.0f}" if getattr(last_closed, "tick_volume", None) is not None else "-"
+                            spread_str = f"{last_closed.spread:.0f}" if getattr(last_closed, "spread", None) is not None else "-"
+                            logger = logging.getLogger(__name__)
+                            logger.info(
+                                "🧭 liveRSI %s 5M RSIclosed(14)=%.2f | date=%s time=%s open=%.5f high=%.5f low=%.5f close=%.5f volume=%s tick_volume=%s spread=%s",
+                                symbol,
+                                float(rsi_val),
+                                date_part,
+                                time_part,
+                                float(getattr(last_closed, "open", 0.0)),
+                                float(getattr(last_closed, "high", 0.0)),
+                                float(getattr(last_closed, "low", 0.0)),
+                                float(getattr(last_closed, "close", 0.0)),
+                                volume_str,
+                                tick_volume_str,
+                                spread_str,
+                            )
+                    except Exception:
+                        # Debug-only logging must never break the scheduler
+                        pass
+
+                    # Broadcast to interested clients (best-effort)
+                    if clients:
+                        snapshot = {
+                            "bar_time": last_closed.time,
+                            "indicators": {
+                                "rsi": {14: rsi_val} if rsi_val is not None else {},
+                            },
+                        }
+                        msg = {
+                            "type": "indicator_update",
+                            "symbol": symbol,
+                            "timeframe": tf.value,
+                            "data": snapshot,
+                        }
+                        for c in clients:
+                            try:
+                                if getattr(c, "v2_broadcast", False):
+                                    ok = await c._try_send_json(msg)
+                                    try:
+                                        label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
+                                        if ok:
+                                            _metrics_inc(label, "ok_indicator_update", 1)
+                                        else:
+                                            _metrics_inc(label, "fail_indicator_update", 1)
+                                    except Exception:
+                                        pass
+                                    continue
+                                sub = getattr(c, "subscriptions", {}).get(symbol, {}).get(tf)
+                                if sub and "indicators" in getattr(sub, "data_types", []):
+                                    ok = await c._try_send_json(msg)
+                                    try:
+                                        label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
+                                        if ok:
+                                            _metrics_inc(label, "ok_indicator_update", 1)
+                                        else:
+                                            _metrics_inc(label, "fail_indicator_update", 1)
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                # Never let a single client block the scheduler
+                                continue
+                    # Also compute and broadcast quantum analysis snapshot for this symbol
+                    q = await compute_quantum_for_symbol(symbol)
+                    q_msg = {
+                        "type": "quantum_update",
+                        "symbol": symbol,
+                        "data": q,
+                    }
+                    for c in clients:
+                        try:
+                            if getattr(c, "v2_broadcast", False):
+                                await c._try_send_json(q_msg)
+                                continue
+                        except Exception:
+                            continue
+
+                    # Correlation updates removed per product decision
+                except Exception as e:
+                    error_count += 1
+                    print(f"❌ Indicator scheduler error for {symbol} {tf.value}: {e}")
+                    continue
+
+            ended_at = datetime.now(timezone.utc)
+            cpu_t1 = time.process_time()
+            try:
+                elapsed_ms = int((ended_at - started_at).total_seconds() * 1000)
+                cpu_ms = int((cpu_t1 - cpu_t0) * 1000)
+                # Human-friendly summary
+                logging.getLogger(__name__).info(
+                    "🧮 indicator_poll | pairs=%d processed=%d errors=%d duration_ms=%d cpu_ms=%d",
+                    len(pairs),
+                    processed,
+                    error_count,
+                    elapsed_ms,
+                    cpu_ms,
+                )
+                # Structured cycle metrics (DEBUG)
+                cycle_log = {
+                    "event": "indicator_poll",
+                    "pairs_total": len(pairs),
+                    "processed": processed,
+                    "errors": error_count,
+                    "duration_ms": elapsed_ms,
+                    "cpu_ms": cpu_ms,
+                }
+                logger.debug(orjson.dumps(cycle_log).decode("utf-8"))
+            except Exception:
+                pass
+
+            # Event-driven alert evaluation: run relevant alerts immediately when indicators update
+            try:
+                # Only use in-memory cache; do not refresh here
+                if tfs_rsi_updated:
+                    # RSI-dependent alerts
+                    asyncio.create_task(rsi_tracker_alert_service.check_rsi_tracker_alerts())
+                if tfs_ema_updated or tfs_macd_updated or tfs_rsi_updated:
+                    # Custom indicator tracker depends on EMA/MACD/RSI
+                    asyncio.create_task(heatmap_indicator_tracker_alert_service.check_heatmap_indicator_tracker_alerts())
+                    # Heatmap tracker aggregates across indicators; safe to evaluate when any updated
+                    asyncio.create_task(heatmap_tracker_alert_service.check_heatmap_tracker_alerts())
+            except Exception:
+                # Never allow alert evaluation to break the scheduler
+                pass
+
+            try:
+                await asyncio.sleep(poll_interval_s)
+            except asyncio.CancelledError:
+                raise
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        print(f"❌ Indicator scheduler fatal error: {e}")
+
+
+async def _ws_metrics_reporter() -> None:
+    """Periodically log WebSocket send counters (v2 only). Resets counters after each report."""
+    try:
+        interval_s = int(os.environ.get("WS_METRICS_INTERVAL_S", "30"))
+        logger = logging.getLogger("obs.ws")
+        while True:
+            try:
+                await asyncio.sleep(interval_s)
+            except asyncio.CancelledError:
+                raise
+
+            # Snapshot and reset counters atomically enough for our purposes
+            try:
+                # Compute active connections (v2 only)
+                active: Dict[str, int] = {"v2": 0}
+                async with _connected_clients_lock:
+                    for c in list(_connected_clients):
+                        label = getattr(c, "conn_label", "v2")
+                        if label == "v2":
+                            active["v2"] += 1
+
+                snap = {lbl: dict(counts) for lbl, counts in _ws_metrics.items()}
+                # Human-friendly rollup
+                def fmt(label: str) -> str:
+                    d = snap.get(label, {})
+                    ticks_ok = int(d.get("ok_ticks", 0))
+                    ticks_fail = int(d.get("fail_ticks", 0))
+                    ticks_items = int(d.get("ticks_items", 0))
+                    ind_ok = int(d.get("ok_indicator_update", 0))
+                    ind_fail = int(d.get("fail_indicator_update", 0))
+                    opened = int(d.get("connections_opened", 0))
+                    closed = int(d.get("connections_closed", 0))
+                    err_rate_ticks = (ticks_fail / max(ticks_ok + ticks_fail, 1))
+                    err_rate_ind = (ind_fail / max(ind_ok + ind_fail, 1))
+                    return (
+                        f"conns={active.get(label, 0)} opened={opened} closed={closed} "
+                        f"ticks_msgs={ticks_ok+ticks_fail} items={ticks_items} err={err_rate_ticks:.3f} "
+                        f"indicator_msgs={ind_ok+ind_fail} err={err_rate_ind:.3f}"
+                    )
+
+                logger.info(
+                    "📈 ws_metrics | window_s=%d | v2: %s",
+                    interval_s,
+                    fmt("v2"),
+                )
+
+                # Structured JSON snapshot at DEBUG
+                try:
+                    payload = {
+                        "event": "ws_metrics",
+                        "window_s": interval_s,
+                        "active": active,
+                        "counts": snap,
+                    }
+                    logger.debug(orjson.dumps(payload).decode("utf-8"))
+                except Exception:
+                    pass
+
+                # Reset counters for the next window
+                for k in list(_ws_metrics.keys()):
+                    _ws_metrics[k] = defaultdict(int)
+
+            except Exception:
+                # Never let metrics reporting crash the server
+                pass
+    except asyncio.CancelledError:
+        return
+    except Exception as e:
+        print(f"❌ WS metrics reporter error: {e}")
+
+
+# liveRSI boundary debugger removed — logs now emitted from indicator scheduler for 5M
 
 @app.get("/health")
 def health():
@@ -512,35 +870,192 @@ def health():
 
 @app.get("/test-ws")
 def test_websocket():
-    return {"message": "WebSocket endpoint available at /ws/market"}
+    return {"message": "WebSocket endpoint available at /market-v2"}
 
-@app.get("/api/ohlc/{symbol}")
-def get_ohlc(symbol: str, timeframe: str = Query("5M"), count: int = Query(250, le=500), x_api_key: Optional[str] = Depends(require_api_token_header)):
-    """Get OHLC data for a symbol and timeframe"""
+@app.get("/api/indicator")
+async def get_indicator(
+    indicator: str = Query(..., description="Indicator name: rsi|quantum"),
+    timeframe: str = Query(..., description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W"),
+    pairs: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., pairs=EURUSDm&pairs=BTCUSDm) or CSV"),
+    symbols: Optional[List[str]] = Query(None, description="Alias for pairs (repeatable or CSV)"),
+    x_api_key: Optional[str] = Depends(require_api_token_header),
+):
+    """Return the latest closed-bar value for a single indicator across 1 to 32 pairs.
+
+    - indicator: rsi|quantum
+      - rsi: fixed period 14
+      - quantum: returns per-timeframe and overall Buy/Sell% with signals
+    - timeframe: must be WS-supported
+    - pairs/symbols: 1 to 32 symbols. Defaults to all WS-allowed symbols if omitted (capped to 32).
+    """
+    # Validate timeframe
     try:
         tf = Timeframe(timeframe)
-        sym = symbol.upper()
-        ohlc_data = get_ohlc_data(sym, tf, count)
-        return {
-            "symbol": sym,
-            "timeframe": timeframe,
-            "count": len(ohlc_data),
-            "data": [ohlc.model_dump() for ohlc in ohlc_data]
-        }
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/tick/{symbol}")
-def get_tick(symbol: str, x_api_key: Optional[str] = Depends(require_api_token_header)):
-    sym = symbol.upper()
-    ensure_symbol_selected(sym)
-    info = mt5.symbol_info_tick(sym)
-    tick = _to_tick(sym, info)
-    if tick is None:
-        raise HTTPException(status_code=404, detail="No tick available")
-    return tick.model_dump()
+    # Enforce WS-allowed timeframes when available
+    try:
+        if 'ALLOWED_WS_TIMEFRAMES' in globals():
+            if tf not in ALLOWED_WS_TIMEFRAMES:
+                raise HTTPException(status_code=403, detail="forbidden_timeframe")
+    except Exception:
+        pass
+
+    # Normalize symbols
+    requested: List[str] = []
+    for src in (pairs or []):
+        if src:
+            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
+    for src in (symbols or []):
+        if src:
+            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
+
+    if not requested:
+        try:
+            candidates: List[str] = sorted(list(ALLOWED_WS_SYMBOLS))
+        except Exception:
+            candidates = sorted([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+    else:
+        # Canonicalize
+        canonical: List[str] = []
+        for s in requested:
+            try:
+                canonical.append(canonicalize_symbol(s))
+            except Exception:
+                continue
+        # Filter to allowed when available
+        try:
+            allowed_ws: Set[str] = set(ALLOWED_WS_SYMBOLS)
+        except Exception:
+            allowed_ws = set([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+        candidates = [s for s in canonical if s in allowed_ws]
+
+    # Enforce pair count limits: 1..32
+    if len(candidates) == 0:
+        raise HTTPException(status_code=400, detail="no_symbols")
+    if len(candidates) > 32:
+        candidates = candidates[:32]
+
+    indicator_key = indicator.strip().lower()
+    if indicator_key not in {"rsi", "quantum"}:
+        raise HTTPException(status_code=400, detail="unsupported_indicator")
+
+    results: List[Dict[str, Any]] = []
+    for sym in candidates:
+        try:
+            ensure_symbol_selected(sym)
+        except Exception:
+            pass
+
+        if indicator_key == "rsi":
+            latest = await indicator_cache.get_latest_rsi(sym, tf.value, 14)
+            value = None if not latest else float(latest[1])
+            ts_ms = None if not latest else int(latest[0])
+            results.append({"symbol": sym, "timeframe": tf.value, "ts": ts_ms, "value": value})
+        else:  # quantum
+            # Compute per-timeframe and overall quantum Buy/Sell% (closed-bar parity)
+            try:
+                q = await compute_quantum_for_symbol(sym)
+            except Exception:
+                q = None
+            results.append({
+                "symbol": sym,
+                "timeframe": tf.value,
+                "ts": None,
+                "quantum": q if q else None,
+            })
+
+    return {
+        "indicator": indicator_key,
+        "timeframe": tf.value,
+        "count": len(results),
+        "pairs": results,
+    }
+
+
+ 
+
+
+@app.get("/api/pricing")
+async def get_pricing(
+    pairs: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., pairs=EURUSDm&pairs=BTCUSDm) or CSV"),
+    symbols: Optional[List[str]] = Query(None, description="Alias for pairs (repeatable or CSV)"),
+    x_api_key: Optional[str] = Depends(require_api_token_header),
+):
+    """Return latest cached price and daily_change_pct for 1 to 32 pairs.
+
+    - Sources the latest value from in-memory price cache, falling back to MT5 tick on miss.
+    - Response arrays are ordered by the canonicalized symbol list.
+    """
+    # Normalize symbols
+    requested: List[str] = []
+    for src in (pairs or []):
+        if src:
+            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
+    for src in (symbols or []):
+        if src:
+            requested.extend([s for s in re.split(r"[,\s]+", src) if s])
+
+    if not requested:
+        try:
+            candidates: List[str] = sorted(list(ALLOWED_WS_SYMBOLS))
+        except Exception:
+            candidates = sorted([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+    else:
+        # Canonicalize and cap to 32
+        candidates = []
+        for s in requested:
+            cs = canonicalize_symbol(s)
+            if cs not in candidates:
+                candidates.append(cs)
+        candidates = candidates[:32]
+        # Filter to allowed when available
+        try:
+            allowed_ws: Set[str] = set(ALLOWED_WS_SYMBOLS)
+        except Exception:
+            allowed_ws = set([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+        candidates = [s for s in candidates if s in allowed_ws]
+
+    results: List[Dict[str, Any]] = []
+    for sym in candidates:
+        try:
+            # Prefer cache
+            snap = await price_cache.get_latest(sym)
+            if not snap:
+                # Fallback to live MT5 tick
+                ensure_symbol_selected(sym)
+                info = mt5.symbol_info_tick(sym)
+                if info is not None:
+                    ts_ms = getattr(info, "time_msc", 0) or int(getattr(info, "time", 0)) * 1000
+                    dt_iso = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).isoformat()
+                    bid = getattr(info, "bid", None)
+                    ask = getattr(info, "ask", None)
+                    dcp = get_daily_change_pct_bid(sym)
+                    snap = {
+                        "symbol": sym,
+                        "time": ts_ms,
+                        "time_iso": dt_iso,
+                        "bid": float(bid) if bid is not None else None,
+                        "ask": float(ask) if ask is not None else None,
+                        "daily_change_pct": float(dcp) if dcp is not None else None,
+                    }
+                    try:
+                        await price_cache.update(sym, time_ms=ts_ms, time_iso=dt_iso, bid=bid, ask=ask, daily_change_pct=dcp)
+                    except Exception:
+                        pass
+            if snap:
+                results.append(snap)
+            else:
+                results.append({"symbol": sym, "time": None, "time_iso": None, "bid": None, "ask": None, "daily_change_pct": None})
+        except Exception:
+            results.append({"symbol": sym, "time": None, "time_iso": None, "bid": None, "ask": None, "daily_change_pct": None})
+
+    return {
+        "count": len(results),
+        "pairs": results,
+    }
+
 
 @app.get("/api/symbols")
 def search_symbols(q: str = Query(..., min_length=1), x_api_key: Optional[str] = Depends(require_api_token_header)):
@@ -638,27 +1153,27 @@ async def _check_alerts_safely(tick_data: Dict[str, Any]) -> None:
     except Exception as e:
         print(f"❌ Error checking RSI alerts: {e}")
     
-    try:
-        # Check RSI correlation alerts
-        await rsi_correlation_alert_service.check_rsi_correlation_alerts(tick_data)
-    except Exception as e:
-        print(f"❌ Error checking RSI correlation alerts: {e}")
+    # RSI correlation alerts removed per product decision
 
 class WSClient:
-    def __init__(self, websocket: WebSocket, token: str):
+    def __init__(self, websocket: WebSocket, token: str, supported_data_types: Optional[Set[str]] = None, *, v2_broadcast: bool = False):
         self.websocket = websocket
         self.token = token
-        # Legacy tick subscriptions
-        self.symbols: Set[str] = set()
         self._last_sent_ts: Dict[str, int] = {}
-        # New subscription model (supports multiple timeframes per symbol)
-        # subscriptions[symbol][timeframe] -> SubscriptionInfo
-        self.subscriptions: Dict[str, Dict[Timeframe, SubscriptionInfo]] = {}
+        # Per-client subscription model removed for v2 broadcast-only
+        # subscriptions retained as generic dict for OHLC boundary scheduling state
+        self.subscriptions: Dict[str, Dict[Timeframe, Any]] = {}
         # next_ohlc_updates[symbol][timeframe] -> next boundary datetime
         self.next_ohlc_updates: Dict[str, Dict[Timeframe, datetime]] = {}
         self._task: Optional[asyncio.Task] = None
         self._ohlc_task: Optional[asyncio.Task] = None
-        self._send_interval_s: float = 0.10  # 10 Hz for ticks
+        self._send_interval_s: float = 1.0  # 1 Hz for ticks (1000ms)
+        # Supported data types for this connection (endpoint specific)
+        self.supported_data_types: Set[str] = set(supported_data_types or {"ticks", "ohlc"})
+        # v2 broadcast mode: server pushes all symbols/timeframes without explicit subscribe
+        self.v2_broadcast: bool = bool(v2_broadcast)
+        # Security/cap tracking
+        self._subscription_count: int = 0
 
     def _is_connected(self) -> bool:
         try:
@@ -729,7 +1244,24 @@ class WSClient:
         # WebSocket is already accepted in the main handler
         # Start both tick and OHLC background tasks
         self._task = asyncio.create_task(self._tick_loop())
-        self._ohlc_task = asyncio.create_task(self._ohlc_loop())
+        # Only start OHLC loop when this connection supports OHLC streaming
+        if "ohlc" in self.supported_data_types:
+            self._ohlc_task = asyncio.create_task(self._ohlc_loop())
+        # If v2 broadcast, pre-schedule OHLC boundary updates for baseline symbols/timeframes
+        if self.v2_broadcast and ("ohlc" in self.supported_data_types):
+            try:
+                now = datetime.now(timezone.utc)
+                baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
+                for sym in RSI_SUPPORTED_SYMBOLS:
+                    try:
+                        ensure_symbol_selected(sym)
+                    except Exception:
+                        continue
+                    for tf in baseline_tfs:
+                        self.next_ohlc_updates.setdefault(sym, {})[tf] = calculate_next_update_time(now, tf)
+            except Exception:
+                # Never block connection start
+                pass
 
     async def stop(self):
         if self._task:
@@ -771,7 +1303,7 @@ class WSClient:
                 if not self._is_connected():
                     return
                 await self._send_scheduled_ohlc_updates()
-                await asyncio.sleep(1.0)  # Check every second for due updates
+                await asyncio.sleep(1.0)  # 1000ms resolution for boundary checks
         except asyncio.CancelledError:
             return
         except Exception:
@@ -782,15 +1314,17 @@ class WSClient:
         """Send real-time tick updates for subscribed symbols"""
         tick_symbols = set()
         
-        # Collect symbols that need tick updates (any timeframe requesting ticks)
-        for symbol, tf_map in self.subscriptions.items():
-            for sub_info in tf_map.values():
-                if "ticks" in sub_info.data_types:
-                    tick_symbols.add(symbol)
-                    break
+        # Per-client tick subscriptions removed; rely on v2 broadcast baseline
         
-        # Also include legacy tick subscriptions
-        tick_symbols.update(self.symbols)
+        # v2 broadcast: include rollout baseline symbols (gradual enablement)
+        if self.v2_broadcast:
+            try:
+                # Stream all allowed symbols (default: full RSI_SUPPORTED_SYMBOLS)
+                # WS_ALLOWED_SYMBOLS env var can narrow this allowlist.
+                tick_symbols.update(ALLOWED_WS_SYMBOLS)
+            except Exception:
+                # Fallback to full supported list
+                tick_symbols.update([s.upper() for s in RSI_SUPPORTED_SYMBOLS])
         
         if not tick_symbols:
             return
@@ -807,24 +1341,83 @@ class WSClient:
                     continue
                 tick = _to_tick(sym, info)
                 if tick:
-                    updates.append(tick.model_dump())
+                    # Inject daily_change_pct using cached D1 reference to avoid heavy calls per tick
+                    dcp_val: Optional[float] = None
+                    try:
+                        today_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        cache_key = _d1_ref_cache.get(sym)
+                        if not cache_key or cache_key[0] != today_key:
+                            # Refresh reference once per day per symbol
+                            ref = get_daily_change_pct_bid(sym)
+                            # get_daily_change_pct_bid computes using current bid; extract ref by reversing would be noisy
+                            # For per-tick efficiency, we will compute dcp directly each time with helper, no separate ref exposure
+                            dcp_val = ref
+                            _d1_ref_cache[sym] = (today_key, ref if ref is not None else float('nan'))
+                        else:
+                            # Recompute with helper to honor spec with latest bid; fallback to cached ref-derived value
+                            dcp_val = get_daily_change_pct_bid(sym)
+                    except Exception:
+                        dcp_val = None
+                    tick_dict = tick.model_dump()
+                    if dcp_val is not None and dcp_val == dcp_val:  # not NaN
+                        tick_dict["daily_change_pct"] = float(dcp_val)
+
+                    # Store full tick data for alert processing
+                    full_tick_data = tick_dict.copy()
+                    updates.append(full_tick_data)
                     self._last_sent_ts[sym] = ts_ms
                     
-                    # Update OHLC caches for all subscribed timeframes requesting OHLC for this symbol
-                    if sym in self.subscriptions:
-                        for tf, si in self.subscriptions[sym].items():
-                            if "ohlc" in si.data_types:
+                    # Update OHLC caches for baseline timeframes in v2 broadcast mode only (no live OHLC streaming in v2)
+                    if self.v2_broadcast and ("ohlc" in self.supported_data_types):
+                        try:
+                            baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
+                            for tf in baseline_tfs:
                                 update_ohlc_cache(sym, tf)
+                        except Exception:
+                            pass
+                    # Update latest price cache for REST pricing endpoint
+                    try:
+                        await price_cache.update(
+                            sym,
+                            time_ms=ts_ms,
+                            time_iso=tick_dict.get("time_iso"),
+                            bid=tick_dict.get("bid"),
+                            ask=tick_dict.get("ask"),
+                            daily_change_pct=tick_dict.get("daily_change_pct"),
+                        )
+                    except Exception:
+                        pass
                         
             except HTTPException:
                 # symbol disappeared or invalid; drop it
-                if sym in self.symbols:
-                    self.symbols.discard(sym)
+                # Clean internal scheduling state
                 if sym in self.subscriptions:
                     del self.subscriptions[sym]
                     
         if updates:
-            sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": updates}))
+            # Create bid-only tick data for frontend (only send bid prices)
+            bid_only_updates = []
+            for full_tick in updates:
+                bid_only_tick = {
+                    "symbol": full_tick["symbol"],
+                    "time": full_tick["time"],
+                    "time_iso": full_tick["time_iso"],
+                    "bid": full_tick["bid"],
+                    "daily_change_pct": full_tick.get("daily_change_pct")
+                }
+                bid_only_updates.append(bid_only_tick)
+
+            sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": bid_only_updates}))
+            # Metrics: per-endpoint counters for tick messages and items
+            try:
+                label = getattr(self, "conn_label", "v2")
+                _metrics_inc(label, "ticks_items", by=len(bid_only_updates))
+                if sent:
+                    _metrics_inc(label, "ok_ticks", 1)
+                else:
+                    _metrics_inc(label, "fail_ticks", 1)
+            except Exception:
+                pass
             if not sent:
                 # Stop trying if client is gone
                 return
@@ -837,6 +1430,7 @@ class WSClient:
                 
                 if ENABLE_TICK_TRIGGERED_ALERTS and total_alerts > 0:
                     # Provide tick_data in a dict keyed by symbol as expected by alert services
+                    # Use full tick data for alert processing (includes bid, ask, volume, etc.)
                     tick_data_map = {}
                     for td in updates:
                         sym = td.get("symbol")
@@ -884,8 +1478,8 @@ class WSClient:
             for tf, next_update_time in list(tf_map.items()):
                 if current_time >= next_update_time:
                     try:
-                        sub_info = self.subscriptions.get(symbol, {}).get(tf)
-                        if sub_info and "ohlc" in sub_info.data_types:
+                        # Per-client OHLC subscriptions removed; emit updates only in v2 broadcast mode when enabled
+                        if self.v2_broadcast and ("ohlc" in self.supported_data_types):
                             # Refresh cache from MT5 at boundary to include zero-tick flat minutes
                             update_ohlc_cache(symbol, tf)
                             # Get current OHLC data from cache (now authoritative and closed)
@@ -909,12 +1503,8 @@ class WSClient:
                             )
                     except Exception as e:
                         print(f"❌ Error sending OHLC update for {symbol} {tf.value}: {e}")
-                        # Remove problematic symbol×timeframe subscription
+                        # Remove problematic scheduling state
                         try:
-                            if symbol in self.subscriptions and tf in self.subscriptions[symbol]:
-                                del self.subscriptions[symbol][tf]
-                                if not self.subscriptions[symbol]:
-                                    del self.subscriptions[symbol]
                             if symbol in self.next_ohlc_updates and tf in self.next_ohlc_updates[symbol]:
                                 del self.next_ohlc_updates[symbol][tf]
                                 if not self.next_ohlc_updates[symbol]:
@@ -924,234 +1514,98 @@ class WSClient:
 
     async def handle_message(self, message: dict):
         action = message.get("action")
-        
-        if action == "subscribe":
-            # New subscription format
-            symbol = message.get("symbol", "")
-            timeframe = message.get("timeframe", "5M")
-            data_types = message.get("data_types", ["ticks", "ohlc"])
-            price_basis_str = message.get("price_basis", "last")
-            ohlc_schema_str = message.get("ohlc_schema", "parallel")
-            
-            if not symbol:
-                await self.websocket.send_json({"type": "error", "error": "symbol_required"})
-                return
-            
-            try:
-                # Validate timeframe (accept both "1M" style and "M1" alias)
-                try:
-                    tf = Timeframe(timeframe)
-                except ValueError:
-                    try:
-                        tf = Timeframe[timeframe]
-                    except Exception:
-                        raise ValueError(f"Invalid timeframe: {timeframe}")
-                ensure_symbol_selected(symbol)
-                
-                # Parse enums with safe defaults
-                try:
-                    pb = PriceBasis(price_basis_str)
-                except Exception:
-                    pb = PriceBasis.LAST
-                try:
-                    schema = OHLCSchema(ohlc_schema_str)
-                except Exception:
-                    schema = OHLCSchema.PARALLEL
-
-                # Create subscription info
-                sub_info = SubscriptionInfo(
-                    symbol=symbol,
-                    timeframe=tf,
-                    subscription_time=datetime.now(timezone.utc),
-                    data_types=data_types,
-                    price_basis=pb,
-                    ohlc_schema=schema,
-                )
-                
-                # Persist subscription (allow multiple TFs per symbol)
-                if symbol not in self.subscriptions:
-                    self.subscriptions[symbol] = {}
-                self.subscriptions[symbol][tf] = sub_info
-                
-                # Send initial OHLC data if requested
-                if "ohlc" in data_types:
-                    try:
-                        ohlc_data = get_cached_ohlc(symbol, tf, 250)
-                        
-                        if ohlc_data:
-                            await self.websocket.send_json({
-                                "type": "initial_ohlc",
-                                "symbol": symbol,
-                                "timeframe": timeframe,
-                                "data": [self._format_ohlc_for_subscription(ohlc, symbol, tf) for ohlc in ohlc_data]
-                            })
-                        else:
-                            # Only log at debug level to reduce noise
-                            import logging
-                            logger = logging.getLogger(__name__)
-                            logger.debug(f"⚠️ No OHLC data available for {symbol}")
-                        
-                        # Schedule next OHLC update for this symbol×timeframe
-                        self.next_ohlc_updates.setdefault(symbol, {})[tf] = calculate_next_update_time(
-                            sub_info.subscription_time, tf
-                        )
-                        
-                    except Exception as e:
-                        print(f"❌ Error getting initial OHLC for {symbol}: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        await self.websocket.send_json({
-                            "type": "error", 
-                            "error": f"failed_to_get_ohlc: {str(e)}"
-                        })
-                        return
-                
-                await self.websocket.send_json({
-                    "type": "subscribed",
-                    "symbol": symbol,
-                    "timeframe": timeframe,
-                    "data_types": data_types,
-                    "price_basis": sub_info.price_basis.value,
-                    "ohlc_schema": sub_info.ohlc_schema.value,
-                })
-                
-            except ValueError:
-                await self.websocket.send_json({"type": "error", "error": f"invalid_timeframe: {timeframe}"})
-            except HTTPException as e:
-                await self.websocket.send_json({"type": "error", "error": str(e.detail)})
-            except Exception as e:
-                await self.websocket.send_json({"type": "error", "error": str(e)})
-                
-        elif action == "subscribe_legacy":
-            # Legacy tick-only subscription
-            syms = message.get("symbols", [])
-            for s in syms:
-                ensure_symbol_selected(s)
-                self.symbols.add(s)
-            await self.websocket.send_json({"type": "subscribed", "symbols": sorted(self.symbols)})
-            
-        elif action == "unsubscribe":
-            symbol = message.get("symbol", "")
-            timeframe_str = message.get("timeframe")
-            if symbol:
-                if timeframe_str:
-                    # Unsubscribe only this symbol×timeframe
-                    try:
-                        try:
-                            tf = Timeframe(timeframe_str)
-                        except ValueError:
-                            tf = Timeframe[timeframe_str]
-                    except Exception:
-                        await self.websocket.send_json({"type": "error", "error": f"invalid_timeframe: {timeframe_str}"})
-                        return
-                    if symbol in self.subscriptions and tf in self.subscriptions[symbol]:
-                        del self.subscriptions[symbol][tf]
-                        if not self.subscriptions[symbol]:
-                            del self.subscriptions[symbol]
-                    if symbol in self.next_ohlc_updates and tf in self.next_ohlc_updates[symbol]:
-                        del self.next_ohlc_updates[symbol][tf]
-                        if not self.next_ohlc_updates[symbol]:
-                            del self.next_ohlc_updates[symbol]
-                    self.symbols.discard(symbol)
-                    await self.websocket.send_json({"type": "unsubscribed", "symbol": symbol, "timeframe": tf.value})
-                else:
-                    # Unsubscribe all timeframes for this symbol
-                    if symbol in self.subscriptions:
-                        del self.subscriptions[symbol]
-                    if symbol in self.next_ohlc_updates:
-                        del self.next_ohlc_updates[symbol]
-                    self.symbols.discard(symbol)
-                    await self.websocket.send_json({"type": "unsubscribed", "symbol": symbol})
-            else:
-                # Legacy unsubscribe
-                syms = message.get("symbols", [])
-                for s in syms:
-                    self.symbols.discard(s)
-                    if s in self.subscriptions:
-                        del self.subscriptions[s]
-                    if s in self.next_ohlc_updates:
-                        del self.next_ohlc_updates[s]
-                await self.websocket.send_json({"type": "unsubscribed", "symbols": sorted(syms)})
-                
-        elif action == "ping":
-            await self.websocket.send_json({"type": "pong"})
+        # Subscriptions removed in v2 broadcast-only; keep ping/pong for keepalive
+        if action == "ping":
+            await self._try_send_json({"type": "pong"})
+        elif action in ("subscribe", "unsubscribe"):
+            await self._try_send_json({"type": "info", "message": "v2 broadcast-only: subscribe/unsubscribe ignored"})
         else:
-            await self.websocket.send_json({"type": "error", "error": "unknown_action"})
+            await self._try_send_json({"type": "error", "error": "unknown_action"})
 
-# Keep legacy endpoint for backward compatibility
-@app.websocket("/ws/ticks")
-async def ws_ticks_legacy(websocket: WebSocket):
-    """Legacy WebSocket endpoint for tick-only streaming"""
+"""Legacy (/ws/ticks) and v1 (/ws/market) WebSocket endpoints have been removed after cutover. Use /market-v2."""
+
+@app.websocket("/market-v2")
+async def ws_market_v2(websocket: WebSocket):
+    """Versioned Market Data WebSocket (v2)
+
+    Serves tick and indicator streams and advertises capabilities via greeting.
+    """
     client = None
-    
     try:
+        # Optional auth: mirror REST policy
+        if not _ws_is_authorized(websocket):
+            try:
+                await websocket.close(code=1008)
+            finally:
+                return
         await websocket.accept()
-        await websocket.send_json({"type": "connected", "message": "Legacy tick WebSocket connected"})
-        
-        client = WSClient(websocket, "")
+        # Send a capabilities greeting for v2
+        try:
+            await websocket.send_json({
+                "type": "connected",
+                "message": "WebSocket connected successfully",
+                "supported_timeframes": [tf.value for tf in Timeframe],
+                # v2: ticks + indicators only; OHLC is not streamed to frontend
+                "supported_data_types": ["ticks", "indicators"],
+                "supported_price_bases": ["last", "bid", "ask"],
+                "indicators": {
+                    "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]}
+                },
+            })
+        except Exception:
+            # Client may already have disconnected
+            pass
+
+        # Reuse the same WSClient implementation, enable broadcast-all for v2
+        client = WSClient(websocket, "", supported_data_types={"ticks", "indicators"}, v2_broadcast=True)
+        # Tag connection for metrics
+        try:
+            setattr(client, "conn_label", "v2")
+            _metrics_inc("v2", "connections_opened", 1)
+        except Exception:
+            pass
         await client.start()
-        
+        async with _connected_clients_lock:
+            _connected_clients.add(client)
+
+        # Main receive loop
         while True:
-            data = await websocket.receive_text()
+            if getattr(websocket, "client_state", None) != WebSocketState.CONNECTED:
+                break
+            try:
+                data = await websocket.receive_text()
+            except WebSocketDisconnect:
+                break
+            except RuntimeError:
+                break
+
             try:
                 message = orjson.loads(data)
-                # Force legacy behavior
-                if message.get("action") == "subscribe":
-                    message["action"] = "subscribe_legacy"
                 await client.handle_message(message)
             except Exception as parse_error:
-                await websocket.send_json({"type": "error", "error": str(parse_error)})
-                
+                try:
+                    await websocket.send_json({"type": "error", "error": str(parse_error)})
+                except Exception:
+                    break
     except WebSocketDisconnect:
-        print("🔌 Legacy WebSocket disconnected")
+        print("Websocket v2 Disconnected")
     except Exception as e:
-        print(f"❌ Legacy WebSocket error: {e}")
+        if "accept" in str(e).lower() and "websocket" in str(e).lower():
+            print("🔌 WebSocket v2 disconnected (accept state)")
+        else:
+            print(f"❌ WebSocket v2 error: {e}")
     finally:
         if client:
             await client.stop()
-
-@app.websocket("/ws/market")
-async def ws_market(websocket: WebSocket):
-    client = None
-    
-    try:
-        await websocket.accept()
-        
-        # Send a welcome message
-        await websocket.send_json({
-            "type": "connected", 
-            "message": "WebSocket connected successfully",
-            "supported_timeframes": [tf.value for tf in Timeframe],
-            "supported_data_types": ["ticks", "ohlc"],
-            "supported_price_bases": ["last", "bid", "ask"],
-            "ohlc_schema": "parallel"
-        })
-        
-        # Create WSClient for real MT5 data
-        client = WSClient(websocket, "")
-        await client.start()
-        
-        # Handle incoming messages
-        while True:
-            data = await websocket.receive_text()
-            
-            try:
-                message = orjson.loads(data)
-                await client.handle_message(message)
-                
-            except Exception as parse_error:
-                print(f"❌ Error parsing message: {parse_error}")
-                await websocket.send_json({"type": "error", "error": str(parse_error)})
-                
-    except WebSocketDisconnect:
-        print("Websocket Disconnected")
-    except Exception as e:
-        print(f"❌ WebSocket error: {e}")
-        import traceback
-        traceback.print_exc()
-    finally:
-        if client:
-            await client.stop()
+        try:
+            async with _connected_clients_lock:
+                _connected_clients.discard(client)
+        except Exception:
+            pass
+        try:
+            _metrics_inc("v2", "connections_closed", 1)
+        except Exception:
+            pass
 
 def _install_sigterm_handler(loop: asyncio.AbstractEventLoop):
     def _handler():
@@ -1171,9 +1625,8 @@ if __name__ == "__main__":
     import uvicorn
     print("🚀 Starting MT5 Market Data Server...")
     print("📊 Available endpoints:")
-    print("   - WebSocket (new): ws://localhost:8000/ws/market")
-    print("   - WebSocket (legacy): ws://localhost:8000/ws/ticks")
-    print("   - REST OHLC: GET /api/ohlc/{symbol}?timeframe=1M&count=100")
+    print("   - WebSocket (v2): ws://localhost:8000/market-v2")
+    print("   - REST Indicator: GET /api/indicator?indicator=rsi&timeframe=5M&pairs=EURUSDm")
     print("   - News Analysis: GET /api/news/analysis")
     print("   - News Refresh: POST /api/news/refresh")
     print("   - Alert Cache: GET /api/alerts/cache")

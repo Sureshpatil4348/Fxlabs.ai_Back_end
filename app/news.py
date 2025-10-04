@@ -7,6 +7,7 @@ from typing import Dict, List, Optional, Set
 
 import aiohttp
 import logging
+import builtins
 
 from .config import (
     JBLANKED_API_KEY,
@@ -21,6 +22,7 @@ from .config import (
 from .models import NewsAnalysis, NewsItem
 from .email_service import email_service
 from .alert_logging import log_debug, log_info, log_error
+from .config import NEWS_VERBOSE_LOGS
 
 
 def _get_field(item: dict, keys: List[str]):
@@ -114,6 +116,17 @@ news_cache_metadata: Dict[str, any] = {
 
 # Local logger for this module
 logger = logging.getLogger(__name__)
+
+
+def _vprint(*args, **kwargs) -> None:
+    if NEWS_VERBOSE_LOGS:
+        try:
+            builtins.print(*args, **kwargs)
+        except Exception:
+            pass
+
+# Gate all module-level prints behind NEWS_VERBOSE_LOGS
+print = _vprint  # type: ignore
 
 
 def _ensure_parent_dir(file_path: str) -> None:
@@ -383,22 +396,47 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
     print(f"🔎 [analyze] Start analysis for: '{(news_item.headline or '')[:60]}'")
     # Ask Perplexity to respond with a strict JSON payload to avoid ambiguous wording
     prompt = (
-        "Analyze the following economic news for Forex trading impact.\n"
-        f"Currency: {news_item.currency}\n"
-        f"News: {news_item.headline}\n"
-        f"Time: {news_item.time or 'N/A'}\n"
-        f"Forecast: {news_item.forecast or 'N/A'}\n"
-        f"Previous: {news_item.previous or 'N/A'}\n"
-        f"Source impact hint: {(news_item.impact or 'N/A')}\n\n"
-        "The data I provided you might not have the actual data if the event has not happened yet (will happen or be published in future)\n"
-        "Use live internet search to get latest data, validate and augment missing info the latest market context before answering.\n"
-        "Respond ONLY with a JSON object using this exact schema (no extra text):\n"
+        "You are a Forex macro event classifier used BEFORE an economic release. Output exactly:\n"
         "{\n"
         "  \"effect\": \"bullish|bearish|neutral\",\n"
         "  \"impact\": \"high|medium|low\",\n"
         "  \"explanation\": \"<max 2 sentences>\"\n"
         "}\n"
-        "Rules: values for effect/impact must be lowercase and one of the allowed options."
+        "Constraints:\n"
+        "- Lowercase enums only.\n"
+        "- No extra fields or text.\n\n"
+        "INPUT\n"
+        f"Currency: {news_item.currency}\n"
+        f"News: {news_item.headline}\n"
+        f"Time: {news_item.time or 'N/A'}\n"
+        f"Forecast: {news_item.forecast or 'N/A'}\n"
+        f"Previous: {news_item.previous or 'N/A'}\n"
+        f"Source impact hint: {news_item.impact or 'N/A'}\n\n"
+        "A) IMPACT (magnitude tier, not direction)\n"
+        "1) If Source impact hint ∈ {High, Medium, Low}, mirror it (lowercased) UNLESS it contradicts the taxonomy below by >1 tier; in that case, prefer the taxonomy.\n"
+        "2) Taxonomy by EVENT FAMILY (based on what historically moves FX):\n"
+        "   TIER-1 (default \"high\"):\n"
+        "   - CPI (headline/core), PCE (US), central-bank rate decisions/statements/pressers/minutes, major labor (NFP/Employment Change, Unemployment Rate, Average/Hourly Earnings), GDP “advance/flash”, ISM PMIs (US), Flash PMIs (EZ/UK), Retail Sales (US/UK/CA headline; US control group). \n"
+        "   TIER-2 (default \"medium\"):\n"
+        "   - PPI, GDP “second/final”, Retail Sales ex-autos (non-US), durable goods (ex-transport), trade balance, housing starts/building permits, consumer/business confidence, final PMIs.\n"
+        "   TIER-3 (default \"low\"):\n"
+        "   - Regional/small surveys, auctions, secondary indices with limited FX pass-through.\n"
+        "3) Currency-bloc adjustment:\n"
+        "   - For G10 (USD, EUR, JPY, GBP, AUD, NZD, CAD, CHF, SEK, NOK): keep tiers as above.\n"
+        "   - For non-G10/minor economies: downgrade one tier unless the pair is commonly traded against USD/EUR and the event is TIER-1.\n"
+        "4) Do NOT upgrade events due to hype or proximity in time. Color codes (e.g., red/orange/yellow) mean high/medium/low respectively; they are a hint, not an override.\n\n"
+        "(Background: Central-bank policy and interest rates are primary FX drivers; inflation (CPI/PCE), labor, GDP, ISM/PMIs, and retail sales are consistently among the most market-moving indicators. See standard FX education sources.) \n\n"
+        "B) EFFECT (directional bias for the LISTED currency, pre-release)\n"
+        "5) You are PRE-RELEASE. Do NOT guess the actual number. Instead, infer *bias* from consensus vs. prior, policy reaction function, and whether the economy is above/below inflation target or growth trend:\n"
+        "   - Inflation-sensitive: If forecast > previous (or above target) and the central bank is vigilant/tightening-biased → effect=\"bullish\". If forecast < previous (disinflation) and easing/neutral bias → effect=\"bearish\".\n"
+        "   - Labor: Stronger jobs/wages vs forecast trend → \"bullish\"; weaker → \"bearish\".\n"
+        "   - Growth (GDP/PMIs/Retail Sales): Stronger vs recent trend/consensus → \"bullish\"; weaker → \"bearish\".\n"
+        "   - Central bank meetings: Expected hawkish shift (tightening/upgrade to inflation/growth/rates path) → \"bullish\"; dovish shift → \"bearish\".\n"
+        "6) If the consensus and recent trend are genuinely mixed/flat (no clear skew), set effect=\"neutral\".\n"
+        "7) Direction is for the listed currency (not the pair). Do NOT flip signs for quote/base logic.\n\n"
+        "C) DATA HYGIENE (pre-release)\n"
+        "8) You may look up consensus/central-bank stance from reliable calendars or official sources. Do NOT treat previews as actuals.\n"
+        "9) EXPLANATION ≤2 sentences: (i) why the impact tier (taxonomy or source hint), (ii) why the bias (forecast/trend/policy stance). No filler words.\n"
     )
     url = "https://api.perplexity.ai/chat/completions"
     headers = {
@@ -533,15 +571,18 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                         explanation = None
 
                         parsed = _extract_json_block(analysis_text)
+                        got_effect_from_json = False
                         if parsed and isinstance(parsed, dict):
-                            effect = _normalize_effect(parsed.get("effect"))
+                            eff_raw = parsed.get("effect")
+                            if eff_raw is not None:
+                                effect = _normalize_effect(eff_raw)
+                                got_effect_from_json = True
                             impact_value = _normalize_impact(parsed.get("impact"))
                             explanation = parsed.get("explanation")
 
-                        if impact_value is None or effect == "neutral":
-                            # Fallback: regex extraction from free text
-                            lt = analysis_text.lower()
-                            # Effect
+                        # Fallback: only when field missing from JSON or JSON absent
+                        lt = analysis_text.lower()
+                        if not got_effect_from_json:
                             m_eff = re.search(r"effect\s*[:\-]\s*\"?([a-z]+)\"?", lt)
                             if m_eff:
                                 effect = _normalize_effect(m_eff.group(1)) or effect
@@ -551,12 +592,12 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                                 elif "bearish" in lt:
                                     effect = "bearish"
 
-                            # Impact
+                        # Impact fallback independent of effect neutrality
+                        if impact_value is None:
                             m_imp = re.search(r"impact\s*[:\-]\s*\"?([a-z ]+)\"?", lt)
                             if m_imp:
                                 impact_value = _normalize_impact(m_imp.group(1)) or impact_value
                             if impact_value is None:
-                                # synonym sweep
                                 if any(w in lt for w in [
                                     "high impact", "significant", "strong impact", "highly volatile",
                                     "highly impactful", "very high", "major", "substantial"
@@ -801,10 +842,10 @@ async def news_scheduler():
             if news_cache_metadata["next_update_time"] is None or current_time >= news_cache_metadata["next_update_time"]:
                 print("⏰ [scheduler] Triggering update_news_cache()")
                 await update_news_cache()
-            await asyncio.sleep(3600)
+            await asyncio.sleep(1800)
         except Exception as e:
             print(f"❌ [scheduler] Error in news scheduler: {e}")
-            await asyncio.sleep(3600)
+            await asyncio.sleep(1800)
 
 
 # ----------------------- News Reminder (5-minute) -----------------------
@@ -957,7 +998,6 @@ async def _fetch_all_user_emails() -> List[str]:
         timeout = aiohttp.ClientTimeout(connect=3, sock_read=7, total=10)
         tables = [
             "rsi_tracker_alerts",
-            "rsi_correlation_tracker_alerts",
             "heatmap_tracker_alerts",
             "heatmap_indicator_tracker_alerts",
         ]
@@ -1144,5 +1184,3 @@ async def news_reminder_scheduler():
         except Exception as e:
             log_error(logger, "news_reminder_scheduler_error", error=str(e))
         await asyncio.sleep(60)
-
-

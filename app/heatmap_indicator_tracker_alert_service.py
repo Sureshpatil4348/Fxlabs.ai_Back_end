@@ -1,16 +1,17 @@
 import asyncio
 import os
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 import logging
-import aiohttp
 
 from .logging_config import configure_logging
 from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
+from .rsi_utils import calculate_rsi_series, closed_closes
+from .indicator_cache import indicator_cache
 
 
 configure_logging()
@@ -42,7 +43,8 @@ class HeatmapIndicatorTrackerAlertService:
 
     async def check_heatmap_indicator_tracker_alerts(self) -> List[Dict[str, Any]]:
         try:
-            all_alerts = await alert_cache.get_all_alerts()
+            # Event-driven paths should not force cache refresh; use snapshot to avoid blocking
+            all_alerts = await alert_cache.get_all_alerts_snapshot()
             triggers: List[Dict[str, Any]] = []
 
             for _uid, alerts in all_alerts.items():
@@ -59,6 +61,17 @@ class HeatmapIndicatorTrackerAlertService:
                     log_debug(
                         logger,
                         "alert_eval_start",
+                        alert_type="indicator_tracker",
+                        alert_id=alert_id,
+                        user_email=user_email,
+                        timeframe=timeframe,
+                        indicator=indicator,
+                        pairs=len(pairs),
+                    )
+                    # INFO-level concise config
+                    log_info(
+                        logger,
+                        "alert_eval_config",
                         alert_type="indicator_tracker",
                         alert_id=alert_id,
                         user_email=user_email,
@@ -143,15 +156,7 @@ class HeatmapIndicatorTrackerAlertService:
                             "triggered_at": datetime.now(timezone.utc).isoformat(),
                         }
                         triggers.append(payload)
-                        # Fire-and-forget DB trigger logs
-                        for item in per_alert_triggers:
-                            asyncio.create_task(self._log_trigger(
-                                alert_id=alert_id,
-                                symbol=item.get("symbol", ""),
-                                timeframe=item.get("timeframe", ""),
-                                indicator=item.get("indicator", ""),
-                                signal=item.get("trigger_condition", ""),
-                            ))
+                        # DB trigger logging removed per product decision
                         methods = alert.get("notification_methods") or ["email"]
                         if "email" in methods:
                             log_info(
@@ -183,85 +188,116 @@ class HeatmapIndicatorTrackerAlertService:
             logger.error(f"Error checking Indicator Tracker alerts: {e}")
             return []
 
-    async def _log_trigger(
-        self,
-        alert_id: str,
-        symbol: str,
-        timeframe: str,
-        indicator: str,
-        signal: str,
-    ) -> None:
-        if not self.supabase_url or not self.supabase_service_key:
-            return
-        try:
-            headers = {
-                "apikey": self.supabase_service_key,
-                "Authorization": f"Bearer {self.supabase_service_key}",
-                "Content-Type": "application/json",
-            }
-            url = f"{self.supabase_url}/rest/v1/heatmap_indicator_tracker_alert_triggers"
-            payload = {
-                "alert_id": alert_id,
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "indicator": indicator,
-                "signal": signal,
-                "triggered_at": datetime.now(timezone.utc).isoformat(),
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload) as resp:
-                    if resp.status not in (200, 201):
-                        txt = await resp.text()
-                        log_error(
-                            logger,
-                            "db_trigger_log_failed",
-                            status=resp.status,
-                            body=txt,
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            indicator=indicator,
-                            signal=signal,
-                        )
-                    else:
-                        log_info(
-                            logger,
-                            "db_trigger_logged",
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            indicator=indicator,
-                            signal=signal,
-                        )
-        except Exception as e:
-            log_error(
-                logger,
-                "db_trigger_log_error",
-                alert_id=alert_id,
-                symbol=symbol,
-                timeframe=timeframe,
-                indicator=indicator,
-                signal=signal,
-                error=str(e),
-            )
+    # DB trigger logging removed
 
     async def _compute_indicator_signal(self, symbol: str, timeframe: str, indicator: str) -> str:
+        """Compute indicator signal using cache-first reads over closed bars.
+
+        Supported:
+        - ema21/ema50/ema200: cross of close vs EMA -> buy/sell; otherwise neutral (cache)
+        - macd: cross of MACD vs signal with zero-line agreement -> buy/sell; otherwise neutral (cache)
+        - rsi: crossing of RSI(14) vs 50 -> buy/sell; otherwise neutral (cache with warm-up fallback)
+        Unknown indicators return neutral.
+        """
         try:
-            # Placeholder rules; plug in real computations as needed
-            if indicator in ("ema21", "ema50", "ema200"):
-                # Simplified: flip to buy or sell randomly per call (deterministic seed)
-                import random
-                seed = sum(ord(c) for c in (symbol + timeframe + indicator)) % 1000
-                random.seed(seed)
-                return random.choice(["neutral", "buy", "sell"])
-            if indicator == "macd":
-                return "buy"
-            if indicator == "rsi":
-                return "sell"
-            if indicator == "utbot":
+            from .models import Timeframe as TF
+            from .mt5_utils import get_ohlc_data
+
+            # K=3 closed-bar lookback window for newness/cross checks
+            K = 3
+
+            tf_map = {
+                "5M": TF.M5,
+                "15M": TF.M15,
+                "30M": TF.M30,
+                "1H": TF.H1,
+                "4H": TF.H4,
+                "1D": TF.D1,
+                "1W": TF.W1,
+            }
+            mtf = tf_map.get(timeframe)
+            if not mtf:
                 return "neutral"
-            if indicator == "ichimokuclone":
-                return "buy"
+
+            ind = (indicator or "").lower()
+
+            # Fetch recent closed OHLC to align time-based series from cache
+            bars = get_ohlc_data(symbol, mtf, 300)
+            if not bars:
+                return "neutral"
+            closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
+            if len(closed_bars) < 5:
+                return "neutral"
+            closes = [float(b.close) for b in closed_bars]
+            ts_to_close: Dict[int, float] = {int(b.time): float(b.close) for b in closed_bars}
+
+            # EMA family via cache
+            if ind in ("ema21", "ema50", "ema200"):
+                try:
+                    p = int(ind.replace("ema", ""))
+                except Exception:
+                    return "neutral"
+                if p < 2:
+                    return "neutral"
+                ema_recent = await indicator_cache.get_recent_ema(symbol, timeframe, p, K + 3)
+                if not ema_recent or len(ema_recent) < 2:
+                    return "neutral"
+                # Align EMA to closes by timestamp
+                aligned: List[Tuple[int, float, float]] = []  # (ts, close, ema)
+                for ts, ev in ema_recent:
+                    c = ts_to_close.get(int(ts))
+                    if c is not None:
+                        aligned.append((int(ts), float(c), float(ev)))
+                if len(aligned) < 2:
+                    return "neutral"
+                _, c_prev, e_prev = aligned[-2]
+                _, c_curr, e_curr = aligned[-1]
+                if c_prev <= e_prev and c_curr > e_curr:
+                    return "buy"
+                if c_prev >= e_prev and c_curr < e_curr:
+                    return "sell"
+                return "neutral"
+
+            # MACD via cache (12,26,9); return only on fresh cross (prev->curr)
+            if ind == "macd":
+                macd_recent = await indicator_cache.get_recent_macd(symbol, timeframe, 12, 26, 9, K + 3)
+                if not macd_recent or len(macd_recent) < 2:
+                    return "neutral"
+                _, m_prev, s_prev, _ = macd_recent[-2]
+                _, m_curr, s_curr, _ = macd_recent[-1]
+                # Require zero-line agreement like Heatmap scoring
+                if m_prev <= s_prev and m_curr > s_curr and m_curr > 0:
+                    return "buy"
+                if m_prev >= s_prev and m_curr < s_curr and m_curr < 0:
+                    return "sell"
+                return "neutral"
+
+            # RSI via cache (14); warm-up fallback compute from closed OHLC if needed
+            if ind == "rsi":
+                rsi_recent = await indicator_cache.get_recent_rsi(symbol, timeframe, 14, K + 2)
+                if (not rsi_recent) or len(rsi_recent) < 2:
+                    # Fallback: compute latest RSI from closed bars, cache it, then evaluate
+                    try:
+                        closes_closed = closed_closes(closed_bars)  # type: ignore[arg-type]
+                        rsis = calculate_rsi_series(closes_closed, 14)
+                        if rsis and len(rsis) >= 2:
+                            # Update cache with last value to converge ring quickly
+                            last_ts = int(closed_bars[-1].time)
+                            await indicator_cache.update_rsi(symbol, timeframe, 14, float(rsis[-1]), ts_ms=last_ts)
+                            rsi_recent = [(last_ts - 1, float(rsis[-2])), (last_ts, float(rsis[-1]))]
+                    except Exception:
+                        return "neutral"
+                if not rsi_recent or len(rsi_recent) < 2:
+                    return "neutral"
+                r_prev = float(rsi_recent[-2][1])
+                r_curr = float(rsi_recent[-1][1])
+                if r_prev <= 50.0 and r_curr > 50.0:
+                    return "buy"
+                if r_prev >= 50.0 and r_curr < 50.0:
+                    return "sell"
+                return "neutral"
+
+            # Unknown indicator
             return "neutral"
         except Exception:
             return "neutral"
@@ -279,4 +315,3 @@ class HeatmapIndicatorTrackerAlertService:
 
 
 heatmap_indicator_tracker_alert_service = HeatmapIndicatorTrackerAlertService()
-

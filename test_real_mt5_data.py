@@ -15,6 +15,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), 'app'))
 
 from app.email_service import EmailService
 from app.models import Timeframe
+from app.rsi_utils import calculate_rsi_latest, closed_closes
 
 # Try to import MT5 - required for this test
 try:
@@ -51,29 +52,7 @@ class RealMT5DataTester:
     
     def calculate_real_rsi(self, closes: List[float], period: int = 14) -> Optional[float]:
         """Calculate real RSI from OHLC data"""
-        if len(closes) < period + 1:
-            return None
-        
-        gains = 0
-        losses = 0
-        
-        for i in range(1, period + 1):
-            change = closes[i] - closes[i - 1]
-            if change > 0:
-                gains += change
-            else:
-                losses -= change
-        
-        avg_gain = gains / period
-        avg_loss = losses / period
-        
-        if avg_loss == 0:
-            return 100
-        
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        return rsi
+        return calculate_rsi_latest(closes, period)
     
     def get_real_market_data(self, symbol: str, timeframe: Timeframe) -> Optional[Dict[str, Any]]:
         """Get real market data from MT5 using existing project integration"""
@@ -93,7 +72,7 @@ class RealMT5DataTester:
             tick_data = mt5.symbol_info_tick(symbol)
             
             # Extract closes for RSI calculation
-            closes = [bar.close for bar in ohlc_data]
+            closes = closed_closes(ohlc_data)
             
             # Calculate real RSI
             rsi_value = self.calculate_real_rsi(closes)

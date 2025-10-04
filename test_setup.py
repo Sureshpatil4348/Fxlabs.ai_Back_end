@@ -135,7 +135,7 @@ def main():
     print("\nNext steps:")
     print("1. Start the server: python server.py")
     print("2. Test the API: http://127.0.0.1:8000/health")
-    print("3. Test WebSocket: ws://127.0.0.1:8000/ws/ticks")
+    print("3. Test WebSocket (v2): ws://127.0.0.1:8000/market-v2")
     
     return True
 

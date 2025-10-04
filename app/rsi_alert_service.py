@@ -11,6 +11,7 @@ from .alert_logging import log_debug, log_info, log_warning, log_error
 from .email_service import email_service
 from .alert_cache import alert_cache
 from .concurrency import pair_locks
+from .rsi_utils import calculate_rsi_latest, calculate_rsi_series, closed_closes
 
 # Configure logging with timestamps
 configure_logging()
@@ -100,7 +101,8 @@ class RSIAlertService:
                         # Gather config snapshot for structured start log
                         pairs_cfg = alert.get("pairs", []) or []
                         timeframes_cfg = alert.get("timeframes", ["1H"]) or ["1H"]
-                        rsi_period_cfg = alert.get("rsi_period", 14)
+                        # Enforce RSI period = 14 globally
+                        rsi_period_cfg = 14
                         rsi_ob_cfg = alert.get("rsi_overbought_threshold", 70)
                         rsi_os_cfg = alert.get("rsi_oversold_threshold", 30)
                         conditions_cfg = alert.get("alert_conditions", []) or []
@@ -189,8 +191,8 @@ class RSIAlertService:
             timeframes = alert.get("timeframes", ["1H"])
             alert_conditions = alert.get("alert_conditions", [])
             
-            # RSI settings
-            rsi_period = alert.get("rsi_period", 14)
+            # RSI settings (enforced to 14)
+            rsi_period = 14
             rsi_overbought = alert.get("rsi_overbought_threshold", 70)
             rsi_oversold = alert.get("rsi_oversold_threshold", 30)
             
@@ -500,11 +502,10 @@ class RSIAlertService:
             if not mt5_timeframe:
                 return None
             ohlc_data = get_ohlc_data(symbol, mt5_timeframe, period + 10)
-            if not ohlc_data or len(ohlc_data) < period + 1:
+            closed = closed_closes(ohlc_data)
+            if len(closed) < period + 1:
                 return None
-            closes = [bar.close for bar in ohlc_data]
-            rsi_value = self._calculate_rsi_from_closes(closes, period)
-            return rsi_value
+            return calculate_rsi_latest(closed, period)
         except Exception as e:
             log_error(
                 logger,
@@ -534,34 +535,6 @@ class RSIAlertService:
         # Allowed -> update last
         self._pair_cooldowns[key] = now
         return True
-    
-    def _calculate_rsi_from_closes(self, closes: List[float], period: int = 14) -> Optional[float]:
-        """Calculate RSI from a list of close prices"""
-        if len(closes) < period + 1:
-            return None
-        
-        gains = 0
-        losses = 0
-        
-        for i in range(1, period + 1):
-            change = closes[i] - closes[i - 1]
-            if change > 0:
-                gains += change
-            else:
-                losses -= change
-        
-        avg_gain = gains / period
-        avg_loss = losses / period
-        
-        if avg_loss == 0:
-            return 100
-        
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        return rsi
-    
-    # RFI helpers removed (stick to core RSI spec)
     
     def _calculate_price_change_percent(self, market_data: Dict[str, Any]) -> float:
         """Calculate price change percentage"""
@@ -645,17 +618,7 @@ class RSIAlertService:
                 logger.warning(f"   Alert: {alert_name} (ID: {alert_id})")
                 # Email diagnostics removed per spec
             
-            # Log the trigger in database
-            logger.info(f"📝 Logging RSI alert trigger to database...")
-            await self._log_rsi_alert_trigger(trigger_data)
-            logger.info(f"✅ RSI alert trigger logged to database")
-            log_info(
-                logger,
-                "db_trigger_logged",
-                alert_type="rsi",
-                alert_id=alert_id,
-                pairs=len(triggered_pairs),
-            )
+            # DB trigger logging removed per product decision
             
         except Exception as e:
             log_error(
@@ -664,64 +627,7 @@ class RSIAlertService:
                 error=str(e),
             )
     
-    async def _log_rsi_alert_trigger(self, trigger_data: Dict[str, Any]):
-        """Log RSI alert trigger to database"""
-        
-        try:
-            if not self.supabase_service_key:
-                logger.warning("Supabase service key not configured, skipping trigger logging")
-                return
-            
-            headers = {
-                "apikey": self.supabase_service_key,
-                "Authorization": f"Bearer {self.supabase_service_key}",
-                "Content-Type": "application/json"
-            }
-            
-            url = f"{self.supabase_url}/rest/v1/rsi_alert_triggers"
-            
-            # Log each triggered pair
-            for pair_data in trigger_data.get("triggered_pairs", []):
-                trigger_record = {
-                    "alert_id": trigger_data.get("alert_id"),
-                    "trigger_condition": pair_data.get("trigger_condition"),
-                    "symbol": pair_data.get("symbol"),
-                    "timeframe": pair_data.get("timeframe"),
-                    "rsi_value": pair_data.get("rsi_value"),
-                    "current_price": pair_data.get("current_price"),
-                    "price_change_percent": pair_data.get("price_change_percent"),
-                    "triggered_at": datetime.now(timezone.utc).isoformat()
-                }
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(url, headers=headers, json=trigger_record) as response:
-                        if response.status not in [200, 201]:
-                            log_error(
-                                logger,
-                                "db_trigger_log_failed",
-                                status=response.status,
-                                alert_type="rsi",
-                                alert_id=trigger_data.get("alert_id"),
-                                symbol=pair_data.get("symbol"),
-                                timeframe=pair_data.get("timeframe"),
-                            )
-                        else:
-                            log_info(
-                                logger,
-                                "db_trigger_logged",
-                                alert_type="rsi",
-                                alert_id=trigger_data.get("alert_id"),
-                                symbol=pair_data.get("symbol"),
-                                timeframe=pair_data.get("timeframe"),
-                            )
-            
-        except Exception as e:
-            log_error(
-                logger,
-                "db_trigger_log_error",
-                alert_type="rsi",
-                error=str(e),
-            )
+    # DB trigger logging removed
 
     async def _get_last_closed_bar_ts(self, symbol: str, timeframe: str) -> Optional[int]:
         """Return timestamp (ms) of the last closed bar using MT5 OHLC data; None if unavailable."""
@@ -740,10 +646,11 @@ class RSIAlertService:
             mt5_tf = tf_map.get(timeframe)
             if not mt5_tf:
                 return None
-            bars = get_ohlc_data(symbol, mt5_tf, 2)
-            if not bars:
-                return None
-            return int(bars[-1].time)
+            bars = get_ohlc_data(symbol, mt5_tf, 3)
+            for bar in reversed(bars):
+                if getattr(bar, "is_closed", None) is not False:
+                    return int(bar.time)
+            return None
         except Exception as e:
             logger.debug(f"Bar-close ts unavailable for {symbol} {timeframe}: {e}")
             return None
@@ -816,10 +723,10 @@ class RSIAlertService:
 
             count = max(period + bars_needed + 2, period + 5)
             ohlc_data = get_ohlc_data(symbol, mt5_timeframe, count)
-            if not ohlc_data or len(ohlc_data) < period + 1:
+            closed = closed_closes(ohlc_data)
+            if len(closed) < period + 1:
                 return None
-            closes = [bar.close for bar in ohlc_data]
-            series = self._calculate_rsi_series(closes, period)
+            series = calculate_rsi_series(closed, period)
             if not series:
                 return None
             return series[-bars_needed:] if len(series) >= bars_needed else series
@@ -827,36 +734,6 @@ class RSIAlertService:
             logger.debug(f"RSI series unavailable for {symbol} {timeframe}: {e}")
             return None
 
-    def _calculate_rsi_series(self, closes: List[float], period: int) -> List[float]:
-        """Return RSI series using Wilder's smoothing for each bar after warmup."""
-        n = len(closes)
-        if n < period + 1:
-            return []
-        deltas = [closes[i] - closes[i - 1] for i in range(1, n)]
-        gains = [max(d, 0.0) for d in deltas]
-        losses = [max(-d, 0.0) for d in deltas]
-
-        avg_gain = sum(gains[:period]) / period
-        avg_loss = sum(losses[:period]) / period
-
-        rsis: List[float] = []
-        if avg_loss == 0:
-            rsis.append(100.0)
-        else:
-            rs = avg_gain / avg_loss
-            rsis.append(100 - (100 / (1 + rs)))
-
-        for i in range(period, len(deltas)):
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-            if avg_loss == 0:
-                rsis.append(100.0)
-            else:
-                rs = avg_gain / avg_loss
-                rsis.append(100 - (100 / (1 + rs)))
-
-        return rsis
-    
     async def create_rsi_alert(self, alert_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Create a new RSI alert in Supabase"""
         
@@ -875,7 +752,8 @@ class RSIAlertService:
                 "user_email": alert_data.get("user_email"),
                 "pairs": alert_data.get("pairs", []),
                 "timeframes": alert_data.get("timeframes", ["1H"]),
-                "rsi_period": alert_data.get("rsi_period", 14),
+                # Force persisted period to 14
+                "rsi_period": 14,
                 "rsi_overbought_threshold": alert_data.get("rsi_overbought_threshold", 70),
                 "rsi_oversold_threshold": alert_data.get("rsi_oversold_threshold", 30),
                 "alert_conditions": alert_data.get("alert_conditions", []),

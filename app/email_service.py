@@ -32,19 +32,22 @@ import logging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, DAILY_TZ_NAME
+from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, DAILY_TZ_NAME, BYPASS_EMAIL_ALERTS
+from .tenancy import get_tenant_config
 from .alert_logging import log_debug, log_info, log_warning, log_error
+ 
 
 
 class EmailService:
     """SendGrid email service for sending heatmap alerts with cooldown mechanism"""
     
     def __init__(self):
-        # Load from environment-driven config
-        self.sendgrid_api_key = (SENDGRID_API_KEY or os.environ.get("SENDGRID_API_KEY", "")).strip()
-        # Prefer authenticated subdomain sender for DMARC alignment (example: alerts@alerts.fxlabs.ai)
-        self.from_email = (FROM_EMAIL or os.environ.get("FROM_EMAIL", "alerts@alerts.fxlabs.ai")).strip()
-        self.from_name = (FROM_NAME or os.environ.get("FROM_NAME", "FX Labs Alerts")).strip()
+        # Strictly tenant-scoped configuration (no global/env fallbacks)
+        ten = get_tenant_config()
+        self.tenant_name = ten.name
+        self.sendgrid_api_key = (SENDGRID_API_KEY or "").strip()
+        self.from_email = (FROM_EMAIL or "").strip()
+        self.from_name = (FROM_NAME or "").strip()
         # Tenant-aware timezone for all email timestamps (FXLabs → IST by default)
         self.tz_name = (DAILY_TZ_NAME or "Asia/Kolkata")
         # Unsubscribe feature removed per spec
@@ -70,7 +73,7 @@ class EmailService:
             if not SendGridAPIClient:
                 logger.warning("⚠️ SendGrid library not installed. Email sending is disabled.")
             elif not self.sendgrid_api_key:
-                logger.warning("⚠️ SENDGRID_API_KEY not configured. Email sending is disabled.")
+                logger.warning("⚠️ Tenant email credentials missing (API key). Email sending is disabled.")
             # Provide comprehensive diagnostics on what's missing/misaligned
             self._log_config_diagnostics(context="startup")
 
@@ -420,31 +423,7 @@ class EmailService:
             lines.append(f"- {sym} [{tf}]: {signal} {strength}%")
         return "\n".join(lines)
 
-    def _build_plain_text_corr(
-        self,
-        alert_name: str,
-        mode: str,
-        pairs: List[Dict[str, Any]],
-        cfg: Dict[str, Any],
-    ) -> str:
-        lines = [
-            f"Correlation Alert - {alert_name}",
-            f"Mode: {mode}",
-            f"Pairs: {len(pairs)}",
-        ]
-        for p in pairs:
-            s1 = self._pair_display(p.get("symbol1", "?"))
-            s2 = self._pair_display(p.get("symbol2", "?"))
-            tf = p.get("timeframe", "?")
-            cond = p.get("trigger_condition", "?")
-            if mode == "rsi_threshold":
-                r1 = p.get("rsi1", p.get("rsi1_value", "?"))
-                r2 = p.get("rsi2", p.get("rsi2_value", "?"))
-                lines.append(f"- {s1} vs {s2} [{tf}]: {cond} RSI1 {r1} RSI2 {r2}")
-            else:
-                corr = p.get("correlation_value", "?")
-                lines.append(f"- {s1} vs {s2} [{tf}]: {cond} Corr {corr}")
-        return "\n".join(lines)
+    # Correlation plain text builder removed
 
     def _safe_float_conversion(self, value: Any) -> Optional[float]:
         """Safely convert value to float with fallback for unparsable values"""
@@ -556,6 +535,16 @@ class EmailService:
         api_key = self.sendgrid_api_key or ""
         from_email = self.from_email or ""
         from_name = self.from_name or ""
+        # Determine expected tenant-specific variable names
+        ten = getattr(self, "tenant_name", "") or get_tenant_config().name
+        if ten == "FXLabs":
+            exp_key, exp_from_email, exp_from_name = (
+                "FXLABS_SENDGRID_API_KEY", "FXLABS_FROM_EMAIL", "FXLABS_FROM_NAME"
+            )
+        else:
+            exp_key, exp_from_email, exp_from_name = (
+                "HEXTECH_SENDGRID_API_KEY", "HEXTECH_FROM_EMAIL", "HEXTECH_FROM_NAME"
+            )
 
         # Library presence
         if not sg_lib:
@@ -563,19 +552,19 @@ class EmailService:
 
         # API key checks
         if not api_key:
-            issues.append("SENDGRID_API_KEY missing (set in environment or .env)")
+            issues.append(f"Tenant API key missing (set {exp_key})")
         elif not api_key.startswith("SG."):
             issues.append('SENDGRID_API_KEY does not look like a SendGrid key (expected to start with "SG.")')
 
         # From email checks
         if not from_email:
-            issues.append("FROM_EMAIL missing")
+            issues.append(f"FROM_EMAIL missing (set {exp_from_email})")
         elif not self._looks_like_email(from_email):
             issues.append("FROM_EMAIL invalid format")
 
         # From name checks
         if not from_name:
-            issues.append("FROM_NAME missing (optional but recommended)")
+            issues.append(f"FROM_NAME missing (set {exp_from_name})")
 
         configured = self.sg is not None
         return {
@@ -622,9 +611,78 @@ class EmailService:
             "   Values (masked): SENDGRID_API_KEY=%s, FROM_EMAIL=%s, FROM_NAME=%s",
             vals.get("SENDGRID_API_KEY", ""), vals.get("FROM_EMAIL", ""), vals.get("FROM_NAME", ""),
         )
-        logger.warning(
-            "   Hint: copy config.env.example to .env and fill SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME; python-dotenv auto-loads .env"
-        )
+    
+    def _log_sendgrid_exception(self, context: str, error: Exception, to_email: Optional[str] = None) -> None:
+        """Log structured details for SendGrid HTTP errors without leaking secrets."""
+        try:
+            # Try to import sendgrid's HTTPError for richer details
+            from python_http_client.exceptions import HTTPError  # type: ignore
+        except Exception:
+            HTTPError = tuple()  # fallback to never matching
+
+        status = getattr(error, "status_code", None)
+        body = getattr(error, "body", None)
+        headers = getattr(error, "headers", None)
+
+        # If the exception provides a dict view, include masked summary
+        details: Dict[str, Any] = {}
+        try:
+            to_dict = getattr(error, "to_dict", None)
+            if callable(to_dict):
+                details = to_dict()
+        except Exception:
+            pass
+
+        try:
+            masked_key = self._mask(self.sendgrid_api_key)
+            logger.error("   SendGrid diagnostics → status=%s, from=%s, to=%s, key=%s", status, self.from_email, (to_email or ""), masked_key)
+        except Exception:
+            pass
+
+        # Log response body (trimmed)
+        try:
+            if body:
+                if isinstance(body, (bytes, bytearray)):
+                    preview = body[:512].decode(errors="ignore")
+                else:
+                    preview = str(body)[:512]
+                logger.error("   SendGrid response body (trimmed): %s", preview)
+        except Exception:
+            pass
+
+        # Heuristics for common 403 causes
+        try:
+            hint = None
+            text = ""
+            if body:
+                text = body.decode(errors="ignore") if isinstance(body, (bytes, bytearray)) else str(body)
+            if (status == 403) or ("403" in str(error)):
+                if "verified Sender Identity" in text or "from address does not match" in text:
+                    hint = f"From address is not a verified Sender Identity in SendGrid. Current FROM_EMAIL={self.from_email}. Verify Single Sender or authenticate domain."
+                elif "not have permission" in text or "not authorized" in text:
+                    hint = "API key likely missing 'Mail Send' permission. Regenerate with 'Full Access' or at least 'Mail Send'."
+                elif "ip" in text and "access" in text:
+                    hint = "IP Access Management may be enabled. Whitelist the server IP in SendGrid (Settings → IP Access Management)."
+            if hint:
+                logger.error("   Hint: %s", hint)
+        except Exception:
+            pass
+        try:
+            ten = getattr(self, "tenant_name", "") or get_tenant_config().name
+            if ten == "FXLabs":
+                exp_key, exp_from_email, exp_from_name = (
+                    "FXLABS_SENDGRID_API_KEY", "FXLABS_FROM_EMAIL", "FXLABS_FROM_NAME"
+                )
+            else:
+                exp_key, exp_from_email, exp_from_name = (
+                    "HEXTECH_SENDGRID_API_KEY", "HEXTECH_FROM_EMAIL", "HEXTECH_FROM_NAME"
+                )
+            logger.warning(
+                "   Hint: configure tenant-specific email credentials (%s, %s, %s). No global defaults are used.",
+                exp_key, exp_from_email, exp_from_name,
+            )
+        except Exception:
+            pass
     
     def _update_alert_cooldown(self, alert_hash: str, triggered_pairs: List[Dict[str, Any]] = None):
         """Update the last sent timestamp and values for an alert"""
@@ -657,6 +715,11 @@ class EmailService:
         alert_config: Dict[str, Any]
     ) -> bool:
         """Send heatmap alert email to user with cooldown protection"""
+        
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Heatmap alert for {user_email} ({alert_name}) would have been sent")
+            return True
         
         if not self.sg:
             self._log_config_diagnostics(context="heatmap alert email")
@@ -702,10 +765,19 @@ class EmailService:
                 return True
             else:
                 logger.error(f"❌ Failed to send email: status={response.status_code}")
+                try:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+                except Exception:
+                    pass
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Error sending heatmap alert email: {e}")
+            self._log_sendgrid_exception(context="heatmap", error=e, to_email=user_email)
             return False
 
     async def send_heatmap_tracker_alert(
@@ -716,6 +788,11 @@ class EmailService:
         alert_config: Dict[str, Any]
     ) -> bool:
         """Send Heatmap/Quantum Tracker (Probability Signal) email using simplified template."""
+
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Heatmap tracker alert for {user_email} ({alert_name}) would have been sent")
+            return True
 
         if not self.sg:
             self._log_config_diagnostics(context="heatmap tracker alert email")
@@ -750,9 +827,18 @@ class EmailService:
                 return True
             else:
                 logger.error(f"❌ Failed to send heatmap tracker alert email: status={response.status_code}")
+                try:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+                except Exception:
+                    pass
                 return False
         except Exception as e:
             logger.error(f"❌ Error sending heatmap tracker alert email: {e}")
+            self._log_sendgrid_exception(context="heatmap-tracker", error=e, to_email=user_email)
             return False
     
     def _build_heatmap_alert_email_body(
@@ -944,6 +1030,11 @@ class EmailService:
     async def send_test_email(self, user_email: str) -> bool:
         """Send a test email to verify email service is working"""
         
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Test email for {user_email} would have been sent")
+            return True
+        
         if not self.sg:
             logger.warning("SendGrid not configured, cannot send test email")
             return False
@@ -1013,6 +1104,11 @@ class EmailService:
         logger.info(f"   Alert: {alert_name}")
         logger.info(f"   Triggered pairs: {len(triggered_pairs)}")
         
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - RSI alert for {user_email} ({alert_name}) would have been sent")
+            return True
+        
         if not self.sg:
             self._log_config_diagnostics(context="RSI alert email")
             return False
@@ -1059,6 +1155,16 @@ class EmailService:
             response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
             
             logger.info(f"📊 SendGrid response: Status {response.status_code}")
+            try:
+                # Log error body for non-2xx responses
+                if response.status_code not in [200, 201, 202]:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+            except Exception:
+                pass
             
             if response.status_code in [200, 201, 202]:
                 logger.info(f"✅ RSI alert email sent successfully to {user_email}")
@@ -1080,6 +1186,7 @@ class EmailService:
             logger.error(f"❌ Error sending RSI alert email: {e}")
             logger.error(f"   User: {user_email}")
             logger.error(f"   Alert: {alert_name}")
+            self._log_sendgrid_exception(context="rsi", error=e, to_email=user_email)
             return False
 
     async def send_custom_indicator_alert(
@@ -1090,6 +1197,11 @@ class EmailService:
         alert_config: Dict[str, Any]
     ) -> bool:
         """Send Custom Indicator alert email (flip to BUY/SELL) using compact template."""
+
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Custom indicator alert for {user_email} ({alert_name}) would have been sent")
+            return True
 
         if not self.sg:
             self._log_config_diagnostics(context="custom indicator alert email")
@@ -1123,9 +1235,18 @@ class EmailService:
                 return True
             else:
                 logger.error(f"❌ Failed to send custom indicator alert email: status={response.status_code}")
+                try:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+                except Exception:
+                    pass
                 return False
         except Exception as e:
             logger.error(f"❌ Error sending custom indicator alert email: {e}")
+            self._log_sendgrid_exception(context="custom-indicator", error=e, to_email=user_email)
             return False
     
     def _build_rsi_alert_email_body(
@@ -1261,6 +1382,11 @@ class EmailService:
     ) -> bool:
         """Send RSI correlation alert email to user with cooldown protection"""
         
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - RSI correlation alert for {user_email} ({alert_name}) would have been sent")
+            return True
+        
         if not self.sg:
             self._log_config_diagnostics(context="RSI correlation alert email")
             return False
@@ -1305,10 +1431,19 @@ class EmailService:
                 return True
             else:
                 logger.error(f"❌ Failed to send RSI correlation alert email: status={response.status_code}")
+                try:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+                except Exception:
+                    pass
                 return False
                 
         except Exception as e:
             logger.error(f"❌ Error sending RSI correlation alert email: {e}")
+            self._log_sendgrid_exception(context="rsi-correlation", error=e, to_email=user_email)
             return False
     
     def _build_rsi_correlation_alert_email_body(
@@ -1346,7 +1481,7 @@ class EmailService:
                     rule = condition.replace("_", " ").title() if condition else "Correlation signal"
                 return expected, rule
 
-            lookback = alert_config.get("correlation_window", 50)
+            lookback = RSI_CORRELATION_WINDOW
             # Build one content block per triggered pair inside the container
             pair_blocks: List[str] = []
             for pair in triggered_pairs:
@@ -1383,7 +1518,7 @@ class EmailService:
 <!doctype html>
 <html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • Correlation Alert</title></head>
 <body style=\"margin:0;background:#F5F7FB;\">\n
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI Correlation', self.tz_name)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Actual Correlation Mismatch</td></tr>\n  {blocks_html}\n</table>\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI', self.tz_name)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">RSI Alert</td></tr>\n  {blocks_html}\n</table>\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
         """
 
@@ -1399,34 +1534,12 @@ class EmailService:
     ) -> str:
         return f"""
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FxLabs • News Reminder</title></head>
-<body style="margin:0;background:#F5F7FB;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FB;"><tr><td align="center" style="padding:24px 12px;">
-<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;">
-  <tr><td style="padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;">Starts in 5 Minutes</td></tr>
-  <tr><td style="padding:20px;">
-    <div style="font-size:16px;margin-bottom:6px;"><strong>{event_title}</strong></div>
-    <div style="font-size:13px;color:#374151;margin-bottom:12px;">
-      Time: {event_time_local} • Impact: <strong>{impact}</strong>
-    </div>
-    <table role="presentation" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;width:100%;">
-      <tr style="background:#F9FAFB;color:#6B7280;font-size:12px;">
-        <td style="padding:10px">Previous</td><td style="padding:10px">Forecast</td><td style="padding:10px">Expected</td><td style="padding:10px">Bias</td>
-      </tr>
-      <tr>
-        <td style="padding:10px;border-top:1px solid #E5E7EB;">{previous}</td>
-        <td style="padding:10px;border-top:1px solid #E5E7EB;">{forecast}</td>
-        <td style="padding:10px;border-top:1px solid #E5E7EB;">{expected}</td>
-        <td style="padding:10px;border-top:1px solid #E5E7EB;"><strong>{bias}</strong></td>
-      </tr>
-    </table>
-    <div style="margin-top:14px;padding:12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:10px;font-size:13px;">
-      Volatility risk. Consider spreads, slippage and cooldown windows.
-    </div>
-  </td></tr>
-  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>
-</table>
-</td></tr></table>
+<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • News Reminder</title></head>
+<body style=\"margin:0;background:#F5F7FB;\">\n
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('News', self.tz_name)}\n
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Starts in 5 Minutes</td></tr>\n  <tr><td style=\"padding:20px;\">\n    <div style=\"font-size:16px;margin-bottom:6px;\"><strong>{event_title}</strong></div>\n    <div style=\"font-size:13px;color:#374151;margin-bottom:12px;\">\n      Time: {event_time_local} • Impact: <strong>{impact}</strong>\n    </div>\n    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;width:100%;\">\n      <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">\n        <td style=\"padding:10px\">Previous</td><td style=\"padding:10px\">Forecast</td><td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">Bias</td>\n      </tr>\n      <tr>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{previous}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{forecast}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{expected}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\"><strong>{bias}</strong></td>\n      </tr>\n    </table>\n    <div style=\"margin-top:14px;padding:12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:10px;font-size:13px;\">\n      Volatility risk. Consider spreads, slippage and cooldown windows.\n    </div>\n  </td></tr>\n</table>\n
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n
+</td></tr></table>\n
 </body></html>
         """
 
@@ -1464,6 +1577,11 @@ class EmailService:
 
         No cooldown/rate-limit applies: this is a scheduled one-off per event.
         """
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - News reminder for {user_email} ({event_title}) would have been sent")
+            return True
+        
         if not self.sg:
             self._log_config_diagnostics(context="news reminder email")
             return False
@@ -1521,7 +1639,8 @@ class EmailService:
         # RSI threshold mode: use provided compact RSI correlation mismatch template with RSI correlation
         # One card per triggered pair
         if calculation_mode == "rsi_threshold":
-            rsi_len = alert_config.get("rsi_period", 14)
+            # Enforce RSI(14) for display
+            rsi_len = 14
             def expected_and_rule(pair: Dict[str, Any]) -> Tuple[str, str]:
                 condition = str(pair.get("trigger_condition", "")).strip()
                 ob = alert_config.get("rsi_overbought_threshold", 70)
@@ -1550,7 +1669,7 @@ class EmailService:
 
                 card = f"""
 <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
-  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">RSI Correlation Mismatch</td></tr>
+  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">RSI Alert</td></tr>
   <tr><td style=\"padding:20px;\">
     <div style=\"margin-bottom:12px;\"><strong>{pair_a}</strong> vs <strong>{pair_b}</strong> • RSI({rsi_len}) • TF: {timeframe}</div>
     <table role=\"presentation\" width=\"100%\" style=\"border:1px solid #E5E7EB;border-radius:10px\">
@@ -1574,9 +1693,9 @@ class EmailService:
 
             return f"""
 <!doctype html>
-<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • RSI Correlation Alert</title></head>
+<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs • RSI Alert</title></head>
 <body style=\"margin:0;background:#F5F7FB;\">\n
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI Correlation', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">Not financial advice. © FxLabs AI</td></tr>\n</table>\n</td></tr></table>
 </body></html>
             """
 
@@ -1680,6 +1799,11 @@ class EmailService:
         return "\n".join(lines)
 
     async def send_daily_brief(self, user_email: str, payload: Dict[str, Any]) -> bool:
+        # Check if email alerts are bypassed
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Daily brief for {user_email} would have been sent")
+            return True
+        
         if not self.sg:
             self._log_config_diagnostics(context="daily brief email")
             return False

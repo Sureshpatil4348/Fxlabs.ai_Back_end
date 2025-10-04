@@ -3,7 +3,6 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 
-import aiohttp
 import logging
 
 from .logging_config import configure_logging
@@ -12,6 +11,7 @@ from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
 from .constants import RSI_SUPPORTED_SYMBOLS
+from .indicator_cache import indicator_cache
 
 
 configure_logging()
@@ -28,7 +28,6 @@ class RSITrackerAlertService:
       present, fallback to env `RSI_TRACKER_DEFAULT_PAIRS` (comma-separated symbols).
     - Trigger on threshold crossings at closed candles with threshold-level re-arm per side.
     - Per (alert, symbol, timeframe, side) cooldown in minutes to avoid rapid repeats.
-    - Log triggers to Supabase `rsi_tracker_alert_triggers` and optionally email the user.
     """
 
     def __init__(self) -> None:
@@ -99,69 +98,27 @@ class RSITrackerAlertService:
             mt5_tf = tf_map.get(timeframe)
             if not mt5_tf:
                 return None
-            bars = get_ohlc_data(symbol, mt5_tf, 2)
-            if not bars:
-                return None
-            return int(bars[-1].time)
+            bars = get_ohlc_data(symbol, mt5_tf, 3)
+            for bar in reversed(bars):
+                if getattr(bar, "is_closed", None) is not False:
+                    return int(bar.time)
+            return None
         except Exception:
             return None
 
     async def _get_recent_rsi_series(self, symbol: str, timeframe: str, period: int, bars_needed: int) -> Optional[List[float]]:
+        """Fetch recent closed-bar RSI values from the indicator cache.
+
+        No on-the-fly recomputation; if cache is not warm, return None.
+        """
         try:
-            from .mt5_utils import get_ohlc_data
-            from .models import Timeframe as MT5Timeframe
-            tf_map = {
-                "5M": MT5Timeframe.M5,
-                "15M": MT5Timeframe.M15,
-                "30M": MT5Timeframe.M30,
-                "1H": MT5Timeframe.H1,
-                "4H": MT5Timeframe.H4,
-                "1D": MT5Timeframe.D1,
-                "1W": MT5Timeframe.W1,
-            }
-            mt5_tf = tf_map.get(timeframe)
-            if not mt5_tf:
+            # Read last N RSI points from cache; return values only in chronological order
+            recent = await indicator_cache.get_recent_rsi(symbol, timeframe, int(period), int(max(bars_needed, 1)))
+            if not recent:
                 return None
-            count = max(period + bars_needed + 2, period + 5)
-            ohlc_data = get_ohlc_data(symbol, mt5_tf, count)
-            if not ohlc_data or len(ohlc_data) < period + 1:
-                return None
-            closes = [bar.close for bar in ohlc_data]
-            series = self._calculate_rsi_series(closes, period)
-            if not series:
-                return None
-            return series[-bars_needed:] if len(series) >= bars_needed else series
+            return [float(v) for (_ts, v) in recent]
         except Exception:
             return None
-
-    def _calculate_rsi_series(self, closes: List[float], period: int) -> List[float]:
-        n = len(closes)
-        if n < period + 1:
-            return []
-        deltas = [closes[i] - closes[i - 1] for i in range(1, n)]
-        gains = [max(d, 0.0) for d in deltas]
-        losses = [max(-d, 0.0) for d in deltas]
-
-        avg_gain = sum(gains[:period]) / period
-        avg_loss = sum(losses[:period]) / period
-
-        rsis: List[float] = []
-        if avg_loss == 0:
-            rsis.append(100.0)
-        else:
-            rs = avg_gain / avg_loss
-            rsis.append(100 - (100 / (1 + rs)))
-
-        for i in range(period, len(deltas)):
-            avg_gain = (avg_gain * (period - 1) + gains[i]) / period
-            avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-            if avg_loss == 0:
-                rsis.append(100.0)
-            else:
-                rs = avg_gain / avg_loss
-                rsis.append(100 - (100 / (1 + rs)))
-
-        return rsis
 
     async def _detect_rsi_crossing(
         self,
@@ -328,59 +285,6 @@ class RSITrackerAlertService:
         # No fallback: require real MT5 data
         return None
 
-    async def _log_trigger(self, alert_id: str, symbol: str, timeframe: str, rsi_value: float, trigger_condition: str) -> None:
-        if not self.supabase_url or not self.supabase_service_key:
-            return
-        try:
-            headers = {
-                "apikey": self.supabase_service_key,
-                "Authorization": f"Bearer {self.supabase_service_key}",
-                "Content-Type": "application/json",
-            }
-            url = f"{self.supabase_url}/rest/v1/rsi_tracker_alert_triggers"
-            payload = {
-                "alert_id": alert_id,
-                "triggered_at": datetime.now(timezone.utc).isoformat(),
-                "trigger_condition": trigger_condition,
-                "symbol": symbol,
-                "timeframe": timeframe,
-                "rsi_value": round(float(rsi_value), 2),
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload) as resp:
-                    if resp.status not in (200, 201):
-                        txt = await resp.text()
-                        log_error(
-                            logger,
-                            "db_trigger_log_failed",
-                            status=resp.status,
-                            body=txt,
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            trigger_condition=trigger_condition,
-                        )
-                    else:
-                        log_info(
-                            logger,
-                            "db_trigger_logged",
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            trigger_condition=trigger_condition,
-                            rsi_value=round(float(rsi_value), 2),
-                        )
-        except Exception as e:
-            log_error(
-                logger,
-                "db_trigger_log_error",
-                alert_id=alert_id,
-                symbol=symbol,
-                timeframe=timeframe,
-                trigger_condition=trigger_condition,
-                error=str(e),
-            )
-
     async def _send_notification(self, user_email: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], alert_config: Dict[str, Any]) -> None:
         if not user_email:
             return
@@ -403,7 +307,8 @@ class RSITrackerAlertService:
         Returns a list of trigger payloads (for observability/testing).
         """
         try:
-            all_alerts = await alert_cache.get_all_alerts()
+            # Event-driven paths should not force cache refresh; use snapshot to avoid blocking
+            all_alerts = await alert_cache.get_all_alerts_snapshot()
             triggers: List[Dict[str, Any]] = []
 
             for _uid, alerts in all_alerts.items():
@@ -415,7 +320,8 @@ class RSITrackerAlertService:
                     alert_name = alert.get("alert_name", "RSI Tracker Alert")
                     user_email = alert.get("user_email", "")
                     timeframe = self._normalize_timeframe(alert.get("timeframe", "1H"))
-                    rsi_period = int(alert.get("rsi_period", 14))
+                    # Enforce RSI(14)
+                    rsi_period = 14
                     rsi_overbought = int(alert.get("rsi_overbought", alert.get("rsi_overbought_threshold", 70)))
                     rsi_oversold = int(alert.get("rsi_oversold", alert.get("rsi_oversold_threshold", 30)))
                     # Start-of-alert evaluation log (no per-alert pairs, fixed set used)
@@ -425,6 +331,18 @@ class RSITrackerAlertService:
                         alert_type="rsi_tracker",
                         alert_id=alert_id,
                         alert_name=alert_name,
+                        user_email=user_email,
+                        timeframe=timeframe,
+                        rsi_period=rsi_period,
+                        rsi_overbought=rsi_overbought,
+                        rsi_oversold=rsi_oversold,
+                    )
+                    # Also log a concise INFO-level config line per request
+                    log_info(
+                        logger,
+                        "alert_eval_config",
+                        alert_type="rsi_tracker",
+                        alert_id=alert_id,
                         user_email=user_email,
                         timeframe=timeframe,
                         rsi_period=rsi_period,
@@ -508,8 +426,6 @@ class RSITrackerAlertService:
                                 "timestamp": datetime.now(timezone.utc).isoformat(),
                             }
                             triggered_pairs.append(item)
-                            # Fire-and-forget DB log
-                            asyncio.create_task(self._log_trigger(alert_id, symbol, timeframe, item["rsi_value"], cond))
 
                     if triggered_pairs:
                         log_info(

@@ -4,13 +4,22 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
 import logging
-import aiohttp
 
 from .logging_config import configure_logging
 from .alert_cache import alert_cache
 from .email_service import email_service
 from .concurrency import pair_locks
 from .alert_logging import log_debug, log_info, log_warning, log_error
+from .indicator_cache import indicator_cache
+from .indicators import (
+    rsi_series as ind_rsi_series,
+    ema_series as ind_ema_series,
+    macd_series as ind_macd_series,
+    atr_wilder_series as ind_atr_wilder_series,
+    utbot_series as ind_utbot_series,
+    ichimoku_series as ind_ichimoku_series,
+)
+from .quantum import compute_quantum_for_symbol
 
 
 configure_logging()
@@ -36,7 +45,8 @@ class HeatmapTrackerAlertService:
 
     async def check_heatmap_tracker_alerts(self) -> List[Dict[str, Any]]:
         try:
-            all_alerts = await alert_cache.get_all_alerts()
+            # Event-driven paths should not force cache refresh; use snapshot to avoid blocking
+            all_alerts = await alert_cache.get_all_alerts_snapshot()
             triggers: List[Dict[str, Any]] = []
 
             for _uid, alerts in all_alerts.items():
@@ -62,13 +72,26 @@ class HeatmapTrackerAlertService:
                         sell_threshold=sell_t,
                         pairs=len(pairs),
                     )
+                    # INFO-level concise config
+                    log_info(
+                        logger,
+                        "alert_eval_config",
+                        alert_type="heatmap_tracker",
+                        alert_id=alert_id,
+                        user_email=user_email,
+                        style=style,
+                        buy_threshold=buy_t,
+                        sell_threshold=sell_t,
+                        pairs=len(pairs),
+                    )
 
                     ts_iso = datetime.now(timezone.utc).isoformat()
                     per_alert_triggers: List[Dict[str, Any]] = []
                     for symbol in pairs:
                         async with pair_locks.acquire(self._key(alert_id, symbol)):
-                            # Compute Buy%/Sell% via style weighting using real or simulated indicator strengths
+                            # Compute Buy%/Sell% via real OHLC-derived RSI mapping
                             buy_pct, sell_pct, final_score = await self._compute_buy_sell_percent(symbol, style)
+                            rsi_val = buy_pct  # Use Buy% as trigger metric for thresholds
                             log_debug(
                                 logger,
                                 "heatmap_eval",
@@ -83,27 +106,30 @@ class HeatmapTrackerAlertService:
                             st = self._armed.get(k)
                             if st is None:
                                 # Startup warm-up: baseline armed-state from current values.
-                                # If currently above threshold, mark that side disarmed to avoid immediate trigger.
+                                # If currently beyond thresholds, mark that side disarmed to avoid immediate trigger.
                                 st = {"buy": True, "sell": True}
-                                if buy_pct >= buy_t:
+                                if rsi_val >= buy_t:  # already in BUY zone
                                     st["buy"] = False
-                                if sell_pct >= sell_t:
+                                if rsi_val <= sell_t:  # already in SELL zone (RSI below sell threshold)
                                     st["sell"] = False
                                 self._armed[k] = st
                                 # Skip triggering on this first observation after baselining
                                 continue
 
                             # Re-arm checks
-                            if not st["buy"] and buy_pct < max(0.0, buy_t - 5):
+                            # Buy side re-arms after leaving BUY zone by a margin
+                            if not st["buy"] and rsi_val < max(0.0, buy_t - 5):
                                 st["buy"] = True
-                            if not st["sell"] and sell_pct < max(0.0, sell_t - 5):
+                            # Sell side re-arms after leaving SELL zone by a margin
+                            if not st["sell"] and rsi_val > min(100.0, sell_t + 5):
                                 st["sell"] = True
 
                             trig_type: Optional[str] = None
-                            if st["buy"] and buy_pct >= buy_t:
+                            # Trigger on RSI threshold crossings with per-side arming
+                            if st["buy"] and rsi_val >= buy_t:
                                 st["buy"] = False
                                 trig_type = "buy"
-                            elif st["sell"] and sell_pct >= sell_t:
+                            elif st["sell"] and rsi_val <= sell_t:
                                 st["sell"] = False
                                 trig_type = "sell"
 
@@ -151,16 +177,7 @@ class HeatmapTrackerAlertService:
                             "triggered_at": datetime.now(timezone.utc).isoformat(),
                         }
                         triggers.append(payload)
-                        # Fire-and-forget DB log per triggered row
-                        for item in per_alert_triggers:
-                            asyncio.create_task(self._log_trigger(
-                                alert_id=alert_id,
-                                symbol=item.get("symbol", ""),
-                                trigger_type=item.get("trigger_condition", ""),
-                                buy_percent=item.get("buy_percent"),
-                                sell_percent=item.get("sell_percent"),
-                                final_score=item.get("final_score"),
-                            ))
+                        # DB trigger logging removed per product decision
                         # Send email if enabled
                         methods = alert.get("notification_methods") or ["email"]
                         if "email" in methods:
@@ -193,86 +210,272 @@ class HeatmapTrackerAlertService:
             logger.error(f"Error checking Heatmap Tracker alerts: {e}")
             return []
 
-    async def _log_trigger(
-        self,
-        alert_id: str,
-        symbol: str,
-        trigger_type: str,
-        buy_percent: Optional[float],
-        sell_percent: Optional[float],
-        final_score: Optional[float],
-    ) -> None:
-        if not self.supabase_url or not self.supabase_service_key:
-            return
-        try:
-            headers = {
-                "apikey": self.supabase_service_key,
-                "Authorization": f"Bearer {self.supabase_service_key}",
-                "Content-Type": "application/json",
-            }
-            url = f"{self.supabase_url}/rest/v1/heatmap_tracker_alert_triggers"
-            payload = {
-                "alert_id": alert_id,
-                "symbol": symbol,
-                "trigger_type": trigger_type,
-                "buy_percent": buy_percent,
-                "sell_percent": sell_percent,
-                "final_score": final_score,
-                "triggered_at": datetime.now(timezone.utc).isoformat(),
-            }
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, json=payload) as resp:
-                    if resp.status not in (200, 201):
-                        txt = await resp.text()
-                        log_error(
-                            logger,
-                            "db_trigger_log_failed",
-                            status=resp.status,
-                            body=txt,
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            trigger_type=trigger_type,
-                        )
-                    else:
-                        log_info(
-                            logger,
-                            "db_trigger_logged",
-                            alert_id=alert_id,
-                            symbol=symbol,
-                            trigger_type=trigger_type,
-                            buy_percent=buy_percent,
-                            sell_percent=sell_percent,
-                            final_score=final_score,
-                        )
-        except Exception as e:
-            log_error(
-                logger,
-                "db_trigger_log_error",
-                alert_id=alert_id,
-                symbol=symbol,
-                trigger_type=trigger_type,
-                error=str(e),
-            )
+    # DB trigger logging removed
 
     async def _compute_buy_sell_percent(self, symbol: str, style: str) -> (float, float, float):
+        """Compute Buy%/Sell% using cache-derived indicators and centralized helpers.
+
+        - Uses cached RSI(14), EMA(21/50/200), MACD(12,26,9) from `indicator_cache`.
+        - Computes UTBot and Ichimoku via `app.indicators` on closed OHLC (no inline math).
+        - New-signal lookback K=3 closed candles.
+        - Quiet-market damping: halve MACD/UTBot cell scores if ATR10 is below 5th percentile of the last 200 values.
+        - Aggregation per spec; equal indicator weights within each timeframe; style-weighted across TFs.
+        """
         try:
-            # Try using the existing heatmap calculation code path if available would be ideal,
-            # but we keep a simplified stand-in here (final_score in [-100..100])
-            # Simulate Buy%/Sell% using a simple proxy around 50 with minor variance.
-            import random
-            # A deterministic but simple mapping using symbol hash
-            seed = sum(ord(c) for c in symbol) % 1000
-            random.seed(seed)
-            base = 50.0 + (random.random() - 0.5) * 20.0
-            # style influence
-            if style == "scalper":
-                base += 2.0
-            elif style == "swingtrader":
-                base -= 2.0
-            buy_pct = max(0.0, min(100.0, base + 5.0))
-            sell_pct = max(0.0, min(100.0, 100.0 - buy_pct))
-            final_score = (buy_pct - sell_pct)
-            return float(buy_pct), float(sell_pct), float(final_score)
+            from .models import Timeframe as TF
+            from .mt5_utils import get_ohlc_data
+
+            style_l = (style or "").lower()
+            tf_weights_map = {
+                "scalper": {"5M": 0.30, "15M": 0.30, "30M": 0.20, "1H": 0.15, "4H": 0.05, "1D": 0.0},
+                "swingtrader": {"30M": 0.10, "1H": 0.25, "4H": 0.35, "1D": 0.30},
+            }
+            tf_weights = tf_weights_map.get(style_l, tf_weights_map["scalper"])  # default scalper
+
+            indicators = ["EMA21", "EMA50", "EMA200", "MACD", "RSI", "UTBOT", "ICHIMOKU"]
+            ind_weight = 1.0 / len(indicators)
+            ind_weights = {ind: ind_weight for ind in indicators}
+
+            K = 3
+            tf_map = {"5M": TF.M5, "15M": TF.M15, "30M": TF.M30, "1H": TF.H1, "4H": TF.H4, "1D": TF.D1, "1W": TF.W1}
+
+            # Fast-path: reuse centralized quantum computation to ensure single source of truth.
+            try:
+                q = await compute_quantum_for_symbol(symbol)
+                overall = q.get("overall", {}) if isinstance(q, dict) else {}
+                style_key = style_l if style_l in ("scalper", "swingtrader") else "scalper"
+                v = overall.get(style_key)
+                if v and all(k in v for k in ("buy_percent", "sell_percent", "final_score")):
+                    return float(v["buy_percent"]), float(v["sell_percent"]), float(v["final_score"])
+            except Exception:
+                # Fall back to local computation below on any error
+                pass
+
+            def percentile(values: list, p: float) -> float:
+                if not values:
+                    return 0.0
+                s = sorted(values)
+                k = max(0, min(len(s) - 1, int(round((p / 100.0) * (len(s) - 1)))))
+                return float(s[k])
+
+            def clamp(x: float, lo: float, hi: float) -> float:
+                return hi if x > hi else (lo if x < lo else x)
+
+            raw = 0.0
+            for tf_code, w_tf in tf_weights.items():
+                if w_tf <= 0:
+                    continue
+                mtf = tf_map.get(tf_code)
+                if not mtf:
+                    continue
+
+                # Fetch closed OHLC for alignment and UTBot/Ichimoku/ATR
+                bars = get_ohlc_data(symbol, mtf, 300)
+                if not bars:
+                    continue
+                closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
+                if len(closed_bars) < 60:
+                    continue
+                closes = [b.close for b in closed_bars]
+                highs = [b.high for b in closed_bars]
+                lows = [b.low for b in closed_bars]
+                ts_list = [int(b.time) for b in closed_bars]
+                ts_to_close: Dict[int, float] = {int(b.time): float(b.close) for b in closed_bars}
+
+                # Quiet market detection
+                atrs = ind_atr_wilder_series(highs, lows, closes, 10)
+                is_quiet = False
+                if len(atrs) >= 200:
+                    last_atr = atrs[-1]
+                    p5 = percentile(atrs[-200:], 5.0)
+                    is_quiet = last_atr < p5
+
+                def score_cell(signal: str, is_new: bool, ind_name: str) -> float:
+                    base = 1.0 if signal == "buy" else (-1.0 if signal == "sell" else 0.0)
+                    if base == 0.0:
+                        return 0.0
+                    if is_new:
+                        base = base + (0.25 if base > 0 else -0.25)
+                    if is_quiet and ind_name in ("MACD", "UTBOT"):
+                        base *= 0.5
+                    return clamp(base, -1.25, 1.25)
+
+                # -----------------
+                # RSI(14) from cache (fallback compute if needed)
+                # -----------------
+                rsi_recent = await indicator_cache.get_recent_rsi(symbol, tf_code, 14, K + 2)
+                if not rsi_recent or len(rsi_recent) < 2:
+                    try:
+                        rsis = ind_rsi_series(closes, 14)
+                        if rsis:
+                            rsi_recent = [(ts_list[-len(rsis) + i], rsis[i]) for i in range(len(rsis))][- (K + 2):]
+                    except Exception:
+                        rsi_recent = None
+
+                def rsi_signal_from_recent() -> (str, bool):
+                    if not rsi_recent or len(rsi_recent) < 2:
+                        return "neutral", False
+                    r = float(rsi_recent[-1][1])
+                    sig = "buy" if r <= 30 else ("sell" if r >= 70 else "neutral")
+                    is_new = False
+                    window = [float(v) for _, v in rsi_recent[- (K + 1):]]
+                    for i in range(1, len(window)):
+                        prev, curr = window[i - 1], window[i]
+                        if (prev < 50 <= curr) or (prev > 50 >= curr):
+                            is_new = True
+                            break
+                        if (prev > 70 and curr <= 70) or (prev < 30 and curr >= 30) or (prev <= 70 and curr > 70) or (prev >= 30 and curr < 30):
+                            is_new = True
+                            break
+                    return sig, is_new
+
+                # -----------------
+                # EMA from cache (align with closes by timestamp)
+                # -----------------
+                ema_recent_21 = await indicator_cache.get_recent_ema(symbol, tf_code, 21, K + 3)
+                ema_recent_50 = await indicator_cache.get_recent_ema(symbol, tf_code, 50, K + 3)
+                ema_recent_200 = await indicator_cache.get_recent_ema(symbol, tf_code, 200, K + 3)
+
+                def ema_signal_from_recent(ema_recent: Optional[List[Tuple[int, float]]], label: str) -> (str, bool):
+                    if not ema_recent or len(ema_recent) < 2:
+                        return "neutral", False
+                    # Align on timestamps
+                    aligned: List[Tuple[int, float, float]] = []  # (ts, close, ema)
+                    for ts, ev in ema_recent:
+                        c = ts_to_close.get(int(ts))
+                        if c is not None:
+                            aligned.append((int(ts), float(c), float(ev)))
+                    if len(aligned) < 2:
+                        return "neutral", False
+                    _, c_prev, e_prev = aligned[-2]
+                    _, c_curr, e_curr = aligned[-1]
+                    sig = "buy" if c_curr > e_curr else ("sell" if c_curr < e_curr else "neutral")
+                    # Cross within last K
+                    is_new = False
+                    for i in range(1, min(K, len(aligned) - 1) + 1):
+                        _, cp, ep = aligned[-(i + 1)]
+                        _, cc, ec = aligned[-i]
+                        if (cp <= ep and cc > ec) or (cp >= ep and cc < ec):
+                            is_new = True
+                            break
+                    return sig, is_new
+
+                # -----------------
+                # MACD from cache
+                # -----------------
+                macd_recent = await indicator_cache.get_recent_macd(symbol, tf_code, 12, 26, 9, K + 3)
+
+                def macd_signal_from_recent() -> (str, bool):
+                    if not macd_recent or len(macd_recent) < 1:
+                        return "neutral", False
+                    _, m, s, _h = macd_recent[-1]
+                    sig = "buy" if (m > s and m > 0) else ("sell" if (m < s and m < 0) else "neutral")
+                    # Cross within last K
+                    is_new = False
+                    for i in range(1, min(K, len(macd_recent) - 1) + 1):
+                        _, m_prev, s_prev, _ = macd_recent[-(i + 1)]
+                        _, m_curr, s_curr, _ = macd_recent[-i]
+                        if (m_prev <= s_prev and m_curr > s_curr) or (m_prev >= s_prev and m_curr < s_curr):
+                            is_new = True
+                            break
+                    return sig, is_new
+
+                # -----------------
+                # UTBot via centralized helper
+                # -----------------
+                def utbot_signal() -> (str, bool):
+                    res = ind_utbot_series(highs, lows, closes, 50, 10, 3.0)
+                    base = res.get("baseline") or []
+                    l = res.get("long_stop") or []
+                    s = res.get("short_stop") or []
+                    flips = res.get("buy_sell_signal") or []
+                    if not (base and l and s):
+                        return "neutral", False
+                    price = closes[-1]
+                    pos = "buy" if price > s[-1] else ("sell" if price < l[-1] else "neutral")
+                    is_new = any(v != 0 for v in flips[-K:]) if flips else False
+                    return pos, is_new
+
+                # -----------------
+                # Ichimoku via centralized helper
+                # -----------------
+                def ichimoku_signal() -> (str, bool):
+                    series = ind_ichimoku_series(highs, lows, closes, 9, 26, 52, 26)
+                    tenkan = series.get("tenkan") or []
+                    kijun = series.get("kijun") or []
+                    sa = series.get("senkou_a") or []
+                    sb = series.get("senkou_b") or []
+                    if not (tenkan and kijun and sa and sb):
+                        return "neutral", False
+                    up_cloud = max(sa[-1], sb[-1])
+                    dn_cloud = min(sa[-1], sb[-1])
+                    price = closes[-1]
+                    if price > up_cloud:
+                        sig = "buy"
+                    elif price < dn_cloud:
+                        sig = "sell"
+                    else:
+                        # TK cross check on last K
+                        sig = "neutral"
+                        for i in range(1, min(K, len(tenkan) - 1, len(kijun) - 1) + 1):
+                            t_prev, k_prev = tenkan[-(i + 1)], kijun[-(i + 1)]
+                            t_curr, k_curr = tenkan[-i], kijun[-i]
+                            if t_prev <= k_prev and t_curr > k_curr:
+                                sig = "buy"
+                                break
+                            if t_prev >= k_prev and t_curr < k_curr:
+                                sig = "sell"
+                                break
+                        if sig == "neutral":
+                            # Cloud color
+                            if sa[-1] > sb[-1]:
+                                sig = "buy"
+                            elif sa[-1] < sb[-1]:
+                                sig = "sell"
+                    # New if TK cross or cloud breakout in last K
+                    is_new = False
+                    # TK cross
+                    for i in range(1, min(K, len(tenkan) - 1, len(kijun) - 1) + 1):
+                        t_prev, k_prev = tenkan[-(i + 1)], kijun[-(i + 1)]
+                        t_curr, k_curr = tenkan[-i], kijun[-i]
+                        if (t_prev <= k_prev and t_curr > k_curr) or (t_prev >= k_prev and t_curr < k_curr):
+                            is_new = True
+                            break
+                    if not is_new:
+                        # Cloud breakout
+                        for i in range(1, min(K, len(sa), len(sb), len(closes)) + 1):
+                            up_c = max(sa[-i], sb[-i])
+                            dn_c = min(sa[-i], sb[-i])
+                            pr = closes[-i]
+                            if pr > up_c or pr < dn_c:
+                                is_new = True
+                                break
+                    return sig, is_new
+
+                # Evaluate each indicator cell
+                per_tf_sum = 0.0
+                sig, is_new = ema_signal_from_recent(ema_recent_21, "EMA21")
+                per_tf_sum += score_cell(sig, is_new, "EMA21") * ind_weights["EMA21"]
+                sig, is_new = ema_signal_from_recent(ema_recent_50, "EMA50")
+                per_tf_sum += score_cell(sig, is_new, "EMA50") * ind_weights["EMA50"]
+                sig, is_new = ema_signal_from_recent(ema_recent_200, "EMA200")
+                per_tf_sum += score_cell(sig, is_new, "EMA200") * ind_weights["EMA200"]
+                sig, is_new = macd_signal_from_recent()
+                per_tf_sum += score_cell(sig, is_new, "MACD") * ind_weights["MACD"]
+                sig, is_new = rsi_signal_from_recent()
+                per_tf_sum += score_cell(sig, is_new, "RSI") * ind_weights["RSI"]
+                sig, is_new = utbot_signal()
+                per_tf_sum += score_cell(sig, is_new, "UTBOT") * ind_weights["UTBOT"]
+                sig, is_new = ichimoku_signal()
+                per_tf_sum += score_cell(sig, is_new, "ICHIMOKU") * ind_weights["ICHIMOKU"]
+
+                raw += per_tf_sum * w_tf
+
+            final = 100.0 * (raw / 1.25)
+            final = clamp(final, -100.0, 100.0)
+            buy_pct = (final + 100.0) / 2.0
+            sell_pct = 100.0 - buy_pct
+            return float(buy_pct), float(sell_pct), float(final)
         except Exception:
             return 50.0, 50.0, 0.0
 
@@ -289,4 +492,3 @@ class HeatmapTrackerAlertService:
 
 
 heatmap_tracker_alert_service = HeatmapTrackerAlertService()
-

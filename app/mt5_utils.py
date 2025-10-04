@@ -2,10 +2,13 @@ from collections import deque
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 
+import logging
+
 import MetaTrader5 as mt5
 from fastapi import HTTPException
 
 from .models import Timeframe, OHLC, Tick
+ 
 
 
 MT5_TIMEFRAMES = {
@@ -19,8 +22,32 @@ MT5_TIMEFRAMES = {
     Timeframe.W1: mt5.TIMEFRAME_W1,
 }
 
+logger = logging.getLogger(__name__)
+_live_rsi_last_logged: Dict[str, int] = {}
+
+
+def canonicalize_symbol(symbol: str) -> str:
+    """Return canonical MT5 symbol form.
+
+    Rules:
+    - Trim whitespace
+    - Uppercase core instrument letters
+    - Force trailing broker suffix 'm' to lowercase when present
+    - If no suffix, return fully uppercased symbol
+    """
+    try:
+        s = str(symbol).strip()
+        if not s:
+            return s
+        if s[-1] in ("m", "M"):
+            return s[:-1].upper() + "m"
+        return s.upper()
+    except Exception:
+        return str(symbol)
+
 
 def ensure_symbol_selected(symbol: str) -> None:
+    symbol = canonicalize_symbol(symbol)
     info = mt5.symbol_info(symbol)
     if info is None:
         all_symbols = mt5.symbols_get()
@@ -71,6 +98,7 @@ def _to_tick(symbol: str, info) -> Optional[Tick]:
 
 def get_current_tick(symbol: str) -> Optional[Tick]:
     """Return the current tick for a symbol as a Tick model, or None if unavailable."""
+    symbol = canonicalize_symbol(symbol)
     ensure_symbol_selected(symbol)
     info = mt5.symbol_info_tick(symbol)
     return _to_tick(symbol, info)
@@ -80,6 +108,19 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
     if rate_data is None:
         return None
     try:
+        def _rate_val(key: str, idx: int) -> Optional[float]:
+            try:
+                return float(getattr(rate_data, key))  # type: ignore[arg-type]
+            except Exception:
+                pass
+            try:
+                return float(rate_data[key])  # type: ignore[index]
+            except Exception:
+                pass
+            try:
+                return float(rate_data[idx])
+            except Exception:
+                return None
         ts_ms = int(rate_data[0]) * 1000
         dt = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
         # Determine closed status at conversion time to support strict closed-bar consumers
@@ -96,6 +137,32 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
         tf_secs = tf_seconds_map.get(timeframe, 60)
         bar_end_ms = ts_ms + (tf_secs * 1000)
         is_closed = int(datetime.now(timezone.utc).timestamp() * 1000) >= bar_end_ms
+        # Derive bid/ask parallel fields using spread when available
+        # Prefer structured field `spread` if present; otherwise, fallback to current tick
+        spread_points = _rate_val("spread", 6)
+        point = None
+        try:
+            sym_info = mt5.symbol_info(symbol)
+            point = getattr(sym_info, "point", None) if sym_info else None
+        except Exception:
+            point = None
+        if (not spread_points or spread_points == 0) and point:
+            try:
+                tinfo = mt5.symbol_info_tick(symbol)
+                if tinfo and getattr(tinfo, "bid", None) is not None and getattr(tinfo, "ask", None) is not None:
+                    spread_points = (float(getattr(tinfo, "ask")) - float(getattr(tinfo, "bid"))) / float(point)
+            except Exception:
+                pass
+        half_spread = (spread_points * point / 2.0) if (spread_points and point) else 0.0
+        open_bid = float(rate_data[1]) - half_spread if half_spread else None
+        high_bid = float(rate_data[2]) - half_spread if half_spread else None
+        low_bid = float(rate_data[3]) - half_spread if half_spread else None
+        close_bid = float(rate_data[4]) - half_spread if half_spread else None
+        open_ask = float(rate_data[1]) + half_spread if half_spread else None
+        high_ask = float(rate_data[2]) + half_spread if half_spread else None
+        low_ask = float(rate_data[3]) + half_spread if half_spread else None
+        close_ask = float(rate_data[4]) + half_spread if half_spread else None
+
         return OHLC(
             symbol=symbol,
             timeframe=timeframe,
@@ -105,7 +172,17 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
             high=float(rate_data[2]),
             low=float(rate_data[3]),
             close=float(rate_data[4]),
-            volume=float(rate_data[5]),
+            volume=_rate_val("real_volume", 7) or _rate_val("tick_volume", 5),
+            tick_volume=_rate_val("tick_volume", 5),
+            spread=_rate_val("spread", 6),
+            openBid=open_bid,
+            highBid=high_bid,
+            lowBid=low_bid,
+            closeBid=close_bid,
+            openAsk=open_ask,
+            highAsk=high_ask,
+            lowAsk=low_ask,
+            closeAsk=close_ask,
             is_closed=is_closed,
         )
     except (IndexError, ValueError, TypeError) as e:
@@ -116,15 +193,13 @@ def _to_ohlc(symbol: str, timeframe: str, rate_data) -> Optional[OHLC]:
 
 
 def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[OHLC]:
+    symbol = canonicalize_symbol(symbol)
     ensure_symbol_selected(symbol)
     mt5_timeframe = MT5_TIMEFRAMES.get(timeframe)
     if mt5_timeframe is None:
         raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
     rates = mt5.copy_rates_from_pos(symbol, mt5_timeframe, 0, count)
     if rates is None or len(rates) == 0:
-        # Only log at debug level to reduce noise
-        import logging
-        logger = logging.getLogger(__name__)
         logger.debug(f"⚠️ No rates from MT5 for {symbol}")
         return []
     ohlc_data = []
@@ -136,8 +211,68 @@ def get_ohlc_data(symbol: str, timeframe: Timeframe, count: int = 250) -> List[O
 
 
 def get_current_ohlc(symbol: str, timeframe: Timeframe) -> Optional[OHLC]:
+    symbol = canonicalize_symbol(symbol)
     data = get_ohlc_data(symbol, timeframe, 1)
     return data[0] if data else None
+
+
+def _get_d1_reference_bid(symbol: str) -> Optional[float]:
+    """Return the D1 reference price on Bid basis for daily change calculation.
+
+    Strategy per spec:
+    - Fetch last 2 D1 bars.
+    - If the latest D1 bar is for today (UTC-based check), use its open (Bid).
+    - Otherwise, use the previous D1 bar's close (Bid) to handle session transitions.
+    """
+    try:
+        bars = get_ohlc_data(symbol, Timeframe.D1, 2)
+        if not bars:
+            return None
+        latest = bars[-1]
+        prev = bars[-2] if len(bars) > 1 else None
+
+        now_date = datetime.now(timezone.utc).date()
+        try:
+            latest_dt = datetime.fromisoformat(latest.time_iso)
+        except Exception:
+            latest_dt = datetime.fromtimestamp(latest.time / 1000.0, tz=timezone.utc)
+        latest_date = latest_dt.date()
+
+        # Prefer Bid-parallel fields when available
+        if latest_date == now_date:
+            ref = latest.openBid if latest.openBid is not None else latest.open
+            return float(ref) if ref is not None else None
+        # Fallback to previous D1 close on Bid basis
+        if prev is not None:
+            ref = prev.closeBid if prev.closeBid is not None else prev.close
+            return float(ref) if ref is not None else None
+        # If only one bar present, fallback to its open
+        ref = latest.openBid if latest.openBid is not None else latest.open
+        return float(ref) if ref is not None else None
+    except Exception:
+        return None
+
+
+def get_daily_change_pct_bid(symbol: str) -> Optional[float]:
+    """Compute daily percentage change on Bid basis.
+
+    daily_change_pct = 100 * (bid_now - D1_reference) / D1_reference
+    where D1_reference is today's D1 open (bid) if today; else previous D1 close (bid).
+    """
+    try:
+        symbol = canonicalize_symbol(symbol)
+        ensure_symbol_selected(symbol)
+        tick = get_current_tick(symbol)
+        if tick is None or tick.bid is None:
+            return None
+        ref = _get_d1_reference_bid(symbol)
+        if ref is None or ref == 0.0:
+            return None
+        return 100.0 * (float(tick.bid) - float(ref)) / float(ref)
+    except Exception:
+        return None
+
+ 
 
 
 def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe) -> datetime:
@@ -192,6 +327,7 @@ global_ohlc_cache: Dict[str, Dict[str, deque]] = {}
 
 def update_ohlc_cache(symbol: str, timeframe: Timeframe, max_bars: int = 250):
     global global_ohlc_cache
+    symbol = canonicalize_symbol(symbol)
     if symbol not in global_ohlc_cache:
         global_ohlc_cache[symbol] = {}
     if timeframe.value not in global_ohlc_cache[symbol]:
@@ -208,6 +344,7 @@ def update_ohlc_cache(symbol: str, timeframe: Timeframe, max_bars: int = 250):
 
 def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 250) -> List[OHLC]:
     global global_ohlc_cache
+    symbol = canonicalize_symbol(symbol)
     if symbol not in global_ohlc_cache:
         global_ohlc_cache[symbol] = {}
     if timeframe.value not in global_ohlc_cache[symbol]:
@@ -219,5 +356,3 @@ def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 250) -> List
         global_ohlc_cache[symbol][timeframe.value] = deque(ohlc_data, maxlen=count)
         return ohlc_data
     return list(global_ohlc_cache[symbol][timeframe.value])
-
-

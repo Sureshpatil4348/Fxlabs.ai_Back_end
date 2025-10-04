@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -48,6 +48,8 @@ class OHLC(BaseModel):
     low: float
     close: float
     volume: Optional[float] = None
+    tick_volume: Optional[float] = None
+    spread: Optional[float] = None
     # Parallel fields for bid/ask parity
     openBid: Optional[float] = None
     highBid: Optional[float] = None
@@ -61,13 +63,7 @@ class OHLC(BaseModel):
     is_closed: Optional[bool] = None
 
 
-class SubscriptionInfo(BaseModel):
-    symbol: str
-    timeframe: Timeframe
-    subscription_time: datetime
-    data_types: List[str]
-    price_basis: PriceBasis = PriceBasis.LAST
-    ohlc_schema: OHLCSchema = OHLCSchema.PARALLEL
+"""Per-client SubscriptionInfo removed; v2 WebSocket is broadcast-only."""
 
 
 class NewsItem(BaseModel):
@@ -165,56 +161,10 @@ class RSIAlertResponse(BaseModel):
     updated_at: datetime
 
 
-class RSICorrelationAlertRequest(BaseModel):
-    alert_name: str
-    user_id: Optional[str] = None
-    user_email: str
-    pairs: List[List[str]] = Field(alias="correlation_pairs")  # List of [symbol1, symbol2] pairs
-    timeframes: List[str] = ["1H"]
-    calculation_mode: str = "rsi_threshold"  # "rsi_threshold" or "real_correlation"
-    rsi_period: int = 14
-    rsi_overbought_threshold: int = 70
-    rsi_oversold_threshold: int = 30
-    correlation_window: int = 50
-    alert_conditions: List[str]
-    strong_correlation_threshold: float = 0.70
-    moderate_correlation_threshold: float = 0.30
-    weak_correlation_threshold: float = 0.15
-    notification_methods: List[str] = ["email"]
-    alert_frequency: str = "once"
-    
-    # Pydantic v2 config
-    model_config = {
-        "populate_by_name": True
-    }
+# Correlation alert request removed
 
 
-class RSICorrelationAlertResponse(BaseModel):
-    id: str
-    alert_name: str
-    user_id: Optional[str] = None
-    user_email: str
-    pairs: List[List[str]] = Field(alias="correlation_pairs")
-    timeframes: List[str]
-    calculation_mode: str
-    rsi_period: int
-    rsi_overbought_threshold: int
-    rsi_oversold_threshold: int
-    correlation_window: int
-    alert_conditions: List[str]
-    strong_correlation_threshold: float
-    moderate_correlation_threshold: float
-    weak_correlation_threshold: float
-    notification_methods: List[str]
-    alert_frequency: str
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
-    
-    # Pydantic v2 config
-    model_config = {
-        "populate_by_name": True
-    }
+# Correlation alert response removed
 
 
 class HeatmapAlertTrigger(BaseModel):
@@ -224,5 +174,4 @@ class HeatmapAlertTrigger(BaseModel):
     triggered_pairs: List[Dict[str, Any]]
     trigger_time: datetime
     alert_config: Dict[str, Any]
-
 
