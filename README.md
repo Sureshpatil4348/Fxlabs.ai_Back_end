@@ -431,7 +431,7 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 | Endpoint | Method | Description | Auth Required |
 |----------|--------|-------------|---------------|
 | `/health` | GET | Health check and MT5 status | No |
-| `/api/indicator` | GET | Latest closed‑bar value(s) for a given indicator across pairs | Yes |
+| `/api/indicator` | GET | Latest closed‑bar value(s) for a given indicator across pairs; Currency Strength snapshot | Yes |
 | `/api/pricing` | GET | Latest cached price snapshot(s) with daily_change_pct | Yes |
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |

@@ -5,7 +5,7 @@ This document describes how the frontend should consume market data and indicato
 ### Answers to common questions
 
 - **Mechanism to fetch indicators for different timeframes via WebSocket?**
-  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
+  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. It also broadcasts `currency_strength_update` snapshots per timeframe using closed-candle ROC aggregation for the 8 fiat currencies.
   - There is no per-client subscription filtering in v2. Clients receive broadcast updates when a new closed bar is detected.
 
 - **Should the frontend use REST instead?**
@@ -15,7 +15,7 @@ This document describes how the frontend should consume market data and indicato
   - v2 does not send initial OHLC or indicator snapshots on connect; fetch initial state via REST, then merge live pushes.
 
 - **Does it work properly with all supported indicators?**
-  - WebSocket streaming includes: RSI(14), EMA(21/50/200), MACD(12,26,9), UTBot(EMA50±3×ATR10), Ichimoku(9/26/52), and Quantum Analysis summary (per‑TF and overall) computed on latest closed bars.
+  - WebSocket streaming includes: RSI(14), EMA(21/50/200), MACD(12,26,9), UTBot(EMA50±3×ATR10), Ichimoku(9/26/52), Quantum Analysis summary (per‑TF and overall), and Currency Strength (8 currencies) computed on latest closed bars.
   - Indicator implementations have unit tests and parity checks; see `tests/test_indicators.py` and `tests/test_parity.py`.
 
 ### WebSocket v2
@@ -75,6 +75,17 @@ This document describes how the frontend should consume market data and indicato
     }
     ```
   - Quantum update (computed alongside indicator updates):
+  - Currency Strength update (per timeframe; computed once per poll cycle):
+    ```json
+    {
+      "type": "currency_strength_update",
+      "timeframe": "5M",
+      "data": {
+        "bar_time": 1696229940000,
+        "strength": {"USD": 62.3, "EUR": 47.8, "GBP": 55.1, "JPY": 41.2, "AUD": 58.9, "CAD": 52.4, "CHF": 44.7, "NZD": 37.5}
+      }
+    }
+    ```
     ```json
     {
       "type": "quantum_update",
@@ -128,7 +139,7 @@ This document describes how the frontend should consume market data and indicato
   - Cache: warm-populated on startup for all allowed symbols/timeframes and updated on each scheduler cycle (closed bars only).
   - If no `pairs`/`symbols` provided, returns for WS‑allowed symbols (capped to 32).
   - Query params:
-    - `indicator` (required): `rsi` | `quantum`
+    - `indicator` (required): `rsi` | `quantum` | `currency_strength`
     - `timeframe` (required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
     - `pairs` (repeatable or CSV): symbols to include. Alias: `symbols`.
   - Response examples:

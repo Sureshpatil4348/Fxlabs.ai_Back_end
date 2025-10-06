@@ -63,6 +63,8 @@ from app.indicator_cache import indicator_cache
 from app.price_cache import price_cache
 from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest, utbot_latest as ind_utbot_latest, ichimoku_latest as ind_ichimoku_latest
 from app.quantum import compute_quantum_for_symbol
+from app.currency_strength import compute_currency_strength_for_timeframe
+from app.currency_strength_cache import currency_strength_cache
 from app.constants import RSI_SUPPORTED_SYMBOLS
 from app.trending_pairs import trending_pairs_cache, trending_pairs_scheduler, refresh_trending_pairs
 # One-time warmup to backfill indicator cache at startup
@@ -159,6 +161,31 @@ async def lifespan(app: FastAPI):
     # Warm populate indicator cache on startup (best-effort, non-blocking)
     try:
         asyncio.create_task(_warm_populate_indicator_cache())
+    except Exception:
+        pass
+
+    # Warm populate currency strength cache (best-effort, non-blocking)
+    async def _warm_populate_currency_strength_cache() -> None:
+        try:
+            baseline_tfs: List[Timeframe] = [Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
+            try:
+                symbols_for_rollout: List[str] = list(ALLOWED_WS_SYMBOLS)
+            except Exception:
+                symbols_for_rollout = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+            for tf in baseline_tfs:
+                try:
+                    res = await compute_currency_strength_for_timeframe(tf, symbols_for_rollout)
+                    if res is None:
+                        continue
+                    ts_ms, values = res
+                    await currency_strength_cache.update(tf.value, values, ts_ms=ts_ms)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    try:
+        asyncio.create_task(_warm_populate_currency_strength_cache())
     except Exception:
         pass
 
@@ -571,6 +598,7 @@ async def _indicator_scheduler() -> None:
             tfs_rsi_updated: Set[str] = set()
             tfs_ema_updated: Set[str] = set()
             tfs_macd_updated: Set[str] = set()
+            tfs_cs_updated: Set[str] = set()
             for symbol, tf in pairs:
                 try:
                     # Fetch recent OHLC and gate on last closed bar
@@ -750,6 +778,37 @@ async def _indicator_scheduler() -> None:
                             except Exception:
                                 # Never let a single client block the scheduler
                                 continue
+
+                    # Compute and cache currency strength for this timeframe once per poll cycle per timeframe
+                    try:
+                        if tf.value not in tfs_cs_updated:
+                            # Use the same rollout symbols set for strength calculation
+                            symbols_for_strength: List[str] = list(ALLOWED_WS_SYMBOLS)
+                            cs_res = await compute_currency_strength_for_timeframe(tf, symbols_for_strength)
+                            if cs_res is not None:
+                                cs_ts, cs_values = cs_res
+                                await currency_strength_cache.update(tf.value, cs_values, ts_ms=cs_ts)
+                                tfs_cs_updated.add(tf.value)
+                                # Broadcast currency strength snapshot
+                                if clients:
+                                    cs_msg = {
+                                        "type": "currency_strength_update",
+                                        "timeframe": tf.value,
+                                        "data": {
+                                            "bar_time": cs_ts,
+                                            "strength": cs_values,
+                                        },
+                                    }
+                                    for c in clients:
+                                        try:
+                                            if getattr(c, "v2_broadcast", False):
+                                                await c._try_send_json(cs_msg)
+                                                continue
+                                        except Exception:
+                                            continue
+                    except Exception:
+                        # Strength calculation must never break the indicator scheduler loop
+                        pass
                     # Also compute and broadcast quantum analysis snapshot for this symbol
                     q = await compute_quantum_for_symbol(symbol)
                     q_msg = {
@@ -918,7 +977,7 @@ async def get_trending_pairs(x_api_key: Optional[str] = Depends(require_api_toke
 
 @app.get("/api/indicator")
 async def get_indicator(
-    indicator: str = Query(..., description="Indicator name: rsi|quantum"),
+    indicator: str = Query(..., description="Indicator name: rsi|quantum|currency_strength"),
     timeframe: str = Query(..., description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W"),
     pairs: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., pairs=EURUSDm&pairs=BTCUSDm) or CSV"),
     symbols: Optional[List[str]] = Query(None, description="Alias for pairs (repeatable or CSV)"),
@@ -926,9 +985,10 @@ async def get_indicator(
 ):
     """Return the latest closed-bar value for a single indicator across 1 to 32 pairs.
 
-    - indicator: rsi|quantum
+    - indicator: rsi|quantum|currency_strength
       - rsi: fixed period 14
       - quantum: returns per-timeframe and overall Buy/Sell% with signals
+      - currency_strength: 8-currency strength map (USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD) using ROC
     - timeframe: must be WS-supported
     - pairs/symbols: 1 to 32 symbols. Defaults to all WS-allowed symbols if omitted (capped to 32).
     """
@@ -982,40 +1042,62 @@ async def get_indicator(
         candidates = candidates[:32]
 
     indicator_key = indicator.strip().lower()
-    if indicator_key not in {"rsi", "quantum"}:
+    if indicator_key not in {"rsi", "quantum", "currency_strength"}:
         raise HTTPException(status_code=400, detail="unsupported_indicator")
 
-    results: List[Dict[str, Any]] = []
-    for sym in candidates:
-        try:
-            ensure_symbol_selected(sym)
-        except Exception:
-            pass
-
-        if indicator_key == "rsi":
-            latest = await indicator_cache.get_latest_rsi(sym, tf.value, 14)
-            value = None if not latest else float(latest[1])
-            ts_ms = None if not latest else int(latest[0])
-            results.append({"symbol": sym, "timeframe": tf.value, "ts": ts_ms, "value": value})
-        else:  # quantum
-            # Compute per-timeframe and overall quantum Buy/Sell% (closed-bar parity)
+    if indicator_key == "currency_strength":
+        # Return cached snapshot; compute on-demand if missing
+        cs_latest = await currency_strength_cache.latest(tf.value)
+        if not cs_latest:
             try:
-                q = await compute_quantum_for_symbol(sym)
+                sym_rollout: List[str] = sorted(list(ALLOWED_WS_SYMBOLS))
             except Exception:
-                q = None
-            results.append({
-                "symbol": sym,
-                "timeframe": tf.value,
-                "ts": None,
-                "quantum": q if q else None,
-            })
+                sym_rollout = sorted([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+            res = await compute_currency_strength_for_timeframe(tf, sym_rollout)
+            if res is not None:
+                ts_ms, values = res
+                await currency_strength_cache.update(tf.value, values, ts_ms=ts_ms)
+                cs_latest = (ts_ms, values)
+        ts_ms = None if not cs_latest else int(cs_latest[0])
+        values = None if not cs_latest else cs_latest[1]
+        return {
+            "indicator": indicator_key,
+            "timeframe": tf.value,
+            "ts": ts_ms,
+            "currencies": values,
+        }
+    else:
+        results: List[Dict[str, Any]] = []
+        for sym in candidates:
+            try:
+                ensure_symbol_selected(sym)
+            except Exception:
+                pass
 
-    return {
-        "indicator": indicator_key,
-        "timeframe": tf.value,
-        "count": len(results),
-        "pairs": results,
-    }
+            if indicator_key == "rsi":
+                latest = await indicator_cache.get_latest_rsi(sym, tf.value, 14)
+                value = None if not latest else float(latest[1])
+                ts_ms = None if not latest else int(latest[0])
+                results.append({"symbol": sym, "timeframe": tf.value, "ts": ts_ms, "value": value})
+            else:  # quantum
+                # Compute per-timeframe and overall quantum Buy/Sell% (closed-bar parity)
+                try:
+                    q = await compute_quantum_for_symbol(sym)
+                except Exception:
+                    q = None
+                results.append({
+                    "symbol": sym,
+                    "timeframe": tf.value,
+                    "ts": None,
+                    "quantum": q if q else None,
+                })
+
+        return {
+            "indicator": indicator_key,
+            "timeframe": tf.value,
+            "count": len(results),
+            "pairs": results,
+        }
 
 
  
