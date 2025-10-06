@@ -64,6 +64,7 @@ from app.price_cache import price_cache
 from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest, utbot_latest as ind_utbot_latest, ichimoku_latest as ind_ichimoku_latest
 from app.quantum import compute_quantum_for_symbol
 from app.constants import RSI_SUPPORTED_SYMBOLS
+from app.trending_pairs import trending_pairs_cache, trending_pairs_scheduler, refresh_trending_pairs
 # One-time warmup to backfill indicator cache at startup
 async def _warm_populate_indicator_cache() -> None:
     try:
@@ -172,6 +173,33 @@ async def lifespan(app: FastAPI):
     # Start WS metrics reporter (dual-run soak)
     global _ws_metrics_task
     _ws_metrics_task = asyncio.create_task(_ws_metrics_reporter())
+
+    # Start Trending Pairs scheduler (startup + hourly)
+    async def _broadcast_trending(snapshot: Dict[str, Any]) -> None:
+        # Push to all connected clients as a concise event
+        async with _connected_clients_lock:
+            clients = list(_connected_clients)
+        if not clients:
+            return
+        msg = {"type": "trending_pairs", "data": snapshot}
+        for c in clients:
+            try:
+                if getattr(c, "v2_broadcast", False):
+                    await c._try_send_json(msg)
+            except Exception:
+                continue
+
+    try:
+        try:
+            symbols_for_trending: List[str] = list(ALLOWED_WS_SYMBOLS)
+        except Exception:
+            symbols_for_trending = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+        global _trending_task
+        _trending_task = asyncio.create_task(
+            trending_pairs_scheduler(symbols_for_trending, threshold_pct=0.05, broadcast=_broadcast_trending)
+        )
+    except Exception:
+        pass
     
     yield
     
@@ -203,6 +231,12 @@ async def lifespan(app: FastAPI):
     if _indicator_scheduler_task:
         try:
             await _indicator_scheduler_task
+        except asyncio.CancelledError:
+            pass
+    if _trending_task:
+        try:
+            _trending_task.cancel()
+            await _trending_task
         except asyncio.CancelledError:
             pass
     if _ws_metrics_task:
@@ -267,6 +301,7 @@ _ws_metrics: Dict[str, Dict[str, int]] = {
     "v2": defaultdict(int),
 }
 _ws_metrics_task: Optional[asyncio.Task] = None
+_trending_task: Optional[asyncio.Task] = None
 
 def _metrics_inc(label: str, key: str, by: int = 1) -> None:
     try:
@@ -871,6 +906,15 @@ def health():
 @app.get("/test-ws")
 def test_websocket():
     return {"message": "WebSocket endpoint available at /market-v2"}
+
+@app.get("/trending-pairs")
+async def get_trending_pairs(x_api_key: Optional[str] = Depends(require_api_token_header)):
+    """Return the current cached trending pairs snapshot.
+
+    Trending rule: abs(daily_change_pct) >= 0.05 (hardcoded threshold for now).
+    """
+    snap = await trending_pairs_cache.get_snapshot()
+    return snap
 
 @app.get("/api/indicator")
 async def get_indicator(
@@ -1635,6 +1679,7 @@ if __name__ == "__main__":
     print("   - Alert Refresh: POST /api/alerts/refresh")
     print("   - Alerts Cache: GET /api/alerts/cache")
     print("   - Refresh Alerts: POST /api/alerts/refresh")
+    print("   - Trending Pairs: GET /trending-pairs")
     print("   - Health check: GET /health")
     
     _install_sigterm_handler(asyncio.get_event_loop())

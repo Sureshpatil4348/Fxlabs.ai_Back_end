@@ -1,6 +1,6 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-WebSocket v2: Use `/market-v2` for live ticks, indicator updates, and quantum analysis updates (broadcast baseline). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no OHLC or indicator snapshots in v2. Ping/pong is supported for keepalive.
+WebSocket v2: Use `/market-v2` for live ticks, indicator updates, quantum analysis updates, and trending pairs updates (hourly broadcast). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no OHLC or indicator snapshots in v2. Ping/pong is supported for keepalive.
 
 Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, coalesced; OHLC is not streamed to clients in v2). No EA or external bridge required.
 
@@ -661,6 +661,10 @@ ws.onmessage = (event) => {
     console.log('Ticks:', data.data);
   } else if (data.type === 'indicator_update' || data.type === 'initial_indicators') {
     console.log('Indicators:', data);
+  } else if (data.type === 'quantum_update') {
+    console.log('Quantum:', data);
+  } else if (data.type === 'trending_pairs') {
+    console.log('Trending pairs snapshot:', data.data);
   } else {
     console.log('Other:', data);
   }
@@ -673,9 +677,11 @@ ws.onmessage = (event) => {
 curl -H "X-API-Key: your_token" \
      "http://localhost:8000/api/indicator?indicator=rsi&timeframe=1H&pairs=EURUSDm&pairs=BTCUSDm"
 
- 
-
 # Note: Tick data is WebSocket-only. Use `/market-v2` to receive live ticks.
+
+# Trending pairs snapshot
+curl -H "X-API-Key: your_token" \
+     "http://localhost:8000/trending-pairs"
 ```
 
 ## 🏗️ Architecture Details

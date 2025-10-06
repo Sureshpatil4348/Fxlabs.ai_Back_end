@@ -99,6 +99,22 @@ This document describes how the frontend should consume market data and indicato
       }
     }
     ```
+  - Trending pairs snapshot (startup and hourly):
+    ```json
+    {
+      "type": "trending_pairs",
+      "data": {
+        "threshold_pct": 0.05,
+        "last_updated": "2025-10-06T12:00:00Z",
+        "count": 3,
+        "pairs": [
+          {"symbol": "BTCUSDm", "daily_change_pct": 0.42},
+          {"symbol": "XAUUSDm", "daily_change_pct": -0.11},
+          {"symbol": "EURUSDm", "daily_change_pct": 0.06}
+        ]
+      }
+    }
+    ```
   - Notes:
     - `bar_time` is epoch milliseconds (broker server time).
     - Coverage: RSI/EMA/MACD/UTBot/Ichimoku (closed bars only).
@@ -139,6 +155,23 @@ This document describes how the frontend should consume market data and indicato
       "pairs": [
         {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871,"ask":1.06885,"daily_change_pct":-0.12},
         {"symbol":"BTCUSDm","time":1696229946123,"time_iso":"2025-10-02T14:19:06.123Z","bid":27123.5,"ask":27124.1,"daily_change_pct":0.35}
+      ]
+    }
+    ```
+
+- `GET /trending-pairs`
+  - Returns the current cached trending pairs snapshot.
+  - Threshold is hardcoded to abs(daily_change_pct) ≥ 0.05 for now.
+  - Requires `X-API-Key` when `API_TOKEN` is configured.
+  - Response example:
+    ```json
+    {
+      "threshold_pct": 0.05,
+      "last_updated": "2025-10-06T12:00:12.345678+00:00",
+      "count": 2,
+      "pairs": [
+        {"symbol": "EURUSDm", "daily_change_pct": 0.12},
+        {"symbol": "BTCUSDm", "daily_change_pct": 0.41}
       ]
     }
     ```
