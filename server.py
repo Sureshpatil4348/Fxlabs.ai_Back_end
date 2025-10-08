@@ -800,6 +800,12 @@ async def _indicator_scheduler() -> None:
                             cs_res = await compute_currency_strength_for_timeframe(tf, symbols_for_strength)
                             if cs_res is not None:
                                 cs_ts, cs_values = cs_res
+                                # Fetch previous snapshot timestamp (if any) to detect new closed bar
+                                try:
+                                    prev_latest = await currency_strength_cache.latest(tf.value)
+                                    prev_ts = int(prev_latest[0]) if prev_latest else None
+                                except Exception:
+                                    prev_ts = None
                                 await currency_strength_cache.update(tf.value, cs_values, ts_ms=cs_ts)
                                 tfs_cs_updated.add(tf.value)
                                 # Broadcast currency strength snapshot
@@ -819,6 +825,20 @@ async def _indicator_scheduler() -> None:
                                                 continue
                                         except Exception:
                                             continue
+                                # Log values on server when pushing for closed candles (new bar only)
+                                try:
+                                    if prev_ts is None or (isinstance(cs_ts, int) and cs_ts > int(prev_ts)):
+                                        logger = logging.getLogger("obs.curstr")
+                                        values_json = orjson.dumps({k: float(v) for k, v in cs_values.items()}).decode("utf-8")
+                                        logger.info(
+                                            "📊 currency_strength_update | tf=%s bar_time=%d values=%s",
+                                            tf.value,
+                                            int(cs_ts) if isinstance(cs_ts, int) else 0,
+                                            values_json,
+                                        )
+                                except Exception:
+                                    # Observability must not break scheduling
+                                    pass
                     except Exception:
                         # Strength calculation must never break the indicator scheduler loop
                         pass

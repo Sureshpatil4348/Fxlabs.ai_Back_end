@@ -391,6 +391,13 @@ Live push when a new bar is detected by the 10s poller:
 
 Currency Strength updates are also pushed over WebSocket on closed bars only and only for WS-allowed timeframes (minimum `5M`).
 
+Server logs: On each new closed-bar currency strength broadcast, the server logs an INFO line on logger `obs.curstr` with the timeframe, bar_time, and the JSON map of strengths, for example:
+
+```
+📊 currency_strength_update | tf=5M bar_time=1696229940000 values={"USD":62.3,"EUR":47.8,"GBP":55.1,"JPY":41.2,"AUD":58.9,"CAD":52.4,"CHF":44.7,"NZD":37.5}
+```
+Logs are written to `logs/<UTC-start>.log` (rotating at ~10MB x5) and to console per `app/logging_config.py`.
+
 Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
  
