@@ -336,6 +336,7 @@ Internal alert tick_data shape:
 - Broadcast-All mode: v2 pushes ticks and indicators (closed‑bar) to all connected clients without explicit subscriptions. OHLC is computed server‑side only for indicators/alerts.
   - Symbols: all symbols in `ALLOWED_WS_SYMBOLS` (defaults to all `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`, broker‑suffixed)
 - Timeframes: M1, M5, M15, M30, H1, H4, D1, W1
+  - Note: `currency_strength` enforces a minimum timeframe of `5M` (no `1M`).
 - Subscribe remains optional and is primarily used to receive `initial_ohlc` / `initial_indicators` snapshots on demand.
 
 Security and input validation (mirrors REST policy):
@@ -456,8 +457,9 @@ Notes:
 ### Indicator REST (`/api/indicator`)
 
 Parameters:
-- `indicator` (string, required): `rsi` | `quantum`
+- `indicator` (string, required): `rsi` | `quantum` | `currency_strength`
 - `timeframe` (string, required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`
+  - Constraint: for `currency_strength`, minimum timeframe is `5M` (requests with `1M` return error `min_timeframe_5M`).
 - `pairs` (repeatable or CSV): symbols (1–32). Alias: `symbols`. If omitted, defaults to WS‑allowed symbols (capped to 32).
 
 Response shapes (examples):

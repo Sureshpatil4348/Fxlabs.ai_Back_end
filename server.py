@@ -781,7 +781,10 @@ async def _indicator_scheduler() -> None:
 
                     # Compute and cache currency strength for this timeframe once per poll cycle per timeframe
                     try:
-                        if tf.value not in tfs_cs_updated:
+                        # Enforce minimum timeframe of 5M for currency strength
+                        if tf == Timeframe.M1:
+                            pass
+                        elif tf.value not in tfs_cs_updated:
                             # Use the same rollout symbols set for strength calculation
                             symbols_for_strength: List[str] = list(ALLOWED_WS_SYMBOLS)
                             cs_res = await compute_currency_strength_for_timeframe(tf, symbols_for_strength)
@@ -978,7 +981,10 @@ async def get_trending_pairs(x_api_key: Optional[str] = Depends(require_api_toke
 @app.get("/api/indicator")
 async def get_indicator(
     indicator: str = Query(..., description="Indicator name: rsi|quantum|currency_strength"),
-    timeframe: str = Query(..., description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W"),
+    timeframe: str = Query(
+        ...,
+        description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W (currency_strength requires >=5M)",
+    ),
     pairs: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., pairs=EURUSDm&pairs=BTCUSDm) or CSV"),
     symbols: Optional[List[str]] = Query(None, description="Alias for pairs (repeatable or CSV)"),
     x_api_key: Optional[str] = Depends(require_api_token_header),
@@ -1046,6 +1052,9 @@ async def get_indicator(
         raise HTTPException(status_code=400, detail="unsupported_indicator")
 
     if indicator_key == "currency_strength":
+        # Enforce minimum timeframe 5M for currency strength
+        if tf == Timeframe.M1:
+            raise HTTPException(status_code=400, detail="min_timeframe_5M")
         # Return cached snapshot; compute on-demand if missing
         cs_latest = await currency_strength_cache.latest(tf.value)
         if not cs_latest:

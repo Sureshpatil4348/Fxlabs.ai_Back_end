@@ -5,7 +5,7 @@ This document describes how the frontend should consume market data and indicato
 ### Answers to common questions
 
 - **Mechanism to fetch indicators for different timeframes via WebSocket?**
-  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. It also broadcasts `currency_strength_update` snapshots per timeframe using closed-candle ROC aggregation for the 8 fiat currencies.
+  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. It also broadcasts `currency_strength_update` snapshots per timeframe using closed-candle ROC aggregation for the 8 fiat currencies. Note: Currency Strength enforces a minimum timeframe of `5M` (no `1M`).
   - There is no per-client subscription filtering in v2. Clients receive broadcast updates when a new closed bar is detected.
 
 - **Should the frontend use REST instead?**
@@ -29,6 +29,7 @@ This document describes how the frontend should consume market data and indicato
   "type": "connected",
   "message": "WebSocket connected successfully",
   "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
+  "notes": ["currency_strength requires timeframe >= 5M"],
   "supported_data_types": ["ticks","indicators"],
   "supported_price_bases": ["last","bid","ask"],
   "indicators": {
@@ -141,6 +142,7 @@ This document describes how the frontend should consume market data and indicato
   - Query params:
     - `indicator` (required): `rsi` | `quantum` | `currency_strength`
     - `timeframe` (required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
+      - Constraint: for `currency_strength`, minimum timeframe is `5M` (requests with `1M` return error `min_timeframe_5M`).
     - `pairs` (repeatable or CSV): symbols to include. Alias: `symbols`.
   - Response examples:
     ```json
@@ -202,7 +204,7 @@ Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` ser
 
 ### Symbols and timeframes
 
-- Timeframes: fixed set `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
+- Timeframes: fixed set `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. For `currency_strength`, the minimum timeframe is `5M`.
 - Symbols: allowlisted; defaults to all supported RSI symbols (broker-suffixed). Operators can restrict via environment.
 
 ### Notes & caveats
@@ -235,5 +237,4 @@ curl -H "X-API-Key: $API_TOKEN" \
 ---
 
 Last updated: 2025-10
-
 
