@@ -42,6 +42,13 @@
 - Event cadence: Evaluated on the minute scheduler aligned to 5-minute boundaries (closed‑bar guaranteed). No intrabar/tick evaluation.
 - Email: Compact message with timeframe, new strongest/weakest, strength values, and previous winners for context. Cooldown is bypassed for this alert type to ensure every change is sent.
 
+Troubleshooting (Currency Strength)
+- Error fetching alerts: Most commonly due to the table not existing or wrong Supabase env.
+  - Ensure `supabase_currency_strength_tracker_alerts_schema.sql` is applied to your project.
+  - Confirm `TENANT` and the corresponding `*_SUPABASE_URL` and `*_SUPABASE_SERVICE_KEY` are set (service role key required).
+  - Verify `GET {SUPABASE_URL}/rest/v1/currency_strength_tracker_alerts` returns 200 with the service key.
+  - To see more logs, set `ALERT_VERBOSE_LOGS=true`.
+
 **System Safeguards**
 - Per‑pair concurrency and warm‑up enforced.
 - Skip stale TFs (last candle age > 2× TF length).

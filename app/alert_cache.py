@@ -358,13 +358,13 @@ class AlertCache:
             return []
 
     async def _fetch_currency_strength_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Fetch Currency Strength tracker alerts from Supabase (optional table).
+        """Fetch Currency Strength tracker alerts from Supabase (single-alert model).
 
-        Table name (recommended): currency_strength_alerts
-        Columns: id, user_id, user_email, alert_name, timeframe, is_active, notification_methods, created_at, updated_at
+        Table: currency_strength_tracker_alerts
+        Columns: id, user_id, user_email, timeframe, is_active, created_at, updated_at
         """
         try:
-            url = f"{self.supabase_url}/rest/v1/currency_strength_alerts"
+            url = f"{self.supabase_url}/rest/v1/currency_strength_tracker_alerts"
             params = {
                 "select": "*",
                 "is_active": "eq.true",
@@ -377,7 +377,10 @@ class AlertCache:
                         print(f"❌ Failed to fetch currency strength alerts: {response.status}")
                         return []
         except Exception as e:
-            print(f"❌ Error fetching currency strength alerts: {e}")
+            try:
+                print(f"❌ Error fetching currency strength alerts from {url}: {type(e).__name__}: {e}")
+            except Exception:
+                print("❌ Error fetching currency strength alerts (url/err unavailable)")
             return []
     
     async def start_refresh_scheduler(self):
