@@ -30,6 +30,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap and RSI alerts with email notifications
+ - Currency Strength alerts: notifies whenever the strongest/weakest fiat currency changes for a configured timeframe
  - **Event‑Driven Alerts**: Alerts are evaluated immediately after the indicator scheduler updates the in‑memory `indicator_cache` on closed bars. A minute scheduler remains as a safety net.
 - **Smart Email Cooldown**: Value-based cooldown prevents spam while allowing significant RSI changes (email-level only; RSI Tracker pair-level cooldown removed)
 - **Intelligent Caching**: Memory-efficient selective data caching

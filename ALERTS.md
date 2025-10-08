@@ -1,5 +1,5 @@
 **Overview**
-- Supported alerts: RSI Tracker, Quantum Analysis (Heatmap) Tracker, and Quantum Analysis: Custom Indicator Tracker. RSI uses closed-bar evaluation.
+- Supported alerts: RSI Tracker, Quantum Analysis (Heatmap) Tracker, Quantum Analysis: Custom Indicator Tracker, and Currency Strength Tracker. RSI uses closed-bar evaluation.
 - Delivery channel: Email (IST timestamps). Telegram is out of scope.
 - Trigger philosophy: fire on threshold crossings; use per-side cooldown and threshold‑level re‑arm.
  - MT5 data source and closed-bar policy are described in `MT5.md` (see Data Fetch and WebSocket sections).
@@ -31,6 +31,16 @@
   - Pairs: fixed set, backend uses a documented list (no per-alert selection, no env overrides).
   - Behavior: If any pair crosses into overbought/oversold on the closed candle, a trigger is recorded and emailed.
   - Supported trading pairs (MT5-suffixed): `EURUSDm, GBPUSDm, USDJPYm, USDCHFm, AUDUSDm, USDCADm, NZDUSDm, EURGBPm, EURJPYm, EURCHFm, EURAUDm, EURCADm, EURNZDm, GBPJPYm, GBPCHFm, GBPAUDm, GBPCADm, GBPNZDm, AUDJPYm, AUDCHFm, AUDCADm, AUDNZDm, NZDJPYm, NZDCHFm, NZDCADm, CADJPYm, CADCHFm, CHFJPYm, XAUUSDm, XAGUSDm, BTCUSDm, ETHUSDm`.
+
+**Currency Strength Tracker (new)**
+- What: Triggers whenever the strongest or weakest fiat currency changes for the configured timeframe.
+- Who: One alert per user (single-alert model), delivered via email.
+- Timeframe: Choose exactly one (5M, 15M, 30M, 1H, 4H, 1D, 1W). Minimum supported is 5M.
+- Universe: Only fiat FX legs are considered: USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD. Non‑fiat symbols (e.g., metals/crypto) are ignored when computing strength.
+- Calculation: Closed‑bar ROC on pair closes with log returns aggregated by base/quote contribution and rank‑normalized to a 10–90 scale (see `app/currency_strength.py`).
+- Trigger logic: On each closed‑bar evaluation for the selected timeframe, find current strongest and weakest currencies; if either differs from the previously observed winners for this alert, fire exactly once and baseline to the new winners.
+- Event cadence: Evaluated on the minute scheduler aligned to 5-minute boundaries (closed‑bar guaranteed). No intrabar/tick evaluation.
+- Email: Compact message with timeframe, new strongest/weakest, strength values, and previous winners for context. Cooldown is bypassed for this alert type to ensure every change is sent.
 
 **System Safeguards**
 - Per‑pair concurrency and warm‑up enforced.

@@ -35,6 +35,7 @@ from app.alert_cache import alert_cache
 from app.rsi_tracker_alert_service import rsi_tracker_alert_service
 from app.heatmap_tracker_alert_service import heatmap_tracker_alert_service
 from app.heatmap_indicator_tracker_alert_service import heatmap_indicator_tracker_alert_service
+from app.currency_strength_alert_service import currency_strength_alert_service
 from app.email_service import email_service
 from app.daily_mail_service import daily_mail_scheduler
 from app.models import (
@@ -558,6 +559,11 @@ async def _minute_alerts_scheduler():
                 logger.info("🔎 indicator_tracker_eval | triggers: %d", len(indicator_trig))
             except Exception as e:
                 print(f"❌ Indicator Tracker evaluation error: {e}")
+            try:
+                curstr_trig = await currency_strength_alert_service.check_currency_strength_alerts()
+                logger.info("🔎 curstr_tracker_eval | triggers: %d", len(curstr_trig))
+            except Exception as e:
+                print(f"❌ Currency Strength evaluation error: {e}")
 
             # Schedule next 5-minute boundary from current time
             next_run = calculate_next_update_time(datetime.now(timezone.utc), TF.M5)

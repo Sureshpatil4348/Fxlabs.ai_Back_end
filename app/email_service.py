@@ -1830,5 +1830,135 @@ class EmailService:
             logger.error(f"❌ Error sending daily brief: {e}")
             return False
 
+    def _build_currency_strength_email_body(
+        self,
+        alert_name: str,
+        timeframe: str,
+        triggered_items: List[Dict[str, Any]],
+        prev_winners: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """Build HTML body for Currency Strength alert (strongest/weakest changes)."""
+        try:
+            strongest = next((i for i in triggered_items if str(i.get("signal")).lower() == "strongest"), None)
+            weakest = next((i for i in triggered_items if str(i.get("signal")).lower() == "weakest"), None)
+        except Exception:
+            strongest = None
+            weakest = None
+
+        s_sym = (strongest or {}).get("symbol", "-")
+        s_val = (strongest or {}).get("strength", "-")
+        w_sym = (weakest or {}).get("symbol", "-")
+        w_val = (weakest or {}).get("strength", "-")
+
+        prev_strong = (prev_winners or {}).get("strongest")
+        prev_weak = (prev_winners or {}).get("weakest")
+
+        ts_local = self._format_now_local(self.tz_name)
+
+        body = f"""
+<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+  <title>FxLabs • Currency Strength Alert</title>
+  <style>
+    .card{{background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827}}
+    .row{{display:flex;justify-content:space-between;}}
+    .pill{{display:inline-block;padding:4px 8px;border-radius:999px;background:#EEF2FF;color:#3730A3;font-weight:700;font-size:12px;}}
+  </style>
+  </head>
+  <body style=\"margin:0;background:#F5F7FB;\">\n
+  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n
+    {self._build_common_header('Currency Strength', self.tz_name)}
+
+    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" class=\"card\">\n
+      <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">{alert_name}</td></tr>
+      <tr><td style=\"padding:16px 20px;font-size:14px;\">
+         <div class=\"row\" style=\"margin-bottom:12px;\">
+            <div><span class=\"pill\">Timeframe</span> <strong style=\"margin-left:6px;\">{timeframe}</strong></div>
+            <div style=\"font-size:12px;color:#6B7280;\">{ts_local}</div>
+         </div>
+         <div style=\"margin-top:4px;margin-bottom:14px;color:#374151;\">The strongest/weakest currency has changed based on closed-bar returns.</div>
+         <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;\">
+            <tr style=\"background:#F9FAFB;font-weight:600;\"><td style=\"padding:10px\">Role</td><td style=\"padding:10px\">Currency</td><td style=\"padding:10px\">Strength</td></tr>
+            <tr><td style=\"padding:10px;color:#065F46;font-weight:700;\">Strongest</td><td style=\"padding:10px;\">{s_sym}</td><td style=\"padding:10px;\">{s_val}</td></tr>
+            <tr><td style=\"padding:10px;color:#7F1D1D;font-weight:700;border-top:1px solid #E5E7EB;\">Weakest</td><td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{w_sym}</td><td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{w_val}</td></tr>
+         </table>
+         <div style=\"margin-top:10px;color:#6B7280;font-size:12px;\">Previous: Strongest = {prev_strong or '-'}, Weakest = {prev_weak or '-'}
+         </div>
+      </td></tr>
+      <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">For education only. © FxLabs AI</td></tr>
+    </table>
+  </td></tr></table>
+  </body>
+  </html>
+        """
+        return body
+
+    async def send_currency_strength_alert(
+        self,
+        user_email: str,
+        alert_name: str,
+        timeframe: str,
+        triggered_items: List[Dict[str, Any]],
+        prev_winners: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Send Currency Strength alert email.
+
+        Semantics: fire on each change of strongest/weakest — bypass value-based cooldowns.
+        """
+        if BYPASS_EMAIL_ALERTS:
+            logger.info(f"🚫 Email alerts bypassed - Currency strength alert for {user_email} ({alert_name}) would have been sent")
+            return True
+        if not self.sg:
+            self._log_config_diagnostics(context="currency strength alert email")
+            return False
+
+        try:
+            subject = f"Trading Alert: {alert_name}"
+            html_body = self._build_currency_strength_email_body(alert_name, timeframe, triggered_items, prev_winners)
+            # Build a simple text alternative
+            try:
+                strong = next((i for i in triggered_items if str(i.get('signal')).lower() == 'strongest'), None)
+                weak = next((i for i in triggered_items if str(i.get('signal')).lower() == 'weakest'), None)
+                lines = [
+                    f"Currency Strength Alert - {alert_name}",
+                    f"Timeframe: {timeframe}",
+                    f"Strongest: {(strong or {}).get('symbol','-')} { (strong or {}).get('strength','-')}",
+                    f"Weakest: {(weak or {}).get('symbol','-')} { (weak or {}).get('strength','-')}",
+                ]
+                text_body = "\n".join(lines)
+            except Exception:
+                text_body = f"Currency Strength Alert - {alert_name} ({timeframe})"
+
+            # Do not use cooldown for this alert type; each change is actionable.
+            mail = self._build_mail(
+                subject=subject,
+                to_email_addr=user_email,
+                html_body=html_body,
+                text_body=text_body,
+                category="currency-strength",
+            )
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: self.sg.send(mail))
+            if response.status_code in [200, 201, 202]:
+                logger.info(f"✅ Currency strength alert email sent to {user_email}")
+                return True
+            else:
+                logger.error(f"❌ Failed to send currency strength alert email: status={response.status_code}")
+                try:
+                    body_preview = str(getattr(response, "body", ""))
+                    if len(body_preview) > 512:
+                        body_preview = body_preview[:512]
+                    if body_preview:
+                        logger.error(f"   Response body (trimmed): {body_preview}")
+                except Exception:
+                    pass
+                return False
+        except Exception as e:
+            logger.error(f"❌ Error sending currency strength alert email: {e}")
+            self._log_sendgrid_exception(context="currency-strength", error=e, to_email=user_email)
+            return False
+
 # Global email service instance
 email_service = EmailService()

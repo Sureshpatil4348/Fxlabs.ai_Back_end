@@ -105,6 +105,8 @@ class AlertCache:
             heatmap_tracker_alerts = await self._fetch_heatmap_tracker_alerts(headers)
             # Fetch Heatmap Custom Indicator Tracker alerts (single-alert model)
             heatmap_indicator_tracker_alerts = await self._fetch_heatmap_indicator_tracker_alerts(headers)
+            # Fetch Currency Strength tracker alerts (single-alert model)
+            currency_strength_alerts = await self._fetch_currency_strength_alerts(headers)
             
             # Group alerts by user_id
             new_cache = {}
@@ -176,6 +178,25 @@ class AlertCache:
                         "created_at": alert.get("created_at"),
                         "updated_at": alert.get("updated_at"),
                     })
+
+            # Process Currency Strength tracker alerts (single alert per user)
+            for alert in currency_strength_alerts:
+                user_id = alert.get("user_id")
+                if user_id:
+                    if user_id not in new_cache:
+                        new_cache[user_id] = []
+                    new_cache[user_id].append({
+                        "type": "currency_strength_tracker",
+                        "id": alert.get("id"),
+                        "alert_name": alert.get("alert_name", "Currency Strength Alert"),
+                        "user_id": alert.get("user_id"),
+                        "user_email": alert.get("user_email"),
+                        "is_active": alert.get("is_active", True),
+                        "timeframe": alert.get("timeframe", "1H"),
+                        "notification_methods": alert.get("notification_methods", ["email"]),
+                        "created_at": alert.get("created_at"),
+                        "updated_at": alert.get("updated_at"),
+                    })
             
             # Update cache
             self._cache = new_cache
@@ -236,6 +257,7 @@ class AlertCache:
                     rsi_tracker=len(categories.get("rsi_tracker", [])),
                     heatmap_tracker=len(categories.get("heatmap_tracker", [])),
                     heatmap_indicator_tracker=len(categories.get("heatmap_indicator_tracker", [])),
+                    currency_strength_tracker=len(categories.get("currency_strength_tracker", [])),
                 )
             except Exception:
                 pass
@@ -333,6 +355,29 @@ class AlertCache:
                         return []
         except Exception as e:
             print(f"❌ Error fetching heatmap indicator tracker alerts: {e}")
+            return []
+
+    async def _fetch_currency_strength_alerts(self, headers: Dict[str, str]) -> List[Dict[str, Any]]:
+        """Fetch Currency Strength tracker alerts from Supabase (optional table).
+
+        Table name (recommended): currency_strength_alerts
+        Columns: id, user_id, user_email, alert_name, timeframe, is_active, notification_methods, created_at, updated_at
+        """
+        try:
+            url = f"{self.supabase_url}/rest/v1/currency_strength_alerts"
+            params = {
+                "select": "*",
+                "is_active": "eq.true",
+            }
+            async with aiohttp.ClientSession(timeout=self.timeout) as session:
+                async with session.get(url, headers=headers, params=params) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        print(f"❌ Failed to fetch currency strength alerts: {response.status}")
+                        return []
+        except Exception as e:
+            print(f"❌ Error fetching currency strength alerts: {e}")
             return []
     
     async def start_refresh_scheduler(self):
