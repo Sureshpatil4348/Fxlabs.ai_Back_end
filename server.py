@@ -167,7 +167,13 @@ async def lifespan(app: FastAPI):
     # Warm populate currency strength cache (best-effort, non-blocking)
     async def _warm_populate_currency_strength_cache() -> None:
         try:
+            # Only supported timeframes (>=5M and WS-allowed)
             baseline_tfs: List[Timeframe] = [Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
+            try:
+                allowed_tfs = ALLOWED_WS_TIMEFRAMES
+            except Exception:
+                allowed_tfs = set(Timeframe)
+            baseline_tfs = [tf for tf in baseline_tfs if tf in allowed_tfs]
             try:
                 symbols_for_rollout: List[str] = list(ALLOWED_WS_SYMBOLS)
             except Exception:
@@ -779,10 +785,14 @@ async def _indicator_scheduler() -> None:
                                 # Never let a single client block the scheduler
                                 continue
 
-                    # Compute and cache currency strength for this timeframe once per poll cycle per timeframe
+                    # Compute and cache currency strength for this timeframe once per poll cycle per timeframe (closed-bar only)
                     try:
-                        # Enforce minimum timeframe of 5M for currency strength
-                        if tf == Timeframe.M1:
+                        # Enforce minimum timeframe of 5M and WS-allowed timeframes for currency strength
+                        try:
+                            allowed_tfs = ALLOWED_WS_TIMEFRAMES
+                        except Exception:
+                            allowed_tfs = set(Timeframe)
+                        if tf == Timeframe.M1 or tf not in allowed_tfs:
                             pass
                         elif tf.value not in tfs_cs_updated:
                             # Use the same rollout symbols set for strength calculation

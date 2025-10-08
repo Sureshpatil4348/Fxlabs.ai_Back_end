@@ -5,12 +5,12 @@ This document describes how the frontend should consume market data and indicato
 ### Answers to common questions
 
 - **Mechanism to fetch indicators for different timeframes via WebSocket?**
-  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. It also broadcasts `currency_strength_update` snapshots per timeframe using closed-candle ROC aggregation for the 8 fiat currencies. Note: Currency Strength enforces a minimum timeframe of `5M` (no `1M`).
+  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. It also broadcasts `currency_strength_update` snapshots over WebSocket only on closed bars and only for supported (WS-allowed) timeframes, using closed-candle ROC aggregation for the 8 fiat currencies. Note: Currency Strength enforces a minimum timeframe of `5M` (no `1M`).
   - There is no per-client subscription filtering in v2. Clients receive broadcast updates when a new closed bar is detected.
 
 - **Should the frontend use REST instead?**
   - Use both:
-    - WebSocket v2 for live ticks and closed-bar `indicator_update` pushes.
+    - WebSocket v2 for live ticks, closed-bar `indicator_update`, and closed-bar `currency_strength_update` pushes (only for WS-allowed timeframes).
     - REST for initial state via `/api/indicator`.
   - v2 does not send initial OHLC or indicator snapshots on connect; fetch initial state via REST, then merge live pushes.
 
@@ -76,7 +76,7 @@ This document describes how the frontend should consume market data and indicato
     }
     ```
   - Quantum update (computed alongside indicator updates):
-  - Currency Strength update (per timeframe; computed once per poll cycle):
+  - Currency Strength update (per timeframe; pushed on closed bars only; WS-allowed timeframes ≥ 5M):
     ```json
     {
       "type": "currency_strength_update",
@@ -237,4 +237,3 @@ curl -H "X-API-Key: $API_TOKEN" \
 ---
 
 Last updated: 2025-10
-

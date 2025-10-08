@@ -389,6 +389,8 @@ Live push when a new bar is detected by the 10s poller:
 }
 ```
 
+Currency Strength updates are also pushed over WebSocket on closed bars only and only for WS-allowed timeframes (minimum `5M`).
+
 Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
  
