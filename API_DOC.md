@@ -5,7 +5,7 @@ This document describes how the frontend should consume market data and indicato
 ### Answers to common questions
 
 - **Mechanism to fetch indicators for different timeframes via WebSocket?**
-  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. It also broadcasts `currency_strength_update` snapshots over WebSocket only on closed bars and only for supported (WS-allowed) timeframes, using closed-candle ROC aggregation for the 8 fiat currencies. Note: Currency Strength enforces a minimum timeframe of `5M` (no `1M`).
+  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. It also broadcasts `currency_strength_update` snapshots over WebSocket only on closed bars and only for supported (WS-allowed) timeframes, using closed-candle ROC aggregation for the 8 fiat currencies and normalizing to a −100..100 scale (0 = neutral). Note: Currency Strength enforces a minimum timeframe of `5M` (no `1M`).
   - There is no per-client subscription filtering in v2. Clients receive broadcast updates when a new closed bar is detected.
 
 - **Should the frontend use REST instead?**
@@ -83,7 +83,7 @@ This document describes how the frontend should consume market data and indicato
       "timeframe": "5M",
       "data": {
         "bar_time": 1696229940000,
-        "strength": {"USD": 62.3, "EUR": 47.8, "GBP": 55.1, "JPY": 41.2, "AUD": 58.9, "CAD": 52.4, "CHF": 44.7, "NZD": 37.5}
+        "strength": {"USD": 23.5, "EUR": -12.2, "GBP": 8.7, "JPY": -31.4, "AUD": 15.9, "CAD": 2.1, "CHF": -5.6, "NZD": -1.0}
       }
     }
     ```

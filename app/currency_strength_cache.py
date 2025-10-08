@@ -38,7 +38,7 @@ class CurrencyStrengthCache:
 
         Args:
             timeframe: One of 5M, 15M, 30M, 1H, 4H, 1D, 1W.
-            values: Mapping of currency code -> strength (0-100 style scale).
+            values: Mapping of currency code -> strength (normalized, -100..100; 0 = neutral).
             ts_ms: Timestamp of the contributing closed bar set (epoch milliseconds). If None, uses now.
         """
         lock_key = self._lock_key(timeframe)
@@ -81,5 +81,4 @@ __all__ = [
     "currency_strength_cache",
     "CurrencyStrengthCache",
 ]
-
 

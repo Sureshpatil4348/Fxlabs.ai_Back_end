@@ -338,6 +338,7 @@ Internal alert tick_data shape:
   - Symbols: all symbols in `ALLOWED_WS_SYMBOLS` (defaults to all `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`, broker‑suffixed)
 - Timeframes: M1, M5, M15, M30, H1, H4, D1, W1
   - Note: `currency_strength` enforces a minimum timeframe of `5M` (no `1M`).
+  - Scale: `currency_strength` values are normalized to −100..100 (0 = neutral).
 - Subscribe remains optional and is primarily used to receive `initial_ohlc` / `initial_indicators` snapshots on demand.
 
 Security and input validation (mirrors REST policy):
@@ -395,7 +396,7 @@ Currency Strength updates are also pushed over WebSocket on closed bars only and
 Server logs: On each new closed-bar currency strength broadcast, the server logs an INFO line on logger `obs.curstr` with the timeframe, bar_time, and the JSON map of strengths, for example:
 
 ```
-📊 currency_strength_update | tf=5M bar_time=1696229940000 values={"USD":62.3,"EUR":47.8,"GBP":55.1,"JPY":41.2,"AUD":58.9,"CAD":52.4,"CHF":44.7,"NZD":37.5}
+📊 currency_strength_update | tf=5M bar_time=1696229940000 values={"USD":23.5,"EUR":-12.2,"GBP":8.7,"JPY":-31.4,"AUD":15.9,"CAD":2.1,"CHF":-5.6,"NZD":-1.0}
 ```
 Logs are written to `logs/<UTC-start>.log` (rotating at ~10MB x5) and to console per `app/logging_config.py`.
 

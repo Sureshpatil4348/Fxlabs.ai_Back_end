@@ -37,7 +37,7 @@
 - Who: One alert per user (single-alert model), delivered via email.
 - Timeframe: Choose exactly one (5M, 15M, 30M, 1H, 4H, 1D, 1W). Minimum supported is 5M.
 - Universe: Only fiat FX legs are considered: USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD. Non‑fiat symbols (e.g., metals/crypto) are ignored when computing strength.
-- Calculation: Closed‑bar ROC on pair closes with log returns aggregated by base/quote contribution and rank‑normalized to a 10–90 scale (see `app/currency_strength.py`).
+- Calculation: Closed‑bar ROC on pair closes with log returns aggregated by base/quote contribution and rank‑normalized to a −100..100 scale (0 = neutral) (see `app/currency_strength.py`).
 - Trigger logic: On each closed‑bar evaluation for the selected timeframe, find current strongest and weakest currencies; if either differs from the previously observed winners for this alert, fire exactly once and baseline to the new winners.
 - Event cadence: Evaluated on the minute scheduler aligned to 5-minute boundaries (closed‑bar guaranteed). No intrabar/tick evaluation.
 - Email: Compact message with timeframe, new strongest/weakest, strength values, and previous winners for context. Cooldown is bypassed for this alert type to ensure every change is sent.

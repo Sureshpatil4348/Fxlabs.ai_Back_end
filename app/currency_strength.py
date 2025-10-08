@@ -47,7 +47,8 @@ async def compute_currency_strength_for_timeframe(
 ) -> Optional[Tuple[int, Dict[str, float]]]:
     """Compute currency strength snapshot for a timeframe using ROC (log returns) on closed bars.
 
-    Returns (ts_ms, strength_map) or None if insufficient data.
+    Returns (ts_ms, strength_map) where strength_map values are normalized to the range [-100, 100]
+    with 0 as neutral. Returns None if insufficient data.
     """
     # Accumulators
     contrib_sum: Dict[str, float] = {c: 0.0 for c in SUPPORTED_FIAT}
@@ -131,16 +132,27 @@ async def compute_currency_strength_for_timeframe(
             elif v > 90.0:
                 normalized[c] = 90.0
 
+    # Map normalized [10,90] to [-100,100] with 0 as neutral.
+    # Linear mapping: (-100) <= (val - 50)*2.5 <= 100.
+    scaled: Dict[str, float] = {}
+    for c, v in normalized.items():
+        nv = (v - 50.0) * 2.5
+        # Safety clamp
+        if nv < -100.0:
+            nv = -100.0
+        elif nv > 100.0:
+            nv = 100.0
+        scaled[c] = nv
+
     # Ensure timestamp
     if latest_ts_ms <= 0:
         latest_ts_ms = 0
 
-    return latest_ts_ms, normalized
+    return latest_ts_ms, scaled
 
 
 __all__ = [
     "compute_currency_strength_for_timeframe",
     "SUPPORTED_FIAT",
 ]
-
 
