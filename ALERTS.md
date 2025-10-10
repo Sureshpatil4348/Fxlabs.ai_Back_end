@@ -148,6 +148,7 @@ Verbose evaluation logs
 Configuration:
 - Single alert per user (unique by `user_id`)
 - Validate pairs (≤3), trading style, and thresholds
+- Symbol normalization: pairs are canonicalized to MT5 broker symbols; if a pair is provided without the trailing `m` (e.g., `BTCUSD`), it is auto-mapped to its broker-suffixed form (e.g., `BTCUSDm`) when available. UI may display `BTC/USD`, but backend evaluation uses the canonical symbol.
 - CRUD only on alert config; backend evaluates triggers; no DB trigger table
 
 Supabase Schema: `supabase_heatmap_tracker_alerts_schema.sql`
@@ -165,6 +166,7 @@ Configuration:
 - Single alert per user (unique by `user_id`)
 - Validate pairs (≤3), timeframe, indicator
 - CRUD only on alert config; backend evaluates triggers; no DB trigger table
+- Symbol normalization: pairs are canonicalized to MT5 broker symbols; if provided without the trailing `m`, they are mapped when a matching broker symbol exists.
 
 Supabase Schema: `supabase_heatmap_indicator_tracker_alerts_schema.sql`
 - `heatmap_indicator_tracker_alerts` only (trigger tables removed)

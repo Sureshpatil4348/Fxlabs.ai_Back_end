@@ -20,6 +20,8 @@ from .indicators import (
     ichimoku_series as ind_ichimoku_series,
 )
 from .quantum import compute_quantum_for_symbol
+from .mt5_utils import canonicalize_symbol
+from .constants import RSI_SUPPORTED_SYMBOLS
 
 
 configure_logging()
@@ -87,19 +89,24 @@ class HeatmapTrackerAlertService:
 
                     ts_iso = datetime.now(timezone.utc).isoformat()
                     per_alert_triggers: List[Dict[str, Any]] = []
-                    for symbol in pairs:
-                        async with pair_locks.acquire(self._key(alert_id, symbol)):
+                    for input_symbol in pairs:
+                        # Canonicalize symbol and auto-append broker suffix when missing
+                        symbol_canon = canonicalize_symbol(input_symbol)
+                        if symbol_canon not in RSI_SUPPORTED_SYMBOLS and (symbol_canon + "m") in RSI_SUPPORTED_SYMBOLS:
+                            symbol_canon = symbol_canon + "m"
+                        async with pair_locks.acquire(self._key(alert_id, symbol_canon)):
                             # Compute Buy%/Sell% via real OHLC-derived RSI mapping
-                            buy_pct, sell_pct, final_score = await self._compute_buy_sell_percent(symbol, style)
+                            buy_pct, sell_pct, final_score = await self._compute_buy_sell_percent(symbol_canon, style)
                             rsi_val = buy_pct  # Use Buy% as trigger metric for thresholds
                             # Pair evaluation start (verbose)
-                            k = self._key(alert_id, symbol)
+                            k = self._key(alert_id, symbol_canon)
                             prev_state = self._armed.get(k)
                             log_debug(
                                 logger,
                                 "pair_eval_start",
                                 alert_id=alert_id,
-                                symbol=symbol,
+                                symbol=symbol_canon,
+                                input_symbol=input_symbol,
                                 style=style,
                                 buy_threshold=buy_t,
                                 sell_threshold=sell_t,
@@ -110,7 +117,7 @@ class HeatmapTrackerAlertService:
                                 logger,
                                 "pair_eval_metrics",
                                 alert_id=alert_id,
-                                symbol=symbol,
+                                symbol=symbol_canon,
                                 buy_percent=round(buy_pct, 2),
                                 sell_percent=round(sell_pct, 2),
                                 final_score=round(final_score, 2),
@@ -119,7 +126,7 @@ class HeatmapTrackerAlertService:
                                 logger,
                                 "heatmap_eval",
                                 alert_id=alert_id,
-                                symbol=symbol,
+                                symbol=symbol_canon,
                                 style=style,
                                 buy_percent=round(buy_pct, 2),
                                 sell_percent=round(sell_pct, 2),
@@ -139,7 +146,7 @@ class HeatmapTrackerAlertService:
                                     logger,
                                     "pair_eval_decision",
                                     alert_id=alert_id,
-                                    symbol=symbol,
+                                    symbol=symbol_canon,
                                     decision="baseline_skip",
                                     armed_buy=st.get("buy"),
                                     armed_sell=st.get("sell"),
@@ -155,7 +162,7 @@ class HeatmapTrackerAlertService:
                                     logger,
                                     "pair_rearm",
                                     alert_id=alert_id,
-                                    symbol=symbol,
+                                    symbol=symbol_canon,
                                     side="buy",
                                     rearm_threshold=buy_t,
                                     buy_percent=round(rsi_val, 2),
@@ -167,7 +174,7 @@ class HeatmapTrackerAlertService:
                                     logger,
                                     "pair_rearm",
                                     alert_id=alert_id,
-                                    symbol=symbol,
+                                    symbol=symbol_canon,
                                     side="sell",
                                     rearm_threshold=sell_t,
                                     buy_percent=round(rsi_val, 2),
@@ -217,7 +224,7 @@ class HeatmapTrackerAlertService:
                                     threshold=(buy_t if trig_type == "buy" else sell_t),
                                 )
                                 per_alert_triggers.append({
-                                    "symbol": symbol,
+                                    "symbol": symbol_canon,
                                     "timeframe": "style-weighted",
                                     "trigger_condition": trig_type,
                                     "buy_percent": round(buy_pct, 2),
@@ -230,7 +237,7 @@ class HeatmapTrackerAlertService:
                                     logger,
                                     "heatmap_tracker_trigger",
                                     alert_id=alert_id,
-                                    symbol=symbol,
+                                    symbol=symbol_canon,
                                     style=style,
                                     trigger=trig_type,
                                 )
@@ -251,7 +258,7 @@ class HeatmapTrackerAlertService:
                                     logger,
                                     "heatmap_no_trigger",
                                     alert_id=alert_id,
-                                    symbol=symbol,
+                                    symbol=symbol_canon,
                                     style=style,
                                     buy_percent=round(buy_pct, 2),
                                     sell_percent=round(sell_pct, 2),

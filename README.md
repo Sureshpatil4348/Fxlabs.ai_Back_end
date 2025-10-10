@@ -491,6 +491,7 @@ Symbol normalization (canonicalization):
 - Rules: trim whitespace, uppercase core instrument (e.g., `eurusd` → `EURUSD`), and force trailing broker suffix to lowercase `m` when present (`EURUSDM` → `EURUSDm`).
 - Environment allowlists (e.g., `WS_ALLOWED_SYMBOLS`) and rollout configs are normalized using the same rules.
 - Errors like `Unknown symbol: 'EURUSDM'. Similar symbols found: ['EURUSDm']` are automatically avoided; the server now resolves `...M` to `...m`.
+ - Alerts: if a pair is configured without the broker suffix (e.g., `BTCUSD`), the evaluators auto‑map it to its broker‑suffixed form (e.g., `BTCUSDm`) when available, ensuring parity with the WebSocket feed and UI.
 
 #### Email Template (RSI)
 - Compact, per‑pair card format.
