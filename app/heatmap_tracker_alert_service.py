@@ -173,6 +173,29 @@ class HeatmapTrackerAlertService:
                                     buy_percent=round(rsi_val, 2),
                                 )
 
+                            # Criteria snapshot (verbose): show exactly what we compare against
+                            buy_rearm_th = max(0.0, buy_t - 5)
+                            sell_rearm_th = min(100.0, sell_t + 5)
+                            equiv_sell_pct_th = 100.0 - sell_t
+                            log_debug(
+                                logger,
+                                "pair_eval_criteria",
+                                alert_id=alert_id,
+                                symbol=symbol,
+                                style=style,
+                                buy_percent=round(rsi_val, 2),
+                                buy_threshold=buy_t,
+                                sell_percent=round(sell_pct, 2),
+                                sell_threshold=sell_t,
+                                sell_equiv_percent_threshold=round(equiv_sell_pct_th, 2),
+                                armed_buy=st.get("buy", True),
+                                armed_sell=st.get("sell", True),
+                                rearm_buy_threshold=round(buy_rearm_th, 2),
+                                rearm_sell_threshold=round(sell_rearm_th, 2),
+                                can_trigger_buy=bool(st.get("buy", True) and rsi_val >= buy_t),
+                                can_trigger_sell=bool(st.get("sell", True) and rsi_val <= sell_t),
+                            )
+
                             trig_type: Optional[str] = None
                             # Trigger on RSI threshold crossings with per-side arming
                             if st["buy"] and rsi_val >= buy_t:

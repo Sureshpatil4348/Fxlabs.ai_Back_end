@@ -587,6 +587,7 @@ Notes:
   - Set `ALERT_VERBOSE_LOGS=true` and `LOG_LEVEL=DEBUG` to enable per‑pair logs:
     - `pair_eval_start` (thresholds and previous armed state)
     - `pair_eval_metrics` (Buy%/Sell%/Final)
+    - `pair_eval_criteria` (exact comparisons and re‑arm thresholds)
     - `pair_rearm` (side re‑armed after leaving zone)
     - `pair_eval_decision` (baseline skip or trigger)
     - `heatmap_no_trigger` now includes a `reason` field for clarity

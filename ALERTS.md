@@ -140,6 +140,7 @@ Verbose evaluation logs
   - `alert_eval_start` / `alert_eval_end`: per‑alert cycle markers with config echo
   - `pair_eval_start`: alert/pair baseline including thresholds and previous armed state
   - `pair_eval_metrics`: computed Buy% / Sell% / Final Score for the pair
+  - `pair_eval_criteria`: exact comparison snapshot — Buy% vs `buy_threshold`, Buy% vs `sell_threshold` (and equivalent `Sell% ≥ 100 − sell_threshold`), current armed flags, and re‑arm thresholds
   - `pair_rearm`: side re‑armed after leaving zone with margin
   - `pair_eval_decision`: final decision for the pair — `baseline_skip` or `trigger`
   - `heatmap_no_trigger`: includes Buy%/Sell%, thresholds, armed flags, and a `reason` field (`within_neutral_band` | `below_buy_threshold` | `above_sell_threshold` | `buy_disarmed` | `sell_disarmed`)
