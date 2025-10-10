@@ -12,6 +12,9 @@ import builtins
 from .config import (
     JBLANKED_API_KEY,
     JBLANKED_API_URL,
+    ASOASIS_API_FOREX_NEWS_ENDPOINT,
+    ASOASIS_API_FOREX_NEWS_CLIENT_ID,
+    ASOASIS_API_FOREX_NEWS_CLIENT_SECRET,
     NEWS_CACHE_MAX_ITEMS,
     NEWS_UPDATE_INTERVAL_HOURS,
     PERPLEXITY_API_KEY,
@@ -268,6 +271,11 @@ def _split_headline(headline: Optional[str]) -> tuple:
 
 
 def _make_dedup_key_from_item(item: NewsItem) -> Optional[tuple]:
+    # Prefer upstream-provided stable uuid when available
+    if getattr(item, "uuid", None):
+        uid = str(item.uuid).strip()
+        if uid:
+            return ("uuid", uid)
     currency = (item.currency or "").strip()
     time_iso = (item.time or "").strip()
     base, _, _ = _split_headline(item.headline)
@@ -277,6 +285,11 @@ def _make_dedup_key_from_item(item: NewsItem) -> Optional[tuple]:
 
 
 def _make_dedup_key_from_analysis(analysis: NewsAnalysis) -> Optional[tuple]:
+    # Prefer upstream-provided stable uuid when available
+    if getattr(analysis, "uuid", None):
+        uid = str(analysis.uuid).strip()
+        if uid:
+            return ("uuid", uid)
     currency = (analysis.currency or "").strip()
     time_iso = (analysis.time or "").strip()
     base, _, _ = _split_headline(analysis.headline)
@@ -294,99 +307,115 @@ def _iso_to_dt(time_iso: Optional[str]) -> datetime:
         return datetime.fromtimestamp(0, tz=timezone.utc)
 
 
-async def fetch_jblanked_news() -> List[NewsItem]:
+async def fetch_asoasis_news() -> List[NewsItem]:
+    """Fetch today's Forex calendar from ASOasis API and normalize to NewsItem.
+
+    - Endpoint: ASOASIS_API_FOREX_NEWS_ENDPOINT (defaults to Asia/Kolkata timezone)
+    - Headers: client-id, client-secret (from env)
+    - Filters: Only return items with impact == "high" (case-insensitive) for further processing.
+    - Dedup: Consumers should prefer `uuid` for dedup.
+    """
     try:
-        print("📰 [fetch] Starting Jblanked fetch...")
-        print(f"📰 [fetch] URL: {JBLANKED_API_URL}")
-        headers = {"Authorization": f"Api-Key {JBLANKED_API_KEY}", "Content-Type": "application/json"}
+        print("📰 [fetch] Starting ASOasis fetch...")
+        print(f"📰 [fetch] URL: {ASOASIS_API_FOREX_NEWS_ENDPOINT}")
+        headers = {
+            "client-id": ASOASIS_API_FOREX_NEWS_CLIENT_ID,
+            "client-secret": ASOASIS_API_FOREX_NEWS_CLIENT_SECRET,
+            "Accept": "application/json",
+        }
         async with aiohttp.ClientSession() as session:
-            async with session.get(JBLANKED_API_URL, headers=headers) as response:
+            async with session.get(ASOASIS_API_FOREX_NEWS_ENDPOINT, headers=headers) as response:
                 print(f"📰 [fetch] HTTP status: {response.status}")
-                if response.status == 200:
-                    data = await response.json()
-                    print(f"📰 [fetch] JSON type: {type(data).__name__}")
-                    news_items = []
-                    if isinstance(data, list):
-                        print(f"📰 [parse] Top-level list detected. count={len(data)}")
-                        items = data
-                    elif isinstance(data, dict) and 'data' in data:
-                        try:
-                            count = len(data.get('data', []))
-                        except Exception:
-                            count = 'unknown'
-                        print(f"📰 [parse] Dict with 'data' key detected. count={count}")
-                        items = data['data']
-                    else:
-                        items = []
-                        if isinstance(data, dict):
-                            print(f"📰 [parse] Unknown dict structure. Keys={list(data.keys())[:10]}")
-                            for _, value in data.items():
-                                if isinstance(value, list):
-                                    items = value
-                                    break
-                        print(f"📰 [parse] First list found count={len(items)}")
-                    for item in items:
-                        if isinstance(item, dict):
-                            headline_before = _get_field(item, ['Name', 'title', 'headline', 'name'])
-                            headline = _get_field(item, ['Name', 'title', 'headline', 'name'])
-                            forecast = _get_field(item, ['Forecast', 'forecast', 'expected'])
-                            previous = _get_field(item, ['Previous', 'previous', 'prev'])
-                            actual = _get_field(item, ['Actual', 'actual', 'result'])
-                            currency = _get_field(item, ['Currency', 'currency', 'ccy', 'country'])
-                            impact = _get_field(item, ['Strength', 'impact', 'importance'])
-                            time_value = _get_field(item, ['TimeUTC', 'datetime', 'dateTime', 'timestamp', 'Date', 'date', 'Time', 'time'])
-                            outcome = item.get('Outcome', '')
-                            quality = item.get('Quality', '')
-                            if outcome and headline:
-                                headline = f"{headline} ({outcome})"
-                            if quality and headline:
-                                headline = f"{headline} - {quality}"
-                            if isinstance(forecast, (int, float)):
-                                forecast = str(forecast)
-                            if isinstance(previous, (int, float)):
-                                previous = str(previous)
-                            if isinstance(actual, (int, float)):
-                                actual = str(actual)
-                            if headline == '':
-                                headline = None
-                            if forecast == '':
-                                forecast = None
-                            if previous == '':
-                                previous = None
-                            if actual == '':
-                                actual = None
-                            if currency == '':
-                                currency = None
-                            if impact == '':
-                                impact = None
-                            # Normalize time to UTC ISO (assume upstream UTC+3 if naive)
-                            if time_value == '':
-                                time_iso = None
-                            else:
-                                time_iso = _to_utc_iso8601(time_value)
-                            print(
-                                f"📰 [item] headline='{(headline or headline_before or '')[:60]}' "
-                                f"time_raw='{str(time_value)[:32]}' -> time_utc='{(time_iso or 'None')[:32]}'"
-                            )
-                            news_item = NewsItem(
-                                headline=headline,
-                                forecast=forecast,
-                                previous=previous,
-                                actual=actual,
-                                currency=currency,
-                                impact=impact,
-                                time=time_iso,
-                            )
-                            news_items.append(news_item)
-                    print(f"📰 [fetch] Parsed news items: {len(news_items)}")
-                    return news_items
-                else:
-                    print(f"❌ Jblanked API error: {response.status}")
-                    text = await response.text()
-                    print(f"   Response: {text}")
+                if response.status != 200:
+                    print(f"❌ ASOasis API error: {response.status}")
+                    try:
+                        text = await response.text()
+                        print(f"   Response: {text[:500]}")
+                    except Exception:
+                        pass
                     return []
+                data = await response.json()
+                # Expected shape: { count: N, items: [...], timezone: 'Asia/Kolkata' }
+                items = []
+                if isinstance(data, dict):
+                    items = data.get("items") or []
+                elif isinstance(data, list):
+                    items = data
+                print(f"📰 [parse] items count={len(items)}")
+
+                news_items: List[NewsItem] = []
+                for raw in items:
+                    if not isinstance(raw, dict):
+                        continue
+                    # Map fields
+                    uid = str(raw.get("id") or "").strip() or None
+                    name = raw.get("name") or raw.get("title") or raw.get("headline") or ""
+                    headline = str(name).strip()
+                    forecast = raw.get("forecast")
+                    previous = raw.get("previous")
+                    actual = raw.get("actual")
+                    revision = raw.get("revision")
+                    currency = raw.get("currency") or raw.get("ccy") or raw.get("country")
+                    impact = raw.get("impact")
+                    time_value = raw.get("time") or raw.get("timestamp") or raw.get("date")
+
+                    # Normalize strings
+                    if isinstance(forecast, (int, float)):
+                        forecast = str(forecast)
+                    if isinstance(previous, (int, float)):
+                        previous = str(previous)
+                    if isinstance(actual, (int, float)):
+                        actual = str(actual)
+                    if isinstance(revision, (int, float)):
+                        revision = str(revision)
+
+                    # Convert blanks to None
+                    def _nz(v: Optional[str]) -> Optional[str]:
+                        try:
+                            if v is None:
+                                return None
+                            s = str(v).strip()
+                            return s if s else None
+                        except Exception:
+                            return None
+
+                    forecast = _nz(forecast)
+                    previous = _nz(previous)
+                    actual = _nz(actual)
+                    revision = _nz(revision)
+                    currency = _nz(currency)
+                    impact = _nz(impact)
+
+                    # Normalize time (epoch ms/seconds or ISO) -> UTC ISO Z
+                    time_iso = _to_utc_iso8601(time_value)
+
+                    # Filter: only high impact for downstream processing
+                    imp = (impact or "").strip().lower()
+                    if imp != "high":
+                        continue
+
+                    print(
+                        f"📰 [item] uuid='{(uid or '')[:8]}' headline='{headline[:60]}' time_raw='{str(time_value)[:32]}' -> time_utc='{(time_iso or 'None')[:32]}' impact='{imp}'"
+                    )
+
+                    news_items.append(
+                        NewsItem(
+                            uuid=uid,
+                            headline=headline or None,
+                            forecast=forecast,
+                            previous=previous,
+                            actual=actual,
+                            revision=revision,
+                            currency=currency,
+                            impact=impact,
+                            time=time_iso,
+                        )
+                    )
+
+                print(f"📰 [fetch] Parsed high-impact items: {len(news_items)}")
+                return news_items
     except Exception as e:
-        print(f"❌ Error fetching Jblanked API news: {e}")
+        print(f"❌ Error fetching ASOasis API news: {e}")
         import traceback
         traceback.print_exc()
         return []
@@ -638,10 +667,12 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                             "full_analysis": full_analysis_text,
                         }
                         return NewsAnalysis(
+                            uuid=news_item.uuid,
                             headline=news_item.headline,
                             forecast=news_item.forecast,
                             previous=news_item.previous,
                             actual=news_item.actual,
+                            revision=news_item.revision,
                             currency=news_item.currency,
                             time=news_item.time,
                             analysis=analysis,
@@ -661,10 +692,12 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
         # If all attempts failed, return a safe default analysis
         print("❌ [analyze] All attempts failed, returning safe default analysis")
         return NewsAnalysis(
+            uuid=news_item.uuid,
             headline=news_item.headline,
             forecast=news_item.forecast,
             previous=news_item.previous,
             actual=news_item.actual,
+            revision=news_item.revision,
             currency=news_item.currency,
             time=news_item.time,
             analysis={
@@ -684,7 +717,7 @@ async def update_news_cache():
     try:
         print("🗞️ [update] Starting news cache update...")
         news_cache_metadata["is_updating"] = True
-        news_items = await fetch_jblanked_news()
+        news_items = await fetch_asoasis_news()
         print(f"🗞️ [update] Fetched items: {len(news_items)}")
         if not news_items:
             print("⚠️ [update] No news items fetched, keeping existing cache")
@@ -724,10 +757,12 @@ async def update_news_cache():
                             print("✅ [update] Refreshed analysis")
                         else:
                             updated_cache[existing_map[key]] = NewsAnalysis(
+                                uuid=news_item.uuid,
                                 headline=news_item.headline,
                                 forecast=news_item.forecast,
                                 previous=news_item.previous,
                                 actual=news_item.actual,
+                                revision=news_item.revision,
                                 currency=news_item.currency,
                                 time=news_item.time,
                                 analysis={
@@ -754,10 +789,12 @@ async def update_news_cache():
                         print("✅ [update] Added analyzed item")
                     else:
                         updated_cache.append(NewsAnalysis(
+                            uuid=news_item.uuid,
                             headline=news_item.headline,
                             forecast=news_item.forecast,
                             previous=news_item.previous,
                             actual=news_item.actual,
+                            revision=news_item.revision,
                             currency=news_item.currency,
                             time=news_item.time,
                             analysis={
@@ -773,10 +810,12 @@ async def update_news_cache():
                 except asyncio.TimeoutError:
                     print(f"⏰ [update] Timeout analyzing new item: {news_item.headline[:50]}...")
                     updated_cache.append(NewsAnalysis(
+                        uuid=news_item.uuid,
                         headline=news_item.headline,
                         forecast=news_item.forecast,
                         previous=news_item.previous,
                         actual=news_item.actual,
+                        revision=news_item.revision,
                         currency=news_item.currency,
                         time=news_item.time,
                         analysis={
@@ -791,10 +830,12 @@ async def update_news_cache():
                 except Exception as e:
                     print(f"❌ [update] Error analyzing new item: {e}")
                     updated_cache.append(NewsAnalysis(
+                        uuid=news_item.uuid,
                         headline=news_item.headline,
                         forecast=news_item.forecast,
                         previous=news_item.previous,
                         actual=news_item.actual,
+                        revision=news_item.revision,
                         currency=news_item.currency,
                         time=news_item.time,
                         analysis={

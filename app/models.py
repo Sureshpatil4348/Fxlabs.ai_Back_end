@@ -67,20 +67,24 @@ class OHLC(BaseModel):
 
 
 class NewsItem(BaseModel):
-    headline: str
+    uuid: Optional[str] = None
+    headline: Optional[str] = None
     forecast: Optional[str] = None
     previous: Optional[str] = None
     actual: Optional[str] = None
+    revision: Optional[str] = None
     currency: Optional[str] = None
     impact: Optional[str] = None
     time: Optional[str] = None
 
 
 class NewsAnalysis(BaseModel):
-    headline: str
+    uuid: Optional[str] = None
+    headline: Optional[str] = None
     forecast: Optional[str] = None
     previous: Optional[str] = None
     actual: Optional[str] = None
+    revision: Optional[str] = None
     currency: Optional[str] = None
     time: Optional[str] = None
     analysis: Dict[str, str]
@@ -174,4 +178,3 @@ class HeatmapAlertTrigger(BaseModel):
     triggered_pairs: List[Dict[str, Any]]
     trigger_time: datetime
     alert_config: Dict[str, Any]
-

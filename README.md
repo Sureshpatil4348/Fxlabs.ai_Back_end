@@ -197,10 +197,10 @@ PORT=8000
 
 # News Analysis Configuration
 PERPLEXITY_API_KEY=your_perplexity_key
-JBLANKED_API_URL=https://www.jblanked.com/news/api/forex-factory/calendar/week/
-JBLANKED_API_KEY=your_jblanked_key
-NEWS_UPDATE_INTERVAL_HOURS=0.5  # 30 minutes
-JBLANKED_API_KEY=your_jblanked_key
+# ASOasis Forex Calendar (today; IST)
+ASOASIS_API_FOREX_NEWS_ENDPOINT=https://api.asoasis.tech/forex-calender/today?timezone=Asia/Kolkata
+ASOASIS_API_FOREX_NEWS_CLIENT_ID=your_client_id
+ASOASIS_API_FOREX_NEWS_CLIENT_SECRET=your_client_secret
 NEWS_UPDATE_INTERVAL_HOURS=0.5  # 30 minutes
 NEWS_CACHE_MAX_ITEMS=500
 
@@ -264,7 +264,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 - For observability, the batch log includes a CSV of recipient emails and count.
 
 #### News Reminder Behavior (High‑Impact Only)
-- The 5‑minute news reminder now filters to only AI‑normalized high‑impact items (`impact == "high"`). Medium/low impact items are skipped.
+- The 5‑minute news reminder filters to only AI‑normalized high‑impact items (`impact == "high"`). Medium/low impact items are skipped.
 - Source impact values and AI analysis are normalized to `high|medium|low`; only `high` qualifies for reminders.
 - Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
 
@@ -641,41 +641,37 @@ See `ALERTS.md` for the consolidated alerts product & tech spec.
 
 ### 📰 News API Usage (External Source + Internal Endpoints)
 
-#### External Source: Jblanked (Forex Factory Calendar - Weekly)
-- URL (default): `https://www.jblanked.com/news/api/forex-factory/calendar/week/`
-- Auth: `Authorization: Api-Key <JBLANKED_API_KEY>`
+#### External Source: ASOasis (Forex Calendar — Today)
+- URL (default): `https://api.asoasis.tech/forex-calender/today?timezone=Asia/Kolkata`
+- Headers: `client-id: <ASOASIS_API_FOREX_NEWS_CLIENT_ID>`, `client-secret: <ASOASIS_API_FOREX_NEWS_CLIENT_SECRET>`
 - Method: GET
 
 Example:
 ```bash
-export JBLANKED_API_URL="https://www.jblanked.com/news/api/forex-factory/calendar/week/"
-export JBLANKED_API_KEY="<your_jblanked_key>"
+export ASOASIS_API_FOREX_NEWS_ENDPOINT="https://api.asoasis.tech/forex-calender/today?timezone=Asia/Kolkata"
+export ASOASIS_API_FOREX_NEWS_CLIENT_ID="<your_client_id>"
+export ASOASIS_API_FOREX_NEWS_CLIENT_SECRET="<your_client_secret>"
 
 curl -s \
-  -H "Authorization: Api-Key $JBLANKED_API_KEY" \
-  -H "Content-Type: application/json" \
-  "$JBLANKED_API_URL" | jq .
+  -H "client-id: $ASOASIS_API_FOREX_NEWS_CLIENT_ID" \
+  -H "client-secret: $ASOASIS_API_FOREX_NEWS_CLIENT_SECRET" \
+  "$ASOASIS_API_FOREX_NEWS_ENDPOINT" | jq .
 ```
 
-Field mapping tolerated (multiple shapes):
-- headline: `Name | title | headline | name`
-- forecast: `Forecast | forecast | expected`
-- previous: `Previous | previous | prev`
-- actual: `Actual | actual | result`
-- currency: `Currency | currency | ccy | country`
-- impact: `Strength | impact | importance`
-- time: `Date | time | date | timestamp` → Converted from upstream UTC+3 to UTC ISO (Z)
-- optional context: `Outcome`, `Quality` appended to headline
+Response shape (example):
+```
+{
+  "count": 15,
+  "items": [ { "id": "uuid", "time": 1760039100000, "name": "...", "currency": "USD", "impact": "high", "actual": "", "previous": "", "forecast": "", "revision": "" } ],
+  "timezone": "Asia/Kolkata"
+}
+```
 
-Timezones:
-- Upstream: UTC+3 (as provided by Jblanked)
-- Processing/Serving: converted to UTC ISO8601 with Z
-
-Cache policy (weekly merge & dedup):
-- Fetch weekly data and normalize times to UTC.
-- Deduplicate using key: `(currency, UTC time, base headline)` where base headline excludes appended `(Outcome)` and ` - Quality`.
-- If a matching item reappears with changed `Outcome`, `Quality`, or `Actual`, refresh its AI analysis; otherwise, keep existing analysis (no duplicate calls).
-- After merge: sort cache by `time` (UTC) descending and trim to `NEWS_CACHE_MAX_ITEMS`.
+Processing rules:
+- Filter: Only `impact == "high"` items are analyzed and cached.
+- Time: `time` may be epoch (ms/seconds) or ISO; normalized to UTC ISO8601 with `Z`.
+- Dedup: Prefer upstream `id` as `uuid` for dedup; fallback to `(currency, UTC time, base headline)`.
+- Client response hygiene: If any of `actual`, `previous`, `forecast`, `revision` are empty, those fields are omitted in `/api/news/analysis`.
 
 ### Example Usage
 
@@ -1068,7 +1064,7 @@ Model behavior:
     - Then reinstall MT5 if needed: `pip install --force-reinstall --no-cache-dir MetaTrader5==5.0.45`
 
 - Medium severity:
-  - External API keys (Perplexity/Jblanked) are expected via env; missing keys will limit news analysis. Behavior unchanged.
+  - External API keys (Perplexity/ASOasis) are expected via env; missing keys will limit news analysis.
   - News analyzer uses simple keyword extraction to derive effect; this is heuristic, as before.
   - Email per-user rate limiting and digest have been removed. Alerts are sent immediately when not blocked by the value-based cooldown.
   - Closed-bar gating for alert evaluation is tracked per alert/user (not globally by symbol/timeframe). This ensures multiple users with identical configurations are each evaluated every cycle.

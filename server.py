@@ -1243,12 +1243,40 @@ def search_symbols(q: str = Query(..., min_length=1), x_api_key: Optional[str] =
 @app.get("/api/news/analysis")
 def get_news_analysis(x_api_key: Optional[str] = Depends(require_api_token_header)):
     """Get all cached news analysis data"""
+    def _prune_empty_fields(d: dict) -> dict:
+        # Remove empty valued fields from client response per requirements
+        for k in ("actual", "previous", "forecast", "revision"):
+            try:
+                v = d.get(k, None)
+                if v is None:
+                    d.pop(k, None)
+                elif isinstance(v, str) and not v.strip():
+                    d.pop(k, None)
+            except Exception:
+                continue
+        return d
+
+    data = []
+    for item in news.global_news_cache:
+        try:
+            obj = item.model_dump()
+            data.append(_prune_empty_fields(obj))
+        except Exception:
+            # Fallback to minimal safe shape
+            data.append({
+                "uuid": getattr(item, "uuid", None),
+                "headline": getattr(item, "headline", None),
+                "currency": getattr(item, "currency", None),
+                "time": getattr(item, "time", None),
+                "analysis": getattr(item, "analysis", {}),
+            })
+
     return {
         "news_count": len(news.global_news_cache),
         "last_updated": news.news_cache_metadata["last_updated"],
         "next_update": news.news_cache_metadata["next_update_time"],
         "is_updating": news.news_cache_metadata["is_updating"],
-        "data": [item.model_dump() for item in news.global_news_cache]
+        "data": data,
     }
 
 @app.post("/api/news/refresh")
