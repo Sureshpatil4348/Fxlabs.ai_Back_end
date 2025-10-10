@@ -132,7 +132,7 @@ Alignment with frontend (parity)
   - scalper: 5M:0.30, 15M:0.30, 30M:0.20, 1H:0.15, 4H:0.05, 1D:0.0
   - swingTrader: 30M:0.10, 1H:0.25, 4H:0.35, 1D:0.30
   - Percent conversion: `Buy% = (Final + 100) / 2`, `Sell% = 100 − Buy%`.
-  - Re‑arm hysteresis: per‑side re‑arm uses a 5‑point margin (Buy re‑arms when Buy% < buy_threshold−5; Sell re‑arms when Buy% > sell_threshold+5).
+  - Re‑arm policy: no margin. Buy side re‑arms when `Buy% < buy_threshold`; Sell side re‑arms when `Buy% > sell_threshold`.
 
 Verbose evaluation logs
 - Toggle: set `ALERT_VERBOSE_LOGS=true` and `LOG_LEVEL=DEBUG` to see detailed, per‑pair evaluation logs.
@@ -141,7 +141,7 @@ Verbose evaluation logs
   - `pair_eval_start`: alert/pair baseline including thresholds and previous armed state
   - `pair_eval_metrics`: computed Buy% / Sell% / Final Score for the pair
   - `pair_eval_criteria`: exact comparison snapshot — Buy% vs `buy_threshold`, Buy% vs `sell_threshold` (and equivalent `Sell% ≥ 100 − sell_threshold`), current armed flags, and re‑arm thresholds
-  - `pair_rearm`: side re‑armed after leaving zone with margin
+  - `pair_rearm`: side re‑armed after leaving zone (no margin)
   - `pair_eval_decision`: final decision for the pair — `baseline_skip` or `trigger`
   - `heatmap_no_trigger`: includes Buy%/Sell%, thresholds, armed flags, and a `reason` field (`within_neutral_band` | `below_buy_threshold` | `above_sell_threshold` | `buy_disarmed` | `sell_disarmed`)
 
@@ -180,7 +180,7 @@ Implementation details (backend alignment with Calculations Reference):
   - Per‑cell scoring: buy=+1, sell=−1, neutral=0; add ±0.25 on new signals; clamp in [−1.25,+1.25].
   - Weights: trading‑style timeframe weights (scalper: 5M/15M/30M/1H/4H; swingTrader: 30M/1H/4H/1D) and equal indicator weights by default.
   - Aggregation: Raw = Σ_tf Σ_ind S(tf,ind)×W_tf×W_ind; Final = 100×(Raw/1.25); Buy%=(Final+100)/2; Sell%=100−Buy%.
-  - Re‑arm policy: Buy side rearms after Buy% drops below (buy_threshold−5); Sell side rearms after Buy% rises above (sell_threshold+5). Triggers fire on crossing into thresholds.
+  - Re‑arm policy: no margin. Buy side re‑arms when `Buy% < buy_threshold`; Sell side re‑arms when `Buy% > sell_threshold`. Triggers fire on crossing into thresholds.
 - Indicator Tracker signals now derive from real OHLC:
   - EMA21/EMA50/EMA200: BUY on close crossing above EMA; SELL on crossing below.
   - RSI: BUY on RSI(14) crossing up through 50; SELL on crossing down through 50.
@@ -189,7 +189,7 @@ Implementation details (backend alignment with Calculations Reference):
 Why you might not see triggers yet
 - No active alerts: Ensure rows exist in Supabase for `heatmap_tracker_alerts` and `heatmap_indicator_tracker_alerts` with `is_active=true` and non-empty `pairs` (max 3).
 - Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. With multi‑indicator aggregation, Final can concentrate near neutral on choppy days, especially in swingTrader style.
-- Arm/disarm gating: Buy disarms after a BUY trigger and rearms once RSI < (buy_threshold−5); Sell disarms after a SELL trigger and rearms once RSI > (sell_threshold+5).
+- Arm/disarm gating (Heatmap): After a trigger, the corresponding side disarms and re‑arms as soon as it leaves the zone boundary (no margin): Buy re‑arms when `Buy% < buy_threshold`; Sell re‑arms when `Buy% > sell_threshold`.
 - Closed‑bar cadence: Evaluation is event‑driven (on each closed bar) with a 5‑minute safety scheduler; low TFs see more opportunities.
 
  

@@ -629,7 +629,7 @@ See `ALERTS.md` for the consolidated alerts product & tech spec.
 ### Troubleshooting: Only RSI Tracker and Daily emails arrive
 - No active alerts: Ensure you have rows in Supabase for `heatmap_tracker_alerts` or `heatmap_indicator_tracker_alerts` with `is_active=true` and non‑empty `pairs` (max 3).
 - Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. On higher TFs, RSI may hover mid‑band for long periods.
-- Arm/disarm gating: After a trigger, that side disarms and rearms only after leaving the zone (threshold−5).
+- Arm/disarm gating (Heatmap): After a trigger, that side disarms and re‑arms as soon as it leaves the zone boundary (no margin). Buy re‑arms when `Buy% < buy_threshold`; Sell re‑arms when `Buy% > sell_threshold`.
  
 
 ### 📰 News API Usage (External Source + Internal Endpoints)

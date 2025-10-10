@@ -147,9 +147,9 @@ class HeatmapTrackerAlertService:
                                 # Skip triggering on this first observation after baselining
                                 continue
 
-                            # Re-arm checks
-                            # Buy side re-arms after leaving BUY zone by a margin
-                            if not st["buy"] and rsi_val < max(0.0, buy_t - 5):
+                            # Re-arm checks (no margin): re-arm as soon as we leave the zone boundary
+                            # Buy side re-arms after leaving BUY zone
+                            if not st["buy"] and rsi_val < buy_t:
                                 st["buy"] = True
                                 log_debug(
                                     logger,
@@ -157,11 +157,11 @@ class HeatmapTrackerAlertService:
                                     alert_id=alert_id,
                                     symbol=symbol,
                                     side="buy",
-                                    rearm_threshold=max(0.0, buy_t - 5),
+                                    rearm_threshold=buy_t,
                                     buy_percent=round(rsi_val, 2),
                                 )
-                            # Sell side re-arms after leaving SELL zone by a margin
-                            if not st["sell"] and rsi_val > min(100.0, sell_t + 5):
+                            # Sell side re-arms after leaving SELL zone
+                            if not st["sell"] and rsi_val > sell_t:
                                 st["sell"] = True
                                 log_debug(
                                     logger,
@@ -169,13 +169,13 @@ class HeatmapTrackerAlertService:
                                     alert_id=alert_id,
                                     symbol=symbol,
                                     side="sell",
-                                    rearm_threshold=min(100.0, sell_t + 5),
+                                    rearm_threshold=sell_t,
                                     buy_percent=round(rsi_val, 2),
                                 )
 
                             # Criteria snapshot (verbose): show exactly what we compare against
-                            buy_rearm_th = max(0.0, buy_t - 5)
-                            sell_rearm_th = min(100.0, sell_t + 5)
+                            buy_rearm_th = buy_t
+                            sell_rearm_th = sell_t
                             equiv_sell_pct_th = 100.0 - sell_t
                             log_debug(
                                 logger,
