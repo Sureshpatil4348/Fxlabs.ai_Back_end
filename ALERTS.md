@@ -119,9 +119,20 @@ Troubleshooting (Currency Strength)
 Single per-user alert for the All-in-One/Quantum Analysis heatmap. Users select up to 3 currency pairs, a mode (trading style), and thresholds. When any selected pair’s Buy% or Sell% crosses its threshold, a trigger is recorded.
 
 - Pairs: up to 3 (e.g., `EURUSD`, `GBPUSD`)
-- Mode: `scalper` or `swingTrader`
+- Mode: `scalper` or `swingTrader` (internally normalized to `scalper` / `swingtrader`)
 - Thresholds: `buy_threshold` and `sell_threshold` (0–100). Internally we compute the style‑weighted Final Score and convert to Buy%/Sell% per the Calculations Reference.
-- Behavior: triggers on upward crossings into threshold for either Buy% or Sell%.
+- Behavior: triggers on crossings into threshold using Buy% as the trigger metric:
+  - BUY when style‑weighted `Buy% ≥ buy_threshold` (upward crossing)
+  - SELL when style‑weighted `Buy% ≤ sell_threshold` (downward crossing)
+  - Equivalently for SELL: `Sell% ≥ (100 − sell_threshold)` (upward crossing of Sell%).
+
+Alignment with frontend (parity)
+- The alert service uses the same computation as the frontend feed: `app/quantum.py` produces the `quantum_update` payload with `per_timeframe` and `overall` Buy%/Sell%/Final values, and the alert service reads those exact values when available.
+- When `compute_quantum_for_symbol` is used, style weighting matches:
+  - scalper: 5M:0.30, 15M:0.30, 30M:0.20, 1H:0.15, 4H:0.05, 1D:0.0
+  - swingTrader: 30M:0.10, 1H:0.25, 4H:0.35, 1D:0.30
+  - Percent conversion: `Buy% = (Final + 100) / 2`, `Sell% = 100 − Buy%`.
+  - Re‑arm hysteresis: per‑side re‑arm uses a 5‑point margin (Buy re‑arms when Buy% < buy_threshold−5; Sell re‑arms when Buy% > sell_threshold+5).
 
 Configuration:
 - Single alert per user (unique by `user_id`)

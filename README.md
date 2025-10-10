@@ -573,10 +573,15 @@ Notes:
 
 - Per‑timeframe indicator strength is normalized to a score in [−100..+100].
 - Startup warm‑up: For the Tracker, armed state per (alert, symbol) is initialized from current Buy%/Sell% (sides already above thresholds start disarmed) and the first observation is skipped. For the Custom Indicator Tracker, the last signal per (alert, symbol, timeframe, indicator) is baselined and the first observation is skipped.
-- Style weighting aggregates across the alert's selected timeframes:
-  - Scalper: 1M(0.2), 5M(0.4), 15M(0.3), 30M(0.1)
-  - Swing: 1H(0.25), 4H(0.45), 1D(0.3)
+- Style weighting aggregates across timeframes (matching `app/quantum.py` and the `quantum_update` feed):
+  - Scalper: 5M(0.30), 15M(0.30), 30M(0.20), 1H(0.15), 4H(0.05), 1D(0.0)
+  - Swing: 30M(0.10), 1H(0.25), 4H(0.35), 1D(0.30)
 - Final Score = weighted average of per‑TF scores; Buy Now % = (Final Score + 100)/2.
+
+- Threshold semantics (Tracker):
+  - BUY triggers when style‑weighted Buy% crosses up to ≥ `buy_threshold`.
+  - SELL triggers when style‑weighted Buy% crosses down to ≤ `sell_threshold` (equivalently, Sell% ≥ `100 − sell_threshold`).
+  - Parity: These are the same Buy%/Sell% values sent to the frontend in WebSocket `quantum_update` payloads.
 
 - Backend alignment update:
 - The Heatmap/Quantum tracker now reads indicator values from the centralized `indicator_cache` and performs aggregation only. RSI(14), EMA(21/50/200), MACD(12,26,9) are cache-based; UTBot and Ichimoku are computed via `app.indicators` over closed OHLC. New‑signal boosts and quiet‑market damping are applied per spec.
