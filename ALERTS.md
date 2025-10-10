@@ -4,6 +4,12 @@
 - Trigger philosophy: fire on threshold crossings; use per-side cooldown and threshold‑level re‑arm.
  - MT5 data source and closed-bar policy are described in `MT5.md` (see Data Fetch and WebSocket sections).
 
+**Domain Update (FXLabs)**
+- All FXLabs references now use the `fxlabsprime.com` domain.
+- Sender address: `alerts@fxlabsprime.com` (update your SendGrid verified sender/domain accordingly).
+- API base URL in examples: `https://api.fxlabsprime.com`.
+- Frontend origin in examples: `https://app.fxlabsprime.com`.
+
 **Global Rules**
 - Max tracked pairs per user: up to 3.
 - Trigger style: crossing into overbought/oversold; not on every bar while in‑zone.

@@ -6,6 +6,12 @@ Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today,
 
 A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, AI-powered news analysis, and comprehensive alert systems for trading applications.
 
+Note — FXLabs Domain Update
+- All examples and configs now use `fxlabsprime.com`.
+- API base URL: `https://api.fxlabsprime.com`
+- Frontend origin: `https://app.fxlabsprime.com`
+- Email sender: `alerts@fxlabsprime.com`
+
 ## 🏗️ Architecture Overview
 
 ### System Components
@@ -202,7 +208,7 @@ NEWS_CACHE_MAX_ITEMS=500
 # Define only the variables for the tenant you run.
 # FXLabs
 FXLABS_SENDGRID_API_KEY=
-FXLABS_FROM_EMAIL=alerts@fxlabs.ai
+FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
 FXLABS_FROM_NAME=FX Labs Alerts
 FXLABS_PUBLIC_BASE_URL=
 
@@ -221,9 +227,9 @@ SUPABASE_SERVICE_KEY=
 FXLABS_SUPABASE_URL=https://your-fxlabs.supabase.co
 FXLABS_SUPABASE_SERVICE_KEY=
 FXLABS_SENDGRID_API_KEY=
-FXLABS_FROM_EMAIL=alerts@fxlabs.ai
+FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
 FXLABS_FROM_NAME=FX Labs Alerts
-FXLABS_PUBLIC_BASE_URL=https://api.fxlabs.ai
+FXLABS_PUBLIC_BASE_URL=https://api.fxlabsprime.com
 FXLABS_DAILY_TZ_NAME=Asia/Kolkata
 FXLABS_DAILY_SEND_LOCAL_TIME=09:00
 
@@ -889,7 +895,7 @@ The system is configured for production deployment with Cloudflare Tunnel:
 # config.yml
 tunnel: 5612346e-ee13-4f7b-8a04-9215b63b14d3
 ingress:
-  - hostname: api.fxlabs.ai
+  - hostname: api.fxlabsprime.com
     service: http://127.0.0.1:8000
 ```
 
@@ -1348,7 +1354,7 @@ Expected logs when working:
 ### "HTTP Error 403: Forbidden" during send (intermittent)
 - Symptom: Logs show `❌ Error sending ... email: HTTP Error 403: Forbidden` while other emails sometimes succeed.
 - Most common root causes:
-  - Sender identity mismatch: `FROM_EMAIL` is not a verified Single Sender or part of an authenticated domain. If only `alerts@fxlabs.ai` is verified, sending from `alerts@alerts.fxlabs.ai` will 403. The code requires tenant-specific `FROM_EMAIL`; no default is used.
+  - Sender identity mismatch: `FROM_EMAIL` is not a verified Single Sender or part of an authenticated domain. If only `alerts@fxlabsprime.com` is verified, sending from `alerts@alerts.fxlabsprime.com` will 403. The code requires tenant-specific `FROM_EMAIL`; no default is used.
   - API key scope too narrow: The `SENDGRID_API_KEY` lacks the `Mail Send` permission. Regenerate with Full Access or include `Mail Send`.
   - IP Access Management: If enabled in SendGrid, requests from non-whitelisted IPs are blocked with 403. Whitelist the server IP(s).
   - Region mismatch: EU-only accounts must use the EU endpoint; ensure your environment uses the correct SendGrid region (contact SendGrid if unsure).
@@ -1356,7 +1362,7 @@ Expected logs when working:
 - What we log now (for failures): status, a trimmed response body, masked API key, and `from/to` addresses to speed up diagnosis without leaking secrets.
 - Quick checklist:
   - Confirm your env defines tenant-specific keys: for FXLabs use `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL`, `FXLABS_FROM_NAME`; for HexTech use `HEXTECH_SENDGRID_API_KEY`, `HEXTECH_FROM_EMAIL`, `HEXTECH_FROM_NAME`.
-  - Verify the sender identity in SendGrid (Single Sender) or authenticate the `fxlabs.ai` domain.
+  - Verify the sender identity in SendGrid (Single Sender) or authenticate the `fxlabsprime.com` domain.
   - If you use IP Access Management, add the server IP.
   - In SendGrid → API Keys, confirm the key includes `Mail Send`.
   - Run `python send_test_email.py you@example.com` (in an environment where running is allowed) to verify the path end-to-end.
@@ -1368,7 +1374,7 @@ When email sending is disabled, the service now emits structured diagnostics sho
 ⚠️ Email service not configured — RSI alert email
    1) sendgrid library not installed (pip install sendgrid)
    2) Tenant API key missing (set FXLABS_SENDGRID_API_KEY or HEXTECH_SENDGRID_API_KEY)
-   Values (masked): SENDGRID_API_KEY=SG.************abcd, FROM_EMAIL=alerts@fxlabs.ai, FROM_NAME=FX Labs
+   Values (masked): SENDGRID_API_KEY=SG.************abcd, FROM_EMAIL=alerts@fxlabsprime.com, FROM_NAME=FX Labs
    Hint: configure tenant-specific email credentials (FXLABS_SENDGRID_API_KEY/FXLABS_FROM_EMAIL/FXLABS_FROM_NAME or HEXTECH_*) — no global defaults
 ```
 
@@ -1394,7 +1400,7 @@ pip install -r requirements.txt
 ```env
 # For FXLabs
 FXLABS_SENDGRID_API_KEY=your_sendgrid_api_key
-FXLABS_FROM_EMAIL=alerts@fxlabs.ai
+FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
 FXLABS_FROM_NAME=FX Labs Alerts
 
 # For HexTech
@@ -1426,7 +1432,7 @@ It should point to your project's `.venv` path. If not, re-run activation and re
 - If using Google Workspace: in Admin Console, use Email Log Search for the recipient/time or Message-ID to see if it was quarantined, routed, or marked spam; release if needed.
 - If using Cloudflare Email Routing or any forwarder: verify the route exists, forwarding target is valid, and check routing logs for acceptance/drops.
 - Authenticate your From domain in SendGrid:
-  - Complete Domain Authentication (CNAMEs) and send from an aligned subdomain (e.g., `alerts@alerts.fxlabs.ai`).
+  - Complete Domain Authentication (CNAMEs) and send from an aligned subdomain (e.g., `alerts@alerts.fxlabsprime.com`).
   - Ensure SPF includes `include:sendgrid.net`, DKIM passes, and set DMARC to `p=none` during testing; move to `quarantine`/`reject` after validation.
 - Reduce spam likelihood: include both `text/plain` and `text/html` parts, avoid URL shorteners, keep images minimal, and use a consistent `FROM_EMAIL` that matches your authenticated domain.
 - Check suppression lists anyway: make sure the recipient isn't present under Bounces/Blocks/Spam Reports; remove if found, then resend.
@@ -1445,7 +1451,7 @@ What to collect for escalation: UTC timestamp, recipient, subject, SendGrid Mess
 - Consistent Reply-To: Sets `Reply-To` to the sender for consistent header presence.
 
 Operational notes:
-- Keep `FROM_EMAIL` on your authenticated domain/subdomain (e.g., alerts@alerts.fxlabs.ai).
+- Keep `FROM_EMAIL` on your authenticated domain/subdomain (e.g., alerts@alerts.fxlabsprime.com).
 - Avoid URL shorteners and excessive links in alert content.
 - DMARC alignment: after verifying inboxing, move DMARC policy from `p=none` to `quarantine`/`reject` gradually.
 
@@ -1453,17 +1459,17 @@ Operational notes:
 This is a DMARC alignment/authentication issue. Fix by authenticating the domain and aligning the From address.
 
 Checklist:
-- Domain Authentication in SendGrid: Settings → Sender Authentication → Domain Authentication. Choose a dedicated subdomain (e.g., `alerts.fxlabs.ai`).
-  - Add the DKIM CNAMEs SendGrid provides (typically `s1._domainkey.alerts.fxlabs.ai` and `s2._domainkey.alerts.fxlabs.ai`).
-  - Enable "Custom Return Path" (bounce domain), e.g., `em.alerts.fxlabs.ai` CNAME to SendGrid target. This makes SPF alignment pass.
+- Domain Authentication in SendGrid: Settings → Sender Authentication → Domain Authentication. Choose a dedicated subdomain (e.g., `alerts.fxlabsprime.com`).
+  - Add the DKIM CNAMEs SendGrid provides (typically `s1._domainkey.alerts.fxlabsprime.com` and `s2._domainkey.alerts.fxlabsprime.com`).
+  - Enable "Custom Return Path" (bounce domain), e.g., `em.alerts.fxlabsprime.com` CNAME to SendGrid target. This makes SPF alignment pass.
   - If using Cloudflare DNS: set these CNAMEs to DNS only (gray cloud). Proxying breaks DKIM/SPF validation.
 - SPF for the sending domain/subdomain: publish or update SPF to include SendGrid.
-  - Example for subdomain `alerts.fxlabs.ai`: `v=spf1 include:sendgrid.net -all`
+  - Example for subdomain `alerts.fxlabsprime.com`: `v=spf1 include:sendgrid.net -all`
   - If the root domain already has an SPF for other services (e.g., Microsoft 365), include both as needed: `v=spf1 include:spf.protection.outlook.com include:sendgrid.net -all`
 - DMARC for the sending domain/subdomain: start permissive, then tighten.
-  - Example: `v=DMARC1; p=none; rua=mailto:dmarc@fxlabs.ai; adkim=s; aspf=s; pct=100`
+  - Example: `v=DMARC1; p=none; rua=mailto:dmarc@fxlabsprime.com; adkim=s; aspf=s; pct=100`
   - After validation, move to `p=quarantine` → `p=reject` to reduce spoofing.
-- From address must match the authenticated domain: send from `alerts@alerts.fxlabs.ai` if that's the domain you authenticated (update `FROM_EMAIL`).
+- From address must match the authenticated domain: send from `alerts@alerts.fxlabsprime.com` if that's the domain you authenticated (update `FROM_EMAIL`).
 - Optional: BIMI (brand logo) can help, but only after DMARC passes with enforcement and, ideally, a VMC.
 
 Why Outlook flagged it:

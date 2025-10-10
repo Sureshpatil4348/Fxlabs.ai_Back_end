@@ -42,7 +42,7 @@ No code changes done yet. This document maps the system to tenancy touchpoints a
 Run two instances of the backend with separate env files and domains.
 
 - Domains & ingress
-  - FXLabs: `api.fxlabs.ai` (already configured in `config.yml`)
+  - FXLabs: `api.fxlabsprime.com` (already configured in `config.yml`)
   - HexTech: add a second hostname (e.g., `api.hextech.ae`) to Cloudflare Tunnel or a separate tunnel file
 
 - Environment per deployment
@@ -74,11 +74,11 @@ Run two instances of the backend with separate env files and domains.
 ```env
 # .env.fxlabs
 API_TOKEN=fxlabs_api_token
-ALLOWED_ORIGINS=https://app.fxlabs.ai
+ALLOWED_ORIGINS=https://app.fxlabsprime.com
 SUPABASE_URL=https://<fxlabs>.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...
 FXLABS_SENDGRID_API_KEY=SG....
-FXLABS_FROM_EMAIL=alerts@fxlabs.ai
+FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
 FXLABS_FROM_NAME=FX Labs Alerts
 DAILY_TZ_NAME=Asia/Kolkata
 DAILY_SEND_LOCAL_TIME=09:00
@@ -114,7 +114,7 @@ python hextech-server.py
 Update `config.yml` ingress to route both hostnames:
 ```yaml
 ingress:
-  - hostname: api.fxlabs.ai
+  - hostname: api.fxlabsprime.com
     service: http://127.0.0.1:8000
   - hostname: api.hextech.ae
     service: http://127.0.0.1:8001
@@ -155,7 +155,7 @@ WantedBy=multi-user.target
 ```
 
 #### Operational checks
-- Health: `curl https://api.fxlabs.ai/health` and `https://api.hextech.ae/health`
+- Health: `curl https://api.fxlabsprime.com/health` and `https://api.hextech.ae/health`
 - News cache and reminders running (logs): per‑tenant schedulers should log independently
 - Daily brief timing: 09:00 IST vs 09:00 Asia/Dubai, verify subject/body headers show correct TZ labels
 - Alert triggers: verify rows insert into each tenant’s Supabase trigger tables (no cross‑pollination)
@@ -174,9 +174,9 @@ WantedBy=multi-user.target
 
 - FXLabs (deployment/env)
   - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` → FXLabs project
-  - `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL=alerts@fxlabs.ai`, `FXLABS_FROM_NAME="FX Labs Alerts"`
+  - `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL=alerts@fxlabsprime.com`, `FXLABS_FROM_NAME="FX Labs Alerts"`
   - `DAILY_TZ_NAME=Asia/Kolkata`, `DAILY_SEND_LOCAL_TIME=09:00`
-  - `API_TOKEN=<fxlabs>`, `ALLOWED_ORIGINS=https://app.fxlabs.ai`
+  - `API_TOKEN=<fxlabs>`, `ALLOWED_ORIGINS=https://app.fxlabsprime.com`
 
 - HexTech (deployment/env)
   - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` → HexTech project
