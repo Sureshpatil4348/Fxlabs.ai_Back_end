@@ -660,10 +660,25 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                             # Free text response, keep as-is
                             full_analysis_text = analysis_text.strip()
 
-                        print(f"🔎 [analyze] Effect derived: {effect} | Impact: {impact_value}")
+                        # Always mirror upstream API impact (ignore AI impact for this field)
+                        api_impact = (news_item.impact or "").strip().lower()
+                        if api_impact not in ("high", "medium", "low"):
+                            api_impact = impact_value or "medium"
+
+                        # Ensure full_analysis reflects the API impact value we expose downstream
+                        if parsed and isinstance(explanation, str) and explanation.strip():
+                            # keep as-is
+                            pass
+                        elif parsed:
+                            full_analysis_text = f"Effect: {effect}. Impact: {api_impact}."
+                        else:
+                            # free text already set above
+                            pass
+
+                        print(f"🔎 [analyze] Effect derived: {effect} | Impact (api): {api_impact}")
                         analysis = {
                             "effect": effect,
-                            "impact": impact_value,
+                            "impact": api_impact,
                             "full_analysis": full_analysis_text,
                         }
                         return NewsAnalysis(
@@ -691,6 +706,10 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
         
         # If all attempts failed, return a safe default analysis
         print("❌ [analyze] All attempts failed, returning safe default analysis")
+        # Safe default: preserve upstream API impact when available
+        api_impact = (news_item.impact or "").strip().lower()
+        if api_impact not in ("high", "medium", "low"):
+            api_impact = "medium"
         return NewsAnalysis(
             uuid=news_item.uuid,
             headline=news_item.headline,
@@ -702,7 +721,7 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
             time=news_item.time,
             analysis={
                 "effect": "neutral",
-                "impact": "medium",
+                "impact": api_impact,
                 "full_analysis": "Analysis unavailable due to API response format issues.",
             },
             analyzed_at=datetime.now(timezone.utc),

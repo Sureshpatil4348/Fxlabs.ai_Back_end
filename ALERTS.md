@@ -209,14 +209,14 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 ### ⏰ News Reminder (5 Minutes Before)
 
 - What: Sends an email with subject "News reminder" to all active users 5 minutes before each upcoming news event found in the local news cache.
-  - Impact filter: Only items with AI‑normalized `impact == "high"` qualify. Medium/low impact items are ignored.
+  - Impact filter: Only items with source‑reported `impact == "high"` qualify (mirrors upstream API). Medium/low impact items are ignored.
 - Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for news reminders and does not depend on per‑product alert tables.
   - Primary source: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
   - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
   - Email extraction: Primary `email`, fallback to `user_metadata.email/email_address/preferred_email`, and `identities[].email`/`identities[].identity_data.email` for OAuth providers
   - Fallback: If Auth returns no emails, falls back to union of alert tables (`rsi_tracker_alerts`, `rsi_correlation_tracker_alerts`, `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`)
 - When: A dedicated 1-minute scheduler runs in `server.py` and calls `app.news.check_and_send_news_reminders()`.
-  - The function filters the due window to high‑impact items only.
+  - The function filters the due window to high‑impact items only (per the upstream API impact, not AI).
 - How it avoids duplicates: Each `NewsAnalysis` item has a boolean `reminder_sent`. Once sent, the item is flagged and the cache is persisted to disk, preventing repeats across restarts.
 - Template: Minimal, mobile-friendly HTML wrapped with the unified green header (`FXLabs • News • <date/time>`) and a single common disclaimer footer.
   - Fields: `event_title`, `event_time_local` (IST by default), `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).

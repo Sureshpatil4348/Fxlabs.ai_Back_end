@@ -264,8 +264,8 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 - For observability, the batch log includes a CSV of recipient emails and count.
 
 #### News Reminder Behavior (High‑Impact Only)
-- The 5‑minute news reminder filters to only AI‑normalized high‑impact items (`impact == "high"`). Medium/low impact items are skipped.
-- Source impact values and AI analysis are normalized to `high|medium|low`; only `high` qualifies for reminders.
+- The 5‑minute news reminder filters to only source‑reported high‑impact items (`impact == "high"` from the upstream API). Medium/low impact items are skipped.
+- Impact is not AI‑derived for reminders or display; it mirrors the upstream field.
 - Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
 
 #### Auth Fetch Logging (Verbose)
@@ -668,7 +668,8 @@ Response shape (example):
 ```
 
 Processing rules:
-- Filter: Only `impact == "high"` items are analyzed and cached.
+- Filter: Only `impact == "high"` items (from the source) are analyzed and cached.
+- Impact source of truth: Downstream `analysis.impact` mirrors the upstream API `impact` exactly; AI output is ignored for this field.
 - Time: `time` may be epoch (ms/seconds) or ISO; normalized to UTC ISO8601 with `Z`.
 - Dedup: Prefer upstream `id` as `uuid` for dedup; fallback to `(currency, UTC time, base headline)`.
 - Client response hygiene: If any of `actual`, `previous`, `forecast`, `revision` are empty, those fields are omitted in `/api/news/analysis`.
@@ -999,11 +1000,11 @@ Each item in `data` contains:
 
 Notes:
 - `analysis.effect`: bullish | bearish | neutral (lowercase)
-- `analysis.impact`: high | medium | low (lowercase)
+- `analysis.impact`: high | medium | low (lowercase), mirroring the upstream API `impact` value; AI predictions for impact are ignored.
 - Removed fields: `currencies_impacted`, `currency_pairs`
 
 Model behavior:
-- The Perplexity prompt enforces pre‑release evaluation with taxonomy‑based impact and policy‑aware directional bias. Full prompt used:
+- The AI analysis provides only the directional bias (`effect`) and a concise explanation. Impact used in responses mirrors the source API and is not taken from AI output. Full prompt used:
   ```
   You are a Forex macro event classifier used BEFORE an economic release. Output exactly:
   {
