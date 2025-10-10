@@ -583,6 +583,14 @@ Notes:
   - SELL triggers when style‑weighted Buy% crosses down to ≤ `sell_threshold` (equivalently, Sell% ≥ `100 − sell_threshold`).
   - Parity: These are the same Buy%/Sell% values sent to the frontend in WebSocket `quantum_update` payloads.
 
+- Detailed evaluation logs:
+  - Set `ALERT_VERBOSE_LOGS=true` and `LOG_LEVEL=DEBUG` to enable per‑pair logs:
+    - `pair_eval_start` (thresholds and previous armed state)
+    - `pair_eval_metrics` (Buy%/Sell%/Final)
+    - `pair_rearm` (side re‑armed after leaving zone)
+    - `pair_eval_decision` (baseline skip or trigger)
+    - `heatmap_no_trigger` now includes a `reason` field for clarity
+
 - Backend alignment update:
 - The Heatmap/Quantum tracker now reads indicator values from the centralized `indicator_cache` and performs aggregation only. RSI(14), EMA(21/50/200), MACD(12,26,9) are cache-based; UTBot and Ichimoku are computed via `app.indicators` over closed OHLC. New‑signal boosts and quiet‑market damping are applied per spec.
 - The Custom Indicator tracker computes real flips for EMA21/EMA50/EMA200 and RSI(14) using cache‑first reads; unknown indicators resolve to neutral.

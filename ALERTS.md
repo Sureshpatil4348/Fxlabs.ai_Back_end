@@ -134,6 +134,16 @@ Alignment with frontend (parity)
   - Percent conversion: `Buy% = (Final + 100) / 2`, `Sell% = 100 − Buy%`.
   - Re‑arm hysteresis: per‑side re‑arm uses a 5‑point margin (Buy re‑arms when Buy% < buy_threshold−5; Sell re‑arms when Buy% > sell_threshold+5).
 
+Verbose evaluation logs
+- Toggle: set `ALERT_VERBOSE_LOGS=true` and `LOG_LEVEL=DEBUG` to see detailed, per‑pair evaluation logs.
+- Events emitted during evaluation (all gated by `ALERT_VERBOSE_LOGS`):
+  - `alert_eval_start` / `alert_eval_end`: per‑alert cycle markers with config echo
+  - `pair_eval_start`: alert/pair baseline including thresholds and previous armed state
+  - `pair_eval_metrics`: computed Buy% / Sell% / Final Score for the pair
+  - `pair_rearm`: side re‑armed after leaving zone with margin
+  - `pair_eval_decision`: final decision for the pair — `baseline_skip` or `trigger`
+  - `heatmap_no_trigger`: includes Buy%/Sell%, thresholds, armed flags, and a `reason` field (`within_neutral_band` | `below_buy_threshold` | `above_sell_threshold` | `buy_disarmed` | `sell_disarmed`)
+
 Configuration:
 - Single alert per user (unique by `user_id`)
 - Validate pairs (≤3), trading style, and thresholds
