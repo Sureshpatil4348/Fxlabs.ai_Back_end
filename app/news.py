@@ -428,12 +428,12 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
         "You are a Forex macro event classifier used BEFORE an economic release. Output exactly:\n"
         "{\n"
         "  \"effect\": \"bullish|bearish|neutral\",\n"
-        "  \"impact\": \"high|medium|low\",\n"
         "  \"explanation\": \"<max 2 sentences>\"\n"
         "}\n"
         "Constraints:\n"
         "- Lowercase enums only.\n"
-        "- No extra fields or text.\n\n"
+        "- No extra fields or text.\n"
+        "- Do NOT include any field named 'impact' in your response.\n\n"
         "INPUT\n"
         f"Currency: {news_item.currency}\n"
         f"News: {news_item.headline}\n"
@@ -441,8 +441,8 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
         f"Forecast: {news_item.forecast or 'N/A'}\n"
         f"Previous: {news_item.previous or 'N/A'}\n"
         f"Source impact hint: {news_item.impact or 'N/A'}\n\n"
-        "A) IMPACT (magnitude tier, not direction)\n"
-        "1) If Source impact hint ∈ {High, Medium, Low}, mirror it (lowercased) UNLESS it contradicts the taxonomy below by >1 tier; in that case, prefer the taxonomy.\n"
+        "A) CONTEXT (impact is provided by API; do not output it)\n"
+        "1) Consider standard taxonomy only to reason about magnitude in the explanation; DO NOT output an 'impact' field.\n"
         "2) Taxonomy by EVENT FAMILY (based on what historically moves FX):\n"
         "   TIER-1 (default \"high\"):\n"
         "   - CPI (headline/core), PCE (US), central-bank rate decisions/statements/pressers/minutes, major labor (NFP/Employment Change, Unemployment Rate, Average/Hourly Earnings), GDP “advance/flash”, ISM PMIs (US), Flash PMIs (EZ/UK), Retail Sales (US/UK/CA headline; US control group). \n"
@@ -465,7 +465,7 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
         "7) Direction is for the listed currency (not the pair). Do NOT flip signs for quote/base logic.\n\n"
         "C) DATA HYGIENE (pre-release)\n"
         "8) You may look up consensus/central-bank stance from reliable calendars or official sources. Do NOT treat previews as actuals.\n"
-        "9) EXPLANATION ≤2 sentences: (i) why the impact tier (taxonomy or source hint), (ii) why the bias (forecast/trend/policy stance). No filler words.\n"
+        "9) EXPLANATION ≤2 sentences: (i) briefly justify magnitude (taxonomy/source hint) without outputting an 'impact' field, (ii) explain directional bias (forecast/trend/policy stance). No filler words.\n"
     )
     url = "https://api.perplexity.ai/chat/completions"
     headers = {
@@ -587,8 +587,8 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                             end_idx = content.rfind("}")
                             if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
                                 snippet = content[start_idx:end_idx + 1]
-                                # Heuristic: ensure it likely has keys
-                                if '"impact"' in snippet or '"effect"' in snippet:
+                                # Heuristic: ensure it likely has keys we care about
+                                if '"effect"' in snippet or '"explanation"' in snippet:
                                     try:
                                         return json.loads(snippet)
                                     except Exception:
@@ -606,7 +606,6 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                             if eff_raw is not None:
                                 effect = _normalize_effect(eff_raw)
                                 got_effect_from_json = True
-                            impact_value = _normalize_impact(parsed.get("impact"))
                             explanation = parsed.get("explanation")
 
                         # Fallback: only when field missing from JSON or JSON absent
@@ -621,25 +620,15 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                                 elif "bearish" in lt:
                                     effect = "bearish"
 
-                        # Impact fallback independent of effect neutrality
-                        if impact_value is None:
-                            m_imp = re.search(r"impact\s*[:\-]\s*\"?([a-z ]+)\"?", lt)
-                            if m_imp:
-                                impact_value = _normalize_impact(m_imp.group(1)) or impact_value
-                            if impact_value is None:
-                                if any(w in lt for w in [
-                                    "high impact", "significant", "strong impact", "highly volatile",
-                                    "highly impactful", "very high", "major", "substantial"
-                                ]):
-                                    impact_value = "high"
-                                elif any(w in lt for w in [
-                                    "medium impact", "moderate", "modest", "moderately"
-                                ]):
-                                    impact_value = "medium"
-                                elif any(w in lt for w in [
-                                    "low impact", "minor", "limited", "low volatility", "negligible", "minimal", "slight"
-                                ]):
-                                    impact_value = "low"
+                        # Extract explanation from raw text when JSON parse fails
+                        if (not parsed or not isinstance(explanation, str) or not explanation.strip()):
+                            try:
+                                # Try to pull explanation": "..." from any JSON-like block in the text
+                                m_expl = re.search(r'"explanation"\s*:\s*"(.*?)"', analysis_text, flags=re.IGNORECASE | re.DOTALL)
+                                if m_expl:
+                                    explanation = m_expl.group(1).strip()
+                            except Exception:
+                                pass
 
                         # Final fallback: use source impact hint if provided
                         if (impact_value is None or impact_value not in ("high", "medium", "low")) and (news_item.impact or "").strip():
@@ -650,30 +639,26 @@ async def analyze_news_with_perplexity(news_item: NewsItem) -> Optional[NewsAnal
                         if not impact_value:
                             impact_value = "medium"
 
-                        # Choose human-readable explanation text for full_analysis
+                        # Choose human-readable explanation text for full_analysis (never embed raw JSON)
                         if parsed and isinstance(explanation, str) and explanation.strip():
                             full_analysis_text = explanation.strip()
                         elif parsed:
                             # Structured JSON but missing explanation -> synthesize a short line
-                            full_analysis_text = f"Effect: {effect}. Impact: {impact_value}."
+                            full_analysis_text = f"Effect: {effect}."
                         else:
-                            # Free text response, keep as-is
-                            full_analysis_text = analysis_text.strip()
+                            # Free text response, prefer extracted explanation; fallback to brief synthesis
+                            if isinstance(explanation, str) and explanation.strip():
+                                full_analysis_text = explanation.strip()
+                            else:
+                                full_analysis_text = f"Effect: {effect}."
 
                         # Always mirror upstream API impact (ignore AI impact for this field)
                         api_impact = (news_item.impact or "").strip().lower()
                         if api_impact not in ("high", "medium", "low"):
-                            api_impact = impact_value or "medium"
+                            api_impact = "medium"
 
                         # Ensure full_analysis reflects the API impact value we expose downstream
-                        if parsed and isinstance(explanation, str) and explanation.strip():
-                            # keep as-is
-                            pass
-                        elif parsed:
-                            full_analysis_text = f"Effect: {effect}. Impact: {api_impact}."
-                        else:
-                            # free text already set above
-                            pass
+                        # no-op: full_analysis_text already sanitized above. Avoid embedding JSON.
 
                         print(f"🔎 [analyze] Effect derived: {effect} | Impact (api): {api_impact}")
                         analysis = {

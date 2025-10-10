@@ -1009,12 +1009,12 @@ Model behavior:
   You are a Forex macro event classifier used BEFORE an economic release. Output exactly:
   {
     "effect": "bullish|bearish|neutral",
-    "impact": "high|medium|low",
     "explanation": "<max 2 sentences>"
   }
   Constraints:
   - Lowercase enums only.
   - No extra fields or text.
+  - Do NOT include any field named 'impact' in your response.
 
   INPUT
   Currency: {news_item.currency}
@@ -1024,8 +1024,8 @@ Model behavior:
   Previous: {news_item.previous or 'N/A'}
   Source impact hint: {news_item.impact or 'N/A'}
 
-  A) IMPACT (magnitude tier, not direction)
-  1) If Source impact hint ∈ {High, Medium, Low}, mirror it (lowercased) UNLESS it contradicts the taxonomy below by >1 tier; in that case, prefer the taxonomy.
+  A) CONTEXT (impact is provided by API; do not output it)
+  1) Consider standard taxonomy only to reason about magnitude in the explanation; DO NOT output an 'impact' field.
   2) Taxonomy by EVENT FAMILY (based on what historically moves FX):
      TIER-1 (default "high"):
      - CPI (headline/core), PCE (US), central-bank rate decisions/statements/pressers/minutes, major labor (NFP/Employment Change, Unemployment Rate, Average/Hourly Earnings), GDP "advance/flash", ISM PMIs (US), Flash PMIs (EZ/UK), Retail Sales (US/UK/CA headline; US control group). 
@@ -1046,8 +1046,8 @@ Model behavior:
   8) You may look up consensus/stance from reliable sources. Do NOT treat previews as actuals.
   9) EXPLANATION ≤2 sentences: (i) impact tier rationale, (ii) bias rationale. No filler.
   ```
-- Parsing first attempts to load the JSON. If unavailable, it falls back to regex and synonym detection.
-- `impact` is normalized from synonyms (e.g., significant→high, moderate→medium, minor→low), then falls back to the source `impact` field if present; defaults to `medium` if still ambiguous.
+- Parsing first attempts to load the JSON; if unavailable, it falls back to regex to extract `effect`/`explanation`. The final `full_analysis` is the explanation text (never raw JSON).
+- `analysis.impact` mirrors the upstream API `impact` field exclusively; AI output never overrides it.
 
 ## 🔒 Security Features
 
