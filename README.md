@@ -6,7 +6,7 @@ Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today,
 
 A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, AI-powered news analysis, and comprehensive alert systems for trading applications.
 
-Note — FXLabs Prime Domain Update
+Note — FxLabs Prime Domain Update
 - All examples and configs now use `fxlabsprime.com`.
 - API base URL: `https://api.fxlabsprime.com`
 - Frontend origin: `https://app.fxlabsprime.com`
@@ -46,9 +46,9 @@ Note — FXLabs Prime Domain Update
 - **Warm-up & Stale-Data Protection**: Skips evaluations when latest bar is stale (>2× timeframe) and enforces indicator lookback (e.g., RSI series) before triggering
 // Removed: Rate Limits + Digest (alerts send immediately subject to value-based cooldown)
 - **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
-  - FXLabs Prime tenant: All alert emails are enforced to IST (Asia/Kolkata) regardless of host tz. If the OS tz database is missing, a robust +05:30 (IST) fallback is applied.
-- **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FXLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
-- **Single Common Footer**: Disclaimers are rendered once at the bottom of each email (not per pair/card). RSI uses "Not financial advice. © FXLabs Prime". Heatmap and Indicator trackers use "Education only. © FXLabs Prime".
+  - FxLabs Prime tenant: All alert emails are enforced to IST (Asia/Kolkata) regardless of host tz. If the OS tz database is missing, a robust +05:30 (IST) fallback is applied.
+- **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FxLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
+- **Single Common Footer**: Disclaimers are rendered once at the bottom of each email (not per pair/card). RSI uses "Not financial advice. © FxLabs Prime". Heatmap and Indicator trackers use "Education only. © FxLabs Prime".
 - **Email Brand Color Update**: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` remain for readability and hierarchy.
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers, per the Calculations Reference (EMA21/50/200, MACD, RSI, UTBot, Ichimoku; new‑signal boost; quiet‑market damping)
   - Per‑alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
@@ -207,10 +207,10 @@ NEWS_CACHE_MAX_ITEMS=500
 
 # Email Configuration (tenant-specific only; no global defaults)
 # Define only the variables for the tenant you run.
-# FXLabs Prime
+# FxLabs Prime
 FXLABS_SENDGRID_API_KEY=
 FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
-FXLABS_FROM_NAME=FXLabs Prime Alerts
+FXLABS_FROM_NAME=FxLabs Prime Alerts
 FXLABS_PUBLIC_BASE_URL=
 
 # HexTech
@@ -224,12 +224,12 @@ SUPABASE_URL=
 SUPABASE_SERVICE_KEY=
 
 # Optional: per-tenant overrides (used by entry scripts and take precedence over base vars)
-# FXLabs Prime
+# FxLabs Prime
 FXLABS_SUPABASE_URL=https://your-fxlabs.supabase.co
 FXLABS_SUPABASE_SERVICE_KEY=
 FXLABS_SENDGRID_API_KEY=
 FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
-FXLABS_FROM_NAME=FXLabs Prime Alerts
+FXLABS_FROM_NAME=FxLabs Prime Alerts
 FXLABS_PUBLIC_BASE_URL=https://api.fxlabsprime.com
 FXLABS_DAILY_TZ_NAME=Asia/Kolkata
 FXLABS_DAILY_SEND_LOCAL_TIME=09:00
@@ -1341,7 +1341,7 @@ Expected logs when working:
 - Fix quickly:
   - Install deps in your venv: `pip install -r requirements.txt` (includes `sendgrid`)
   - Provide tenant-specific credentials via environment or `.env` (auto-loaded now):
-    - FXLabs Prime: `FXLABS_SENDGRID_API_KEY=...`, `FXLABS_FROM_EMAIL=verified@yourdomain.com`, `FXLABS_FROM_NAME=FXLabs Prime Alerts`
+    - FxLabs Prime: `FXLABS_SENDGRID_API_KEY=...`, `FXLABS_FROM_EMAIL=verified@yourdomain.com`, `FXLABS_FROM_NAME=FxLabs Prime Alerts`
     - HexTech: `HEXTECH_SENDGRID_API_KEY=...`, `HEXTECH_FROM_EMAIL=verified@yourdomain.com`, `HEXTECH_FROM_NAME=HexTech Alerts`
   - Ensure your process actually sees the variables:
     - macOS/Linux: `.env` is auto-loaded; no manual `export` needed
@@ -1356,10 +1356,10 @@ Expected logs when working:
   - API key scope too narrow: The `SENDGRID_API_KEY` lacks the `Mail Send` permission. Regenerate with Full Access or include `Mail Send`.
   - IP Access Management: If enabled in SendGrid, requests from non-whitelisted IPs are blocked with 403. Whitelist the server IP(s).
   - Region mismatch: EU-only accounts must use the EU endpoint; ensure your environment uses the correct SendGrid region (contact SendGrid if unsure).
-- Why intermittent? Different processes or shells might pick up different env files. Ensure you set the tenant-specific variables (`FXLABS_*` for FXLabs Prime or `HEXTECH_*` for HexTech) in the active environment for that process. No code defaults are used.
+- Why intermittent? Different processes or shells might pick up different env files. Ensure you set the tenant-specific variables (`FXLABS_*` for FxLabs Prime or `HEXTECH_*` for HexTech) in the active environment for that process. No code defaults are used.
 - What we log now (for failures): status, a trimmed response body, masked API key, and `from/to` addresses to speed up diagnosis without leaking secrets.
 - Quick checklist:
-  - Confirm your env defines tenant-specific keys: for FXLabs Prime use `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL`, `FXLABS_FROM_NAME`; for HexTech use `HEXTECH_SENDGRID_API_KEY`, `HEXTECH_FROM_EMAIL`, `HEXTECH_FROM_NAME`.
+  - Confirm your env defines tenant-specific keys: for FxLabs Prime use `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL`, `FXLABS_FROM_NAME`; for HexTech use `HEXTECH_SENDGRID_API_KEY`, `HEXTECH_FROM_EMAIL`, `HEXTECH_FROM_NAME`.
   - Verify the sender identity in SendGrid (Single Sender) or authenticate the `fxlabsprime.com` domain.
   - If you use IP Access Management, add the server IP.
   - In SendGrid → API Keys, confirm the key includes `Mail Send`.
@@ -1372,7 +1372,7 @@ When email sending is disabled, the service now emits structured diagnostics sho
 ⚠️ Email service not configured — RSI alert email
    1) sendgrid library not installed (pip install sendgrid)
    2) Tenant API key missing (set FXLABS_SENDGRID_API_KEY or HEXTECH_SENDGRID_API_KEY)
-   Values (masked): SENDGRID_API_KEY=SG.************abcd, FROM_EMAIL=alerts@fxlabsprime.com, FROM_NAME=FXLabs Prime
+   Values (masked): SENDGRID_API_KEY=SG.************abcd, FROM_EMAIL=alerts@fxlabsprime.com, FROM_NAME=FxLabs Prime
    Hint: configure tenant-specific email credentials (FXLABS_SENDGRID_API_KEY/FXLABS_FROM_EMAIL/FXLABS_FROM_NAME or HEXTECH_*) — no global defaults
 ```
 
@@ -1396,10 +1396,10 @@ pip install -r requirements.txt
 ```
 - Set SendGrid credentials in `.env` (tenant-specific only):
 ```env
-# For FXLabs Prime
+# For FxLabs Prime
 FXLABS_SENDGRID_API_KEY=your_sendgrid_api_key
 FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
-FXLABS_FROM_NAME=FXLabs Prime Alerts
+FXLABS_FROM_NAME=FxLabs Prime Alerts
 
 # For HexTech
 # HEXTECH_SENDGRID_API_KEY=your_sendgrid_api_key
