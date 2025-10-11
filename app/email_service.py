@@ -1744,20 +1744,22 @@ class EmailService:
         else:
             h4_rows = []
             if rsi_oversold:
+                oversold_items = "".join([f'<div style="padding:4px 0;"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_oversold])
                 h4_rows.append(f"""
                   <tr>
-                    <td style=\"padding:12px;border-bottom:1px solid #E5E7EB;\">
-                      <div style=\"font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;\">Oversold (≤30)</div>
-                      {"".join([f'<div style=\"padding:4px 0;\"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_oversold])}
+                    <td style="padding:12px;border-bottom:1px solid #E5E7EB;">
+                      <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
+                      {oversold_items}
                     </td>
                   </tr>
                 """)
             if rsi_overbought:
+                overbought_items = "".join([f'<div style="padding:4px 0;"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_overbought])
                 h4_rows.append(f"""
                   <tr>
-                    <td style=\"padding:12px;\">
-                      <div style=\"font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;\">Overbought (≥70)</div>
-                      {"".join([f'<div style=\"padding:4px 0;\"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_overbought])}
+                    <td style="padding:12px;">
+                      <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
+                      {overbought_items}
                     </td>
                   </tr>
                 """)
@@ -1917,51 +1919,54 @@ class EmailService:
                 other_rows += f'<tr><td style="padding:10px;{border_style}">{item["currency"]}</td><td style="padding:10px;{border_style}">{item["strength"]}</td></tr>'
             
             other_currencies_html = f"""
-         <div style=\"margin-top:18px;margin-bottom:8px;font-weight:600;color:#374151;\">Other Currencies</div>
-         <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;\">
-            <tr style=\"background:#F9FAFB;font-weight:600;\"><td style=\"padding:10px\">Currency</td><td style=\"padding:10px\">Strength</td></tr>
+         <div style="margin-top:18px;margin-bottom:8px;font-weight:600;color:#374151;">Other Currencies</div>
+         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;">
+            <tr style="background:#F9FAFB;font-weight:600;"><td style="padding:10px">Currency</td><td style="padding:10px">Strength</td></tr>
             {other_rows}
          </table>
 """
 
+        # Build the common header first
+        common_header = self._build_common_header('Currency Strength', self.tz_name)
+        
         body = f"""
 <!doctype html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-  <meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>FxLabs Prime • Currency Strength Alert</title>
   <style>
     .card{{background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827}}
     .pill{{display:inline-block;padding:4px 8px;border-radius:999px;background:#EEF2FF;color:#3730A3;font-weight:700;font-size:12px;}}
   </style>
   </head>
-  <body style=\"margin:0;background:#F5F7FB;\">\n
-  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n
-    {self._build_common_header('Currency Strength', self.tz_name)}
+  <body style="margin:0;background:#F5F7FB;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FB;"><tr><td align="center" style="padding:24px 12px;">
+    {common_header}
 
-    <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" class=\"card\">\n
-      <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">{alert_name}</td></tr>
-      <tr><td style=\"padding:16px 20px;font-size:14px;\">
-         <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin-bottom:12px;\">
+    <table role="presentation" width="600" cellpadding="0" cellspacing="0" class="card">
+      <tr><td style="padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;">{alert_name}</td></tr>
+      <tr><td style="padding:16px 20px;font-size:14px;">
+         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
             <tr>
-               <td style=\"vertical-align:middle;\">
-                  <span class=\"pill\">Timeframe</span>
-                  <strong style=\"margin-left:8px;font-size:14px;\">{timeframe}</strong>
+               <td style="vertical-align:middle;">
+                  <span class="pill">Timeframe</span>
+                  <strong style="margin-left:8px;font-size:14px;">{timeframe}</strong>
                </td>
-               <td align=\"right\" style=\"vertical-align:middle;font-size:12px;color:#6B7280;\">{ts_local}</td>
+               <td align="right" style="vertical-align:middle;font-size:12px;color:#6B7280;">{ts_local}</td>
             </tr>
          </table>
-         <div style=\"margin-top:4px;margin-bottom:14px;color:#374151;\">The strongest/weakest currency has changed based on closed-bar returns.</div>
-         <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;\">
-            <tr style=\"background:#F9FAFB;font-weight:600;\"><td style=\"padding:10px\">Role</td><td style=\"padding:10px\">Currency</td><td style=\"padding:10px\">Strength</td></tr>
-            <tr><td style=\"padding:10px;color:#065F46;font-weight:700;\">Strongest</td><td style=\"padding:10px;\">{s_sym}</td><td style=\"padding:10px;\">{s_val}</td></tr>
-            <tr><td style=\"padding:10px;color:#7F1D1D;font-weight:700;border-top:1px solid #E5E7EB;\">Weakest</td><td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{w_sym}</td><td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{w_val}</td></tr>
+         <div style="margin-top:4px;margin-bottom:14px;color:#374151;">The strongest/weakest currency has changed based on closed-bar returns.</div>
+         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;">
+            <tr style="background:#F9FAFB;font-weight:600;"><td style="padding:10px">Role</td><td style="padding:10px">Currency</td><td style="padding:10px">Strength</td></tr>
+            <tr><td style="padding:10px;color:#065F46;font-weight:700;">Strongest</td><td style="padding:10px;">{s_sym}</td><td style="padding:10px;">{s_val}</td></tr>
+            <tr><td style="padding:10px;color:#7F1D1D;font-weight:700;border-top:1px solid #E5E7EB;">Weakest</td><td style="padding:10px;border-top:1px solid #E5E7EB;">{w_sym}</td><td style="padding:10px;border-top:1px solid #E5E7EB;">{w_val}</td></tr>
          </table>
-         <div style=\"margin-top:10px;color:#6B7280;font-size:12px;\">Previous: Strongest = {prev_strong or '-'}, Weakest = {prev_weak or '-'}
+         <div style="margin-top:10px;color:#6B7280;font-size:12px;">Previous: Strongest = {prev_strong or '-'}, Weakest = {prev_weak or '-'}
          </div>
          {other_currencies_html}
       </td></tr>
-      <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;\">FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>.</td></tr>
+      <tr><td style="padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;">FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href="https://fxlabsprime.com/terms-of-service" style="color:#6B7280;text-decoration:underline;">Terms</a> &amp; <a href="https://fxlabsprime.com/privacy-policy" style="color:#6B7280;text-decoration:underline;">Privacy Policy</a>.</td></tr>
     </table>
   </td></tr></table>
   </body>
