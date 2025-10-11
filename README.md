@@ -261,7 +261,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
   - Endpoint: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
   - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
   - The code automatically paginates and deduplicates emails.
-  - Core signals in the daily brief use `scalper` mode for Quantum analysis.
+  - Core signals in the daily brief use `scalper` mode for Quantum analysis (displayed as "Intraday" in the email).
 - For observability, the batch log includes a CSV of recipient emails and count.
 
 #### News Reminder Behavior (High‑Impact Only)
