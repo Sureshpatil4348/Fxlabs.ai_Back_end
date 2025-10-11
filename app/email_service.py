@@ -1845,7 +1845,7 @@ class EmailService:
         if not self.sg:
             self._log_config_diagnostics(context="daily brief email")
             return False
-        subject = "FxLabs Prime • Daily Morning Brief"
+        subject = f"FxLabs Prime • Daily Morning Brief • {payload.get('date_local', '')}"
         html = self._build_daily_html(payload)
         text = self._build_daily_text(payload)
         mail = self._build_mail(
