@@ -1874,6 +1874,7 @@ class EmailService:
         timeframe: str,
         triggered_items: List[Dict[str, Any]],
         prev_winners: Optional[Dict[str, Any]] = None,
+        all_values: Optional[Dict[str, float]] = None,
     ) -> str:
         """Build HTML body for Currency Strength alert (strongest/weakest changes)."""
         try:
@@ -1890,8 +1891,38 @@ class EmailService:
 
         prev_strong = (prev_winners or {}).get("strongest")
         prev_weak = (prev_winners or {}).get("weakest")
+        
+        # Build sorted list of other currencies (excluding strongest and weakest)
+        other_currencies = []
+        if all_values:
+            try:
+                sorted_currencies = sorted(all_values.items(), key=lambda x: float(x[1]), reverse=True)
+                for currency, strength in sorted_currencies:
+                    if currency not in [s_sym, w_sym]:
+                        other_currencies.append({
+                            "currency": currency,
+                            "strength": round(float(strength), 2)
+                        })
+            except Exception:
+                pass
 
         ts_local = self._format_now_local(self.tz_name)
+        
+        # Build Other Currencies section HTML
+        other_currencies_html = ""
+        if other_currencies:
+            other_rows = ""
+            for idx, item in enumerate(other_currencies):
+                border_style = "" if idx == 0 else "border-top:1px solid #E5E7EB;"
+                other_rows += f'<tr><td style="padding:10px;{border_style}">{item["currency"]}</td><td style="padding:10px;{border_style}">{item["strength"]}</td></tr>'
+            
+            other_currencies_html = f"""
+         <div style=\"margin-top:18px;margin-bottom:8px;font-weight:600;color:#374151;\">Other Currencies</div>
+         <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;\">
+            <tr style=\"background:#F9FAFB;font-weight:600;\"><td style=\"padding:10px\">Currency</td><td style=\"padding:10px\">Strength</td></tr>
+            {other_rows}
+         </table>
+"""
 
         body = f"""
 <!doctype html>
@@ -1928,6 +1959,7 @@ class EmailService:
          </table>
          <div style=\"margin-top:10px;color:#6B7280;font-size:12px;\">Previous: Strongest = {prev_strong or '-'}, Weakest = {prev_weak or '-'}
          </div>
+         {other_currencies_html}
       </td></tr>
       <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;\">FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>.</td></tr>
     </table>
@@ -1944,6 +1976,7 @@ class EmailService:
         timeframe: str,
         triggered_items: List[Dict[str, Any]],
         prev_winners: Optional[Dict[str, Any]] = None,
+        all_values: Optional[Dict[str, float]] = None,
     ) -> bool:
         """Send Currency Strength alert email.
 
@@ -1958,7 +1991,7 @@ class EmailService:
 
         try:
             subject = f"Trading Alert: {alert_name}"
-            html_body = self._build_currency_strength_email_body(alert_name, timeframe, triggered_items, prev_winners)
+            html_body = self._build_currency_strength_email_body(alert_name, timeframe, triggered_items, prev_winners, all_values)
             # Build a simple text alternative
             try:
                 strong = next((i for i in triggered_items if str(i.get('signal')).lower() == 'strongest'), None)

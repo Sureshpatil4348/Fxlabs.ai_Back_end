@@ -206,6 +206,7 @@ class CurrencyStrengthAlertService:
                                     timeframe=result.get("timeframe", ""),
                                     triggered_items=result.get("triggered_items", []),
                                     prev_winners=result.get("prev", {}),
+                                    all_values=result.get("values", {}),
                                 )
                             )
                         else:
