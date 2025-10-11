@@ -1901,7 +1901,6 @@ class EmailService:
   <title>FxLabs Prime • Currency Strength Alert</title>
   <style>
     .card{{background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827}}
-    .row{{display:flex;justify-content:space-between;}}
     .pill{{display:inline-block;padding:4px 8px;border-radius:999px;background:#EEF2FF;color:#3730A3;font-weight:700;font-size:12px;}}
   </style>
   </head>
@@ -1912,10 +1911,15 @@ class EmailService:
     <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" class=\"card\">\n
       <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">{alert_name}</td></tr>
       <tr><td style=\"padding:16px 20px;font-size:14px;\">
-         <div class=\"row\" style=\"margin-bottom:12px;\">
-            <div><span class=\"pill\">Timeframe</span> <strong style=\"margin-left:6px;\">{timeframe}</strong></div>
-            <div style=\"font-size:12px;color:#6B7280;\">{ts_local}</div>
-         </div>
+         <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin-bottom:12px;\">
+            <tr>
+               <td style=\"vertical-align:middle;\">
+                  <span class=\"pill\">Timeframe</span>
+                  <strong style=\"margin-left:8px;font-size:14px;\">{timeframe}</strong>
+               </td>
+               <td align=\"right\" style=\"vertical-align:middle;font-size:12px;color:#6B7280;\">{ts_local}</td>
+            </tr>
+         </table>
          <div style=\"margin-top:4px;margin-bottom:14px;color:#374151;\">The strongest/weakest currency has changed based on closed-bar returns.</div>
          <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;\">
             <tr style=\"background:#F9FAFB;font-weight:600;\"><td style=\"padding:10px\">Role</td><td style=\"padding:10px\">Currency</td><td style=\"padding:10px\">Strength</td></tr>
