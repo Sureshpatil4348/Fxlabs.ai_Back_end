@@ -1,10 +1,16 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-WebSocket v2: Use `/market-v2` for live ticks, indicator updates, and quantum analysis updates (broadcast baseline). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no OHLC or indicator snapshots in v2. Ping/pong is supported for keepalive.
+WebSocket v2: Use `/market-v2` for live ticks, indicator updates, quantum analysis updates, and trending pairs updates (hourly broadcast). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no OHLC or indicator snapshots in v2. Ping/pong is supported for keepalive.
 
 Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, coalesced; OHLC is not streamed to clients in v2). No EA or external bridge required.
 
 A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, AI-powered news analysis, and comprehensive alert systems for trading applications.
+
+Note — FxLabs Prime Domain Update
+- All examples and configs now use `fxlabsprime.com`.
+- API base URL: `https://api.fxlabsprime.com`
+- Frontend origin: `https://app.fxlabsprime.com`
+- Email sender: `alerts@fxlabsprime.com`
 
 ## 🏗️ Architecture Overview
 
@@ -30,6 +36,7 @@ A high-performance, real-time financial market data streaming service built with
 - **Historical Data Access**: REST API for historical market data
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap and RSI alerts with email notifications
+ - Currency Strength alerts: notifies whenever the strongest/weakest fiat currency changes for a configured timeframe
  - **Event‑Driven Alerts**: Alerts are evaluated immediately after the indicator scheduler updates the in‑memory `indicator_cache` on closed bars. A minute scheduler remains as a safety net.
 - **Smart Email Cooldown**: Value-based cooldown prevents spam while allowing significant RSI changes (email-level only; RSI Tracker pair-level cooldown removed)
 - **Intelligent Caching**: Memory-efficient selective data caching
@@ -39,9 +46,10 @@ A high-performance, real-time financial market data streaming service built with
 - **Warm-up & Stale-Data Protection**: Skips evaluations when latest bar is stale (>2× timeframe) and enforces indicator lookback (e.g., RSI series) before triggering
 // Removed: Rate Limits + Digest (alerts send immediately subject to value-based cooldown)
 - **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
-  - FXLabs tenant: All alert emails are enforced to IST (Asia/Kolkata) regardless of host tz. If the OS tz database is missing, a robust +05:30 (IST) fallback is applied.
-- **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FXLabs • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
-- **Single Common Footer**: Disclaimers are rendered once at the bottom of each email (not per pair/card). RSI uses "Not financial advice. © FxLabs AI". Heatmap and Indicator trackers use "Education only. © FxLabs AI".
+  - FxLabs Prime tenant: All alert emails are enforced to IST (Asia/Kolkata) regardless of host tz. If the OS tz database is missing, a robust +05:30 (IST) fallback is applied.
+- **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FxLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
+- **Comprehensive Legal Disclaimer**: All alert emails now include a comprehensive legal disclaimer footer that outlines risks, disclaims financial advice, and links to Terms of Service and Privacy Policy at fxlabsprime.com. This ensures full legal compliance and transparency with users about trading risks.
+- **Email Brand Color Update**: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` remain for readability and hierarchy.
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers, per the Calculations Reference (EMA21/50/200, MACD, RSI, UTBot, Ichimoku; new‑signal boost; quiet‑market damping)
   - Per‑alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
 
@@ -190,19 +198,19 @@ PORT=8000
 
 # News Analysis Configuration
 PERPLEXITY_API_KEY=your_perplexity_key
-JBLANKED_API_URL=https://www.jblanked.com/news/api/forex-factory/calendar/week/
-JBLANKED_API_KEY=your_jblanked_key
-NEWS_UPDATE_INTERVAL_HOURS=0.5  # 30 minutes
-JBLANKED_API_KEY=your_jblanked_key
+# ASOasis Forex Calendar (today; IST)
+ASOASIS_API_FOREX_NEWS_ENDPOINT=https://api.asoasis.tech/forex-calender/today?timezone=Asia/Kolkata
+ASOASIS_API_FOREX_NEWS_CLIENT_ID=your_client_id
+ASOASIS_API_FOREX_NEWS_CLIENT_SECRET=your_client_secret
 NEWS_UPDATE_INTERVAL_HOURS=0.5  # 30 minutes
 NEWS_CACHE_MAX_ITEMS=500
 
 # Email Configuration (tenant-specific only; no global defaults)
 # Define only the variables for the tenant you run.
-# FXLabs
+# FxLabs Prime
 FXLABS_SENDGRID_API_KEY=
-FXLABS_FROM_EMAIL=alerts@fxlabs.ai
-FXLABS_FROM_NAME=FX Labs Alerts
+FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
+FXLABS_FROM_NAME=FxLabs Prime Alerts
 FXLABS_PUBLIC_BASE_URL=
 
 # HexTech
@@ -216,13 +224,13 @@ SUPABASE_URL=
 SUPABASE_SERVICE_KEY=
 
 # Optional: per-tenant overrides (used by entry scripts and take precedence over base vars)
-# FXLabs
+# FxLabs Prime
 FXLABS_SUPABASE_URL=https://your-fxlabs.supabase.co
 FXLABS_SUPABASE_SERVICE_KEY=
 FXLABS_SENDGRID_API_KEY=
-FXLABS_FROM_EMAIL=alerts@fxlabs.ai
-FXLABS_FROM_NAME=FX Labs Alerts
-FXLABS_PUBLIC_BASE_URL=https://api.fxlabs.ai
+FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
+FXLABS_FROM_NAME=FxLabs Prime Alerts
+FXLABS_PUBLIC_BASE_URL=https://api.fxlabsprime.com
 FXLABS_DAILY_TZ_NAME=Asia/Kolkata
 FXLABS_DAILY_SEND_LOCAL_TIME=09:00
 
@@ -253,12 +261,12 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
   - Endpoint: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
   - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
   - The code automatically paginates and deduplicates emails.
-  - Core signals in the daily brief use `scalper` mode for Quantum analysis.
+  - Core signals in the daily brief use `scalper` mode for Quantum analysis (displayed as "Intraday" in the email).
 - For observability, the batch log includes a CSV of recipient emails and count.
 
 #### News Reminder Behavior (High‑Impact Only)
-- The 5‑minute news reminder now filters to only AI‑normalized high‑impact items (`impact == "high"`). Medium/low impact items are skipped.
-- Source impact values and AI analysis are normalized to `high|medium|low`; only `high` qualifies for reminders.
+- The 5‑minute news reminder filters to only source‑reported high‑impact items (`impact == "high"` from the upstream API). Medium/low impact items are skipped.
+- Impact is not AI‑derived for reminders or display; it mirrors the upstream field.
 - Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
 
 #### Auth Fetch Logging (Verbose)
@@ -336,6 +344,8 @@ Internal alert tick_data shape:
 - Broadcast-All mode: v2 pushes ticks and indicators (closed‑bar) to all connected clients without explicit subscriptions. OHLC is computed server‑side only for indicators/alerts.
   - Symbols: all symbols in `ALLOWED_WS_SYMBOLS` (defaults to all `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`, broker‑suffixed)
 - Timeframes: M1, M5, M15, M30, H1, H4, D1, W1
+  - Note: `currency_strength` enforces a minimum timeframe of `5M` (no `1M`).
+  - Scale: `currency_strength` values are normalized to −100..100 (0 = neutral).
 - Subscribe remains optional and is primarily used to receive `initial_ohlc` / `initial_indicators` snapshots on demand.
 
 Security and input validation (mirrors REST policy):
@@ -388,6 +398,15 @@ Live push when a new bar is detected by the 10s poller:
 }
 ```
 
+Currency Strength updates are also pushed over WebSocket on closed bars only and only for WS-allowed timeframes (minimum `5M`).
+
+Server logs: On each new closed-bar currency strength broadcast, the server logs an INFO line on logger `obs.curstr` with the timeframe, bar_time, and the JSON map of strengths, for example:
+
+```
+📊 currency_strength_update | tf=5M bar_time=1696229940000 values={"USD":23.5,"EUR":-12.2,"GBP":8.7,"JPY":-31.4,"AUD":15.9,"CAD":2.1,"CHF":-5.6,"NZD":-1.0}
+```
+Logs are written to `logs/<UTC-start>.log` (rotating at ~10MB x5) and to console per `app/logging_config.py`.
+
 Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
  
@@ -431,7 +450,7 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 | Endpoint | Method | Description | Auth Required |
 |----------|--------|-------------|---------------|
 | `/health` | GET | Health check and MT5 status | No |
-| `/api/indicator` | GET | Latest closed‑bar value(s) for a given indicator across pairs | Yes |
+| `/api/indicator` | GET | Latest closed‑bar value(s) for a given indicator across pairs; Currency Strength snapshot | Yes |
 | `/api/pricing` | GET | Latest cached price snapshot(s) with daily_change_pct | Yes |
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
@@ -456,8 +475,9 @@ Notes:
 ### Indicator REST (`/api/indicator`)
 
 Parameters:
-- `indicator` (string, required): `rsi` | `quantum`
+- `indicator` (string, required): `rsi` | `quantum` | `currency_strength`
 - `timeframe` (string, required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`
+  - Constraint: for `currency_strength`, minimum timeframe is `5M` (requests with `1M` return error `min_timeframe_5M`).
 - `pairs` (repeatable or CSV): symbols (1–32). Alias: `symbols`. If omitted, defaults to WS‑allowed symbols (capped to 32).
 
 Response shapes (examples):
@@ -478,6 +498,7 @@ Symbol normalization (canonicalization):
 - Rules: trim whitespace, uppercase core instrument (e.g., `eurusd` → `EURUSD`), and force trailing broker suffix to lowercase `m` when present (`EURUSDM` → `EURUSDm`).
 - Environment allowlists (e.g., `WS_ALLOWED_SYMBOLS`) and rollout configs are normalized using the same rules.
 - Errors like `Unknown symbol: 'EURUSDM'. Similar symbols found: ['EURUSDm']` are automatically avoided; the server now resolves `...M` to `...m`.
+ - Alerts: if a pair is configured without the broker suffix (e.g., `BTCUSD`), the evaluators auto‑map it to its broker‑suffixed form (e.g., `BTCUSDm`) when available, ensuring parity with the WebSocket feed and UI.
 
 #### Email Template (RSI)
 - Compact, per‑pair card format.
@@ -560,10 +581,24 @@ Notes:
 
 - Per‑timeframe indicator strength is normalized to a score in [−100..+100].
 - Startup warm‑up: For the Tracker, armed state per (alert, symbol) is initialized from current Buy%/Sell% (sides already above thresholds start disarmed) and the first observation is skipped. For the Custom Indicator Tracker, the last signal per (alert, symbol, timeframe, indicator) is baselined and the first observation is skipped.
-- Style weighting aggregates across the alert's selected timeframes:
-  - Scalper: 1M(0.2), 5M(0.4), 15M(0.3), 30M(0.1)
-  - Swing: 1H(0.25), 4H(0.45), 1D(0.3)
+- Style weighting aggregates across timeframes (matching `app/quantum.py` and the `quantum_update` feed):
+  - Scalper: 5M(0.30), 15M(0.30), 30M(0.20), 1H(0.15), 4H(0.05), 1D(0.0)
+  - Swing: 30M(0.10), 1H(0.25), 4H(0.35), 1D(0.30)
 - Final Score = weighted average of per‑TF scores; Buy Now % = (Final Score + 100)/2.
+
+- Threshold semantics (Tracker):
+  - BUY triggers when style‑weighted Buy% crosses up to ≥ `buy_threshold`.
+  - SELL triggers when style‑weighted Buy% crosses down to ≤ `sell_threshold` (equivalently, Sell% ≥ `100 − sell_threshold`).
+  - Parity: These are the same Buy%/Sell% values sent to the frontend in WebSocket `quantum_update` payloads.
+
+- Detailed evaluation logs:
+  - Set `ALERT_VERBOSE_LOGS=true` and `LOG_LEVEL=DEBUG` to enable per‑pair logs:
+    - `pair_eval_start` (thresholds and previous armed state)
+    - `pair_eval_metrics` (Buy%/Sell%/Final)
+    - `pair_eval_criteria` (exact comparisons and re‑arm thresholds)
+    - `pair_rearm` (side re‑armed after leaving zone)
+    - `pair_eval_decision` (baseline skip or trigger)
+    - `heatmap_no_trigger` now includes a `reason` field for clarity
 
 - Backend alignment update:
 - The Heatmap/Quantum tracker now reads indicator values from the centralized `indicator_cache` and performs aggregation only. RSI(14), EMA(21/50/200), MACD(12,26,9) are cache-based; UTBot and Ichimoku are computed via `app.indicators` over closed OHLC. New‑signal boosts and quiet‑market damping are applied per spec.
@@ -602,46 +637,43 @@ See `ALERTS.md` for the consolidated alerts product & tech spec.
 ### Troubleshooting: Only RSI Tracker and Daily emails arrive
 - No active alerts: Ensure you have rows in Supabase for `heatmap_tracker_alerts` or `heatmap_indicator_tracker_alerts` with `is_active=true` and non‑empty `pairs` (max 3).
 - Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. On higher TFs, RSI may hover mid‑band for long periods.
-- Arm/disarm gating: After a trigger, that side disarms and rearms only after leaving the zone (threshold−5).
+- Arm/disarm gating (Heatmap): After a trigger, that side disarms and re‑arms as soon as it leaves the zone boundary (no margin). Buy re‑arms when `Buy% < buy_threshold`; Sell re‑arms when `Buy% > sell_threshold`.
  
 
 ### 📰 News API Usage (External Source + Internal Endpoints)
 
-#### External Source: Jblanked (Forex Factory Calendar - Weekly)
-- URL (default): `https://www.jblanked.com/news/api/forex-factory/calendar/week/`
-- Auth: `Authorization: Api-Key <JBLANKED_API_KEY>`
+#### External Source: ASOasis (Forex Calendar — Today)
+- URL (default): `https://api.asoasis.tech/forex-calender/today?timezone=Asia/Kolkata`
+- Headers: `client-id: <ASOASIS_API_FOREX_NEWS_CLIENT_ID>`, `client-secret: <ASOASIS_API_FOREX_NEWS_CLIENT_SECRET>`
 - Method: GET
 
 Example:
 ```bash
-export JBLANKED_API_URL="https://www.jblanked.com/news/api/forex-factory/calendar/week/"
-export JBLANKED_API_KEY="<your_jblanked_key>"
+export ASOASIS_API_FOREX_NEWS_ENDPOINT="https://api.asoasis.tech/forex-calender/today?timezone=Asia/Kolkata"
+export ASOASIS_API_FOREX_NEWS_CLIENT_ID="<your_client_id>"
+export ASOASIS_API_FOREX_NEWS_CLIENT_SECRET="<your_client_secret>"
 
 curl -s \
-  -H "Authorization: Api-Key $JBLANKED_API_KEY" \
-  -H "Content-Type: application/json" \
-  "$JBLANKED_API_URL" | jq .
+  -H "client-id: $ASOASIS_API_FOREX_NEWS_CLIENT_ID" \
+  -H "client-secret: $ASOASIS_API_FOREX_NEWS_CLIENT_SECRET" \
+  "$ASOASIS_API_FOREX_NEWS_ENDPOINT" | jq .
 ```
 
-Field mapping tolerated (multiple shapes):
-- headline: `Name | title | headline | name`
-- forecast: `Forecast | forecast | expected`
-- previous: `Previous | previous | prev`
-- actual: `Actual | actual | result`
-- currency: `Currency | currency | ccy | country`
-- impact: `Strength | impact | importance`
-- time: `Date | time | date | timestamp` → Converted from upstream UTC+3 to UTC ISO (Z)
-- optional context: `Outcome`, `Quality` appended to headline
+Response shape (example):
+```
+{
+  "count": 15,
+  "items": [ { "id": "uuid", "time": 1760039100000, "name": "...", "currency": "USD", "impact": "high", "actual": "", "previous": "", "forecast": "", "revision": "" } ],
+  "timezone": "Asia/Kolkata"
+}
+```
 
-Timezones:
-- Upstream: UTC+3 (as provided by Jblanked)
-- Processing/Serving: converted to UTC ISO8601 with Z
-
-Cache policy (weekly merge & dedup):
-- Fetch weekly data and normalize times to UTC.
-- Deduplicate using key: `(currency, UTC time, base headline)` where base headline excludes appended `(Outcome)` and ` - Quality`.
-- If a matching item reappears with changed `Outcome`, `Quality`, or `Actual`, refresh its AI analysis; otherwise, keep existing analysis (no duplicate calls).
-- After merge: sort cache by `time` (UTC) descending and trim to `NEWS_CACHE_MAX_ITEMS`.
+Processing rules:
+- Filter: Only `impact == "high"` items (from the source) are analyzed and cached.
+- Impact source of truth: Downstream `analysis.impact` mirrors the upstream API `impact` exactly; AI output is ignored for this field.
+- Time: `time` may be epoch (ms/seconds) or ISO; normalized to UTC ISO8601 with `Z`.
+- Dedup: Prefer upstream `id` as `uuid` for dedup; fallback to `(currency, UTC time, base headline)`.
+- Client response hygiene: If any of `actual`, `previous`, `forecast`, `revision` are empty, those fields are omitted in `/api/news/analysis`.
 
 ### Example Usage
 
@@ -661,6 +693,10 @@ ws.onmessage = (event) => {
     console.log('Ticks:', data.data);
   } else if (data.type === 'indicator_update' || data.type === 'initial_indicators') {
     console.log('Indicators:', data);
+  } else if (data.type === 'quantum_update') {
+    console.log('Quantum:', data);
+  } else if (data.type === 'trending_pairs') {
+    console.log('Trending pairs snapshot:', data.data);
   } else {
     console.log('Other:', data);
   }
@@ -673,9 +709,11 @@ ws.onmessage = (event) => {
 curl -H "X-API-Key: your_token" \
      "http://localhost:8000/api/indicator?indicator=rsi&timeframe=1H&pairs=EURUSDm&pairs=BTCUSDm"
 
- 
-
 # Note: Tick data is WebSocket-only. Use `/market-v2` to receive live ticks.
+
+# Trending pairs snapshot
+curl -H "X-API-Key: your_token" \
+     "http://localhost:8000/trending-pairs"
 ```
 
 ## 🏗️ Architecture Details
@@ -767,6 +805,25 @@ Concurrency:
 - Access is async‑safe using keyed locks via `app.concurrency.pair_locks` with keys `ind:{symbol}:{timeframe}`.
 - Avoid holding other `pair_locks` with the same key simultaneously to prevent deadlocks.
 
+### High-Concurrency Architecture & Scaling
+
+- **ASGI + FastAPI**: Single-process, event-loop concurrency handles many simultaneous REST and WebSocket clients without blocking. Background tasks (news, daily emails, minute alerts, indicator poller) are started via the app lifespan and run concurrently.
+- **Broadcast WebSockets (v2)**: A single producer pipeline computes closed-bar indicators every ~10s and broadcasts snapshots to all connected clients. Each client has a paced tick loop (~1 Hz), avoiding per-client heavy work.
+- **In-memory caches**: `app/price_cache.py` and `app/indicator_cache.py` serve reads in O(1) with keyed asyncio locks to keep updates consistent under load. REST endpoints read from these caches instead of recomputing.
+- **Shaping caps and allowlists**: Environment-driven caps limit work per connection and per request.
+  - `ALLOWED_WS_SYMBOLS`, `ALLOWED_WS_TIMEFRAMES`
+  - `WS_MAX_SYMBOLS`, `WS_MAX_TFS_PER_SYMBOL`, `WS_MAX_SUBSCRIPTIONS`
+  - REST endpoints cap symbols to 32 and validate timeframes.
+- **Backpressure/timeouts**:
+  - WebSocket send loops pace at ~1s intervals and use best-effort non-blocking sends.
+  - External calls (e.g., Supabase via `AlertCache`) use strict client timeouts.
+- **Security & isolation**: `X-API-Key` required for REST; WebSocket mirrors REST auth optionally. CORS origins are configured per deployment. Multi-tenancy uses separate entry points (`fxlabs-server.py` / `hextech-server.py`) with tenant-scoped credentials and branding.
+- **Observability**: Periodic WebSocket metrics and per-update indicator logs track throughput, failures, and latency without affecting hot paths.
+
+Operational guidance:
+- Start with conservative allowlists and caps; increase gradually while monitoring CPU, memory, and send loop latencies.
+- For higher fan-out, scale vertically (CPU/RAM) first. If horizontally scaling processes, ensure only one instance performs heavy indicator polling per market feed or stagger instances by symbol/timeframe to avoid duplicate work.
+
 ### Performance Characteristics
 
 | Metric | Before Optimization | After Optimization | Improvement |
@@ -836,7 +893,7 @@ The system is configured for production deployment with Cloudflare Tunnel:
 # config.yml
 tunnel: 5612346e-ee13-4f7b-8a04-9215b63b14d3
 ingress:
-  - hostname: api.fxlabs.ai
+  - hostname: api.fxlabsprime.com
     service: http://127.0.0.1:8000
 ```
 
@@ -944,21 +1001,21 @@ Each item in `data` contains:
 
 Notes:
 - `analysis.effect`: bullish | bearish | neutral (lowercase)
-- `analysis.impact`: high | medium | low (lowercase)
+- `analysis.impact`: high | medium | low (lowercase), mirroring the upstream API `impact` value; AI predictions for impact are ignored.
 - Removed fields: `currencies_impacted`, `currency_pairs`
 
 Model behavior:
-- The Perplexity prompt enforces pre‑release evaluation with taxonomy‑based impact and policy‑aware directional bias. Full prompt used:
+- The AI analysis provides only the directional bias (`effect`) and a concise explanation. Impact used in responses mirrors the source API and is not taken from AI output. Full prompt used:
   ```
   You are a Forex macro event classifier used BEFORE an economic release. Output exactly:
   {
     "effect": "bullish|bearish|neutral",
-    "impact": "high|medium|low",
     "explanation": "<max 2 sentences>"
   }
   Constraints:
   - Lowercase enums only.
   - No extra fields or text.
+  - Do NOT include any field named 'impact' in your response.
 
   INPUT
   Currency: {news_item.currency}
@@ -968,8 +1025,8 @@ Model behavior:
   Previous: {news_item.previous or 'N/A'}
   Source impact hint: {news_item.impact or 'N/A'}
 
-  A) IMPACT (magnitude tier, not direction)
-  1) If Source impact hint ∈ {High, Medium, Low}, mirror it (lowercased) UNLESS it contradicts the taxonomy below by >1 tier; in that case, prefer the taxonomy.
+  A) CONTEXT (impact is provided by API; do not output it)
+  1) Consider standard taxonomy only to reason about magnitude in the explanation; DO NOT output an 'impact' field.
   2) Taxonomy by EVENT FAMILY (based on what historically moves FX):
      TIER-1 (default "high"):
      - CPI (headline/core), PCE (US), central-bank rate decisions/statements/pressers/minutes, major labor (NFP/Employment Change, Unemployment Rate, Average/Hourly Earnings), GDP "advance/flash", ISM PMIs (US), Flash PMIs (EZ/UK), Retail Sales (US/UK/CA headline; US control group). 
@@ -990,8 +1047,8 @@ Model behavior:
   8) You may look up consensus/stance from reliable sources. Do NOT treat previews as actuals.
   9) EXPLANATION ≤2 sentences: (i) impact tier rationale, (ii) bias rationale. No filler.
   ```
-- Parsing first attempts to load the JSON. If unavailable, it falls back to regex and synonym detection.
-- `impact` is normalized from synonyms (e.g., significant→high, moderate→medium, minor→low), then falls back to the source `impact` field if present; defaults to `medium` if still ambiguous.
+- Parsing first attempts to load the JSON; if unavailable, it falls back to regex to extract `effect`/`explanation`. The final `full_analysis` is the explanation text (never raw JSON).
+- `analysis.impact` mirrors the upstream API `impact` field exclusively; AI output never overrides it.
 
 ## 🔒 Security Features
 
@@ -1009,7 +1066,7 @@ Model behavior:
     - Then reinstall MT5 if needed: `pip install --force-reinstall --no-cache-dir MetaTrader5==5.0.45`
 
 - Medium severity:
-  - External API keys (Perplexity/Jblanked) are expected via env; missing keys will limit news analysis. Behavior unchanged.
+  - External API keys (Perplexity/ASOasis) are expected via env; missing keys will limit news analysis.
   - News analyzer uses simple keyword extraction to derive effect; this is heuristic, as before.
   - Email per-user rate limiting and digest have been removed. Alerts are sent immediately when not blocked by the value-based cooldown.
   - Closed-bar gating for alert evaluation is tracked per alert/user (not globally by symbol/timeframe). This ensures multiple users with identical configurations are each evaluated every cycle.
@@ -1284,7 +1341,7 @@ Expected logs when working:
 - Fix quickly:
   - Install deps in your venv: `pip install -r requirements.txt` (includes `sendgrid`)
   - Provide tenant-specific credentials via environment or `.env` (auto-loaded now):
-    - FXLabs: `FXLABS_SENDGRID_API_KEY=...`, `FXLABS_FROM_EMAIL=verified@yourdomain.com`, `FXLABS_FROM_NAME=FX Labs Alerts`
+    - FxLabs Prime: `FXLABS_SENDGRID_API_KEY=...`, `FXLABS_FROM_EMAIL=verified@yourdomain.com`, `FXLABS_FROM_NAME=FxLabs Prime Alerts`
     - HexTech: `HEXTECH_SENDGRID_API_KEY=...`, `HEXTECH_FROM_EMAIL=verified@yourdomain.com`, `HEXTECH_FROM_NAME=HexTech Alerts`
   - Ensure your process actually sees the variables:
     - macOS/Linux: `.env` is auto-loaded; no manual `export` needed
@@ -1295,15 +1352,15 @@ Expected logs when working:
 ### "HTTP Error 403: Forbidden" during send (intermittent)
 - Symptom: Logs show `❌ Error sending ... email: HTTP Error 403: Forbidden` while other emails sometimes succeed.
 - Most common root causes:
-  - Sender identity mismatch: `FROM_EMAIL` is not a verified Single Sender or part of an authenticated domain. If only `alerts@fxlabs.ai` is verified, sending from `alerts@alerts.fxlabs.ai` will 403. The code requires tenant-specific `FROM_EMAIL`; no default is used.
+  - Sender identity mismatch: `FROM_EMAIL` is not a verified Single Sender or part of an authenticated domain. If only `alerts@fxlabsprime.com` is verified, sending from `alerts@alerts.fxlabsprime.com` will 403. The code requires tenant-specific `FROM_EMAIL`; no default is used.
   - API key scope too narrow: The `SENDGRID_API_KEY` lacks the `Mail Send` permission. Regenerate with Full Access or include `Mail Send`.
   - IP Access Management: If enabled in SendGrid, requests from non-whitelisted IPs are blocked with 403. Whitelist the server IP(s).
   - Region mismatch: EU-only accounts must use the EU endpoint; ensure your environment uses the correct SendGrid region (contact SendGrid if unsure).
-- Why intermittent? Different processes or shells might pick up different env files. Ensure you set the tenant-specific variables (`FXLABS_*` for FXLabs or `HEXTECH_*` for HexTech) in the active environment for that process. No code defaults are used.
+- Why intermittent? Different processes or shells might pick up different env files. Ensure you set the tenant-specific variables (`FXLABS_*` for FxLabs Prime or `HEXTECH_*` for HexTech) in the active environment for that process. No code defaults are used.
 - What we log now (for failures): status, a trimmed response body, masked API key, and `from/to` addresses to speed up diagnosis without leaking secrets.
 - Quick checklist:
-  - Confirm your env defines tenant-specific keys: for FXLabs use `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL`, `FXLABS_FROM_NAME`; for HexTech use `HEXTECH_SENDGRID_API_KEY`, `HEXTECH_FROM_EMAIL`, `HEXTECH_FROM_NAME`.
-  - Verify the sender identity in SendGrid (Single Sender) or authenticate the `fxlabs.ai` domain.
+  - Confirm your env defines tenant-specific keys: for FxLabs Prime use `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL`, `FXLABS_FROM_NAME`; for HexTech use `HEXTECH_SENDGRID_API_KEY`, `HEXTECH_FROM_EMAIL`, `HEXTECH_FROM_NAME`.
+  - Verify the sender identity in SendGrid (Single Sender) or authenticate the `fxlabsprime.com` domain.
   - If you use IP Access Management, add the server IP.
   - In SendGrid → API Keys, confirm the key includes `Mail Send`.
   - Run `python send_test_email.py you@example.com` (in an environment where running is allowed) to verify the path end-to-end.
@@ -1315,7 +1372,7 @@ When email sending is disabled, the service now emits structured diagnostics sho
 ⚠️ Email service not configured — RSI alert email
    1) sendgrid library not installed (pip install sendgrid)
    2) Tenant API key missing (set FXLABS_SENDGRID_API_KEY or HEXTECH_SENDGRID_API_KEY)
-   Values (masked): SENDGRID_API_KEY=SG.************abcd, FROM_EMAIL=alerts@fxlabs.ai, FROM_NAME=FX Labs
+   Values (masked): SENDGRID_API_KEY=SG.************abcd, FROM_EMAIL=alerts@fxlabsprime.com, FROM_NAME=FxLabs Prime
    Hint: configure tenant-specific email credentials (FXLABS_SENDGRID_API_KEY/FXLABS_FROM_EMAIL/FXLABS_FROM_NAME or HEXTECH_*) — no global defaults
 ```
 
@@ -1339,10 +1396,10 @@ pip install -r requirements.txt
 ```
 - Set SendGrid credentials in `.env` (tenant-specific only):
 ```env
-# For FXLabs
+# For FxLabs Prime
 FXLABS_SENDGRID_API_KEY=your_sendgrid_api_key
-FXLABS_FROM_EMAIL=alerts@fxlabs.ai
-FXLABS_FROM_NAME=FX Labs Alerts
+FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
+FXLABS_FROM_NAME=FxLabs Prime Alerts
 
 # For HexTech
 # HEXTECH_SENDGRID_API_KEY=your_sendgrid_api_key
@@ -1373,7 +1430,7 @@ It should point to your project's `.venv` path. If not, re-run activation and re
 - If using Google Workspace: in Admin Console, use Email Log Search for the recipient/time or Message-ID to see if it was quarantined, routed, or marked spam; release if needed.
 - If using Cloudflare Email Routing or any forwarder: verify the route exists, forwarding target is valid, and check routing logs for acceptance/drops.
 - Authenticate your From domain in SendGrid:
-  - Complete Domain Authentication (CNAMEs) and send from an aligned subdomain (e.g., `alerts@alerts.fxlabs.ai`).
+  - Complete Domain Authentication (CNAMEs) and send from an aligned subdomain (e.g., `alerts@alerts.fxlabsprime.com`).
   - Ensure SPF includes `include:sendgrid.net`, DKIM passes, and set DMARC to `p=none` during testing; move to `quarantine`/`reject` after validation.
 - Reduce spam likelihood: include both `text/plain` and `text/html` parts, avoid URL shorteners, keep images minimal, and use a consistent `FROM_EMAIL` that matches your authenticated domain.
 - Check suppression lists anyway: make sure the recipient isn't present under Bounces/Blocks/Spam Reports; remove if found, then resend.
@@ -1392,7 +1449,7 @@ What to collect for escalation: UTC timestamp, recipient, subject, SendGrid Mess
 - Consistent Reply-To: Sets `Reply-To` to the sender for consistent header presence.
 
 Operational notes:
-- Keep `FROM_EMAIL` on your authenticated domain/subdomain (e.g., alerts@alerts.fxlabs.ai).
+- Keep `FROM_EMAIL` on your authenticated domain/subdomain (e.g., alerts@alerts.fxlabsprime.com).
 - Avoid URL shorteners and excessive links in alert content.
 - DMARC alignment: after verifying inboxing, move DMARC policy from `p=none` to `quarantine`/`reject` gradually.
 
@@ -1400,17 +1457,17 @@ Operational notes:
 This is a DMARC alignment/authentication issue. Fix by authenticating the domain and aligning the From address.
 
 Checklist:
-- Domain Authentication in SendGrid: Settings → Sender Authentication → Domain Authentication. Choose a dedicated subdomain (e.g., `alerts.fxlabs.ai`).
-  - Add the DKIM CNAMEs SendGrid provides (typically `s1._domainkey.alerts.fxlabs.ai` and `s2._domainkey.alerts.fxlabs.ai`).
-  - Enable "Custom Return Path" (bounce domain), e.g., `em.alerts.fxlabs.ai` CNAME to SendGrid target. This makes SPF alignment pass.
+- Domain Authentication in SendGrid: Settings → Sender Authentication → Domain Authentication. Choose a dedicated subdomain (e.g., `alerts.fxlabsprime.com`).
+  - Add the DKIM CNAMEs SendGrid provides (typically `s1._domainkey.alerts.fxlabsprime.com` and `s2._domainkey.alerts.fxlabsprime.com`).
+  - Enable "Custom Return Path" (bounce domain), e.g., `em.alerts.fxlabsprime.com` CNAME to SendGrid target. This makes SPF alignment pass.
   - If using Cloudflare DNS: set these CNAMEs to DNS only (gray cloud). Proxying breaks DKIM/SPF validation.
 - SPF for the sending domain/subdomain: publish or update SPF to include SendGrid.
-  - Example for subdomain `alerts.fxlabs.ai`: `v=spf1 include:sendgrid.net -all`
+  - Example for subdomain `alerts.fxlabsprime.com`: `v=spf1 include:sendgrid.net -all`
   - If the root domain already has an SPF for other services (e.g., Microsoft 365), include both as needed: `v=spf1 include:spf.protection.outlook.com include:sendgrid.net -all`
 - DMARC for the sending domain/subdomain: start permissive, then tighten.
-  - Example: `v=DMARC1; p=none; rua=mailto:dmarc@fxlabs.ai; adkim=s; aspf=s; pct=100`
+  - Example: `v=DMARC1; p=none; rua=mailto:dmarc@fxlabsprime.com; adkim=s; aspf=s; pct=100`
   - After validation, move to `p=quarantine` → `p=reject` to reduce spoofing.
-- From address must match the authenticated domain: send from `alerts@alerts.fxlabs.ai` if that's the domain you authenticated (update `FROM_EMAIL`).
+- From address must match the authenticated domain: send from `alerts@alerts.fxlabsprime.com` if that's the domain you authenticated (update `FROM_EMAIL`).
 - Optional: BIMI (brand logo) can help, but only after DMARC passes with enforcement and, ideally, a VMC.
 
 Why Outlook flagged it:

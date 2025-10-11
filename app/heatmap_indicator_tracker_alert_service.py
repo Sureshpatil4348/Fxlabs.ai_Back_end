@@ -81,13 +81,20 @@ class HeatmapIndicatorTrackerAlertService:
                     )
 
                     ts_iso = datetime.now(timezone.utc).isoformat()
+                    from .mt5_utils import canonicalize_symbol
+                    from .constants import RSI_SUPPORTED_SYMBOLS
+
                     per_alert_triggers: List[Dict[str, Any]] = []
-                    for symbol in pairs:
-                        async with pair_locks.acquire(self._key(alert_id, symbol, timeframe, indicator)):
-                            signal = await self._compute_indicator_signal(symbol, timeframe, indicator)
+                    for input_symbol in pairs:
+                        # Canonicalize symbol and auto-append broker suffix when missing
+                        symbol_canon = canonicalize_symbol(input_symbol)
+                        if symbol_canon not in RSI_SUPPORTED_SYMBOLS and (symbol_canon + "m") in RSI_SUPPORTED_SYMBOLS:
+                            symbol_canon = symbol_canon + "m"
+                        async with pair_locks.acquire(self._key(alert_id, symbol_canon, timeframe, indicator)):
+                            signal = await self._compute_indicator_signal(symbol_canon, timeframe, indicator)
                             if signal not in ("buy", "sell", "neutral"):
                                 continue
-                            k = self._key(alert_id, symbol, timeframe, indicator)
+                            k = self._key(alert_id, symbol_canon, timeframe, indicator)
                             prev = self._last_signal.get(k)
                             if prev is None:
                                 # Startup warm-up: baseline last signal and skip first observation
@@ -96,7 +103,8 @@ class HeatmapIndicatorTrackerAlertService:
                                     logger,
                                     "indicator_baseline",
                                     alert_id=alert_id,
-                                    symbol=symbol,
+                                    symbol=symbol_canon,
+                                    input_symbol=input_symbol,
                                     timeframe=timeframe,
                                     indicator=indicator,
                                     baseline_signal=signal,
@@ -107,7 +115,8 @@ class HeatmapIndicatorTrackerAlertService:
                                 logger,
                                 "indicator_signal",
                                 alert_id=alert_id,
-                                symbol=symbol,
+                                symbol=symbol_canon,
+                                input_symbol=input_symbol,
                                 timeframe=timeframe,
                                 indicator=indicator,
                                 signal=signal,
@@ -115,7 +124,7 @@ class HeatmapIndicatorTrackerAlertService:
                             )
                             if signal in ("buy", "sell") and signal != prev:
                                 per_alert_triggers.append({
-                                    "symbol": symbol,
+                                    "symbol": symbol_canon,
                                     "timeframe": timeframe,
                                     "indicator": indicator,
                                     "trigger_condition": signal,
@@ -126,7 +135,7 @@ class HeatmapIndicatorTrackerAlertService:
                                     logger,
                                     "indicator_tracker_trigger",
                                     alert_id=alert_id,
-                                    symbol=symbol,
+                                    symbol=symbol_canon,
                                     timeframe=timeframe,
                                     indicator=indicator,
                                     trigger=signal,
@@ -138,7 +147,7 @@ class HeatmapIndicatorTrackerAlertService:
                                     logger,
                                     "indicator_no_trigger",
                                     alert_id=alert_id,
-                                    symbol=symbol,
+                                    symbol=symbol_canon,
                                     timeframe=timeframe,
                                     indicator=indicator,
                                     signal=signal,

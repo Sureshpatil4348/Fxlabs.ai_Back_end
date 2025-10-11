@@ -34,6 +34,11 @@ def _event_emoji(event: str) -> str:
         "indicator_tracker_trigger": "🧭",
         "alert_eval_start": "🧪",
         "alert_eval_end": "🏁",
+        "pair_eval_start": "🎬",
+        "pair_eval_metrics": "📈",
+        "pair_eval_decision": "🧮",
+        "pair_eval_criteria": "📐",
+        "pair_rearm": "♻️",
         "db_trigger_logged": "📝",
         "db_trigger_log_failed": "❌",
         "market_data_loaded": "📦",
@@ -73,6 +78,11 @@ def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> 
         "alert_eval_start",
         "alert_eval_config",
         "alert_eval_end",
+        "pair_eval_start",
+        "pair_eval_metrics",
+        "pair_eval_criteria",
+        "pair_eval_decision",
+        "pair_rearm",
         "closed_bar_unknown",
         "closed_bar_already_evaluated",
         "rsi_no_trigger",
@@ -129,4 +139,3 @@ def log_warning(logger: logging.Logger, event: str, **fields: Any) -> None:
 
 def log_error(logger: logging.Logger, event: str, **fields: Any) -> None:
     log_event(logger, logging.ERROR, event, **fields)
-

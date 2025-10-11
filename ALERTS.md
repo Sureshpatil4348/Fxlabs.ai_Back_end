@@ -1,8 +1,14 @@
 **Overview**
-- Supported alerts: RSI Tracker, Quantum Analysis (Heatmap) Tracker, and Quantum Analysis: Custom Indicator Tracker. RSI uses closed-bar evaluation.
+- Supported alerts: RSI Tracker, Quantum Analysis (Heatmap) Tracker, Quantum Analysis: Custom Indicator Tracker, and Currency Strength Tracker. RSI uses closed-bar evaluation.
 - Delivery channel: Email (IST timestamps). Telegram is out of scope.
 - Trigger philosophy: fire on threshold crossings; use per-side cooldown and threshold‑level re‑arm.
  - MT5 data source and closed-bar policy are described in `MT5.md` (see Data Fetch and WebSocket sections).
+
+**Domain Update (FxLabs Prime)**
+- All FxLabs Prime references now use the `fxlabsprime.com` domain.
+- Sender address: `alerts@fxlabsprime.com` (update your SendGrid verified sender/domain accordingly).
+- API base URL in examples: `https://api.fxlabsprime.com`.
+- Frontend origin in examples: `https://app.fxlabsprime.com`.
 
 **Global Rules**
 - Max tracked pairs per user: up to 3.
@@ -32,6 +38,23 @@
   - Behavior: If any pair crosses into overbought/oversold on the closed candle, a trigger is recorded and emailed.
   - Supported trading pairs (MT5-suffixed): `EURUSDm, GBPUSDm, USDJPYm, USDCHFm, AUDUSDm, USDCADm, NZDUSDm, EURGBPm, EURJPYm, EURCHFm, EURAUDm, EURCADm, EURNZDm, GBPJPYm, GBPCHFm, GBPAUDm, GBPCADm, GBPNZDm, AUDJPYm, AUDCHFm, AUDCADm, AUDNZDm, NZDJPYm, NZDCHFm, NZDCADm, CADJPYm, CADCHFm, CHFJPYm, XAUUSDm, XAGUSDm, BTCUSDm, ETHUSDm`.
 
+**Currency Strength Tracker (new)**
+- What: Triggers whenever the strongest or weakest fiat currency changes for the configured timeframe.
+- Who: One alert per user (single-alert model), delivered via email.
+- Timeframe: Choose exactly one (5M, 15M, 30M, 1H, 4H, 1D, 1W). Minimum supported is 5M.
+- Universe: Only fiat FX legs are considered: USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD. Non‑fiat symbols (e.g., metals/crypto) are ignored when computing strength.
+- Calculation: Closed‑bar ROC on pair closes with log returns aggregated by base/quote contribution and rank‑normalized to a −100..100 scale (0 = neutral) (see `app/currency_strength.py`).
+- Trigger logic: On each closed‑bar evaluation for the selected timeframe, find current strongest and weakest currencies; if either differs from the previously observed winners for this alert, fire exactly once and baseline to the new winners.
+- Event cadence: Evaluated on the minute scheduler aligned to 5-minute boundaries (closed‑bar guaranteed). No intrabar/tick evaluation.
+- Email: Compact message with timeframe, new strongest/weakest, strength values, and previous winners for context. Cooldown is bypassed for this alert type to ensure every change is sent.
+
+Troubleshooting (Currency Strength)
+- Error fetching alerts: Most commonly due to the table not existing or wrong Supabase env.
+  - Ensure `supabase_currency_strength_tracker_alerts_schema.sql` is applied to your project.
+  - Confirm `TENANT` and the corresponding `*_SUPABASE_URL` and `*_SUPABASE_SERVICE_KEY` are set (service role key required).
+  - Verify `GET {SUPABASE_URL}/rest/v1/currency_strength_tracker_alerts` returns 200 with the service key.
+  - To see more logs, set `ALERT_VERBOSE_LOGS=true`.
+
 **System Safeguards**
 - Per‑pair concurrency and warm‑up enforced.
 - Skip stale TFs (last candle age > 2× TF length).
@@ -55,8 +78,8 @@
 - Title: RSI Alert • {PAIR} ({TF})
 - Body: zone entered (Overbought/Oversold), RSI value, price, IST time.
 - Footer: The disclaimer appears once at the bottom of the email (not per pair).
-- RSI: "Not financial advice. © FxLabs AI"
-  - Heatmap/Indicator trackers and Daily: "Education only. © FxLabs AI" (or equivalent wording)
+- RSI: "Not financial advice. © FxLabs Prime"
+  - Heatmap/Indicator trackers and Daily: "Education only. © FxLabs Prime" (or equivalent wording)
 
 **Defaults That Work**
 - RSI Tracker: timeframe `1H`, period `14`, thresholds OB=70 / OS=30.
@@ -102,13 +125,36 @@
 Single per-user alert for the All-in-One/Quantum Analysis heatmap. Users select up to 3 currency pairs, a mode (trading style), and thresholds. When any selected pair’s Buy% or Sell% crosses its threshold, a trigger is recorded.
 
 - Pairs: up to 3 (e.g., `EURUSD`, `GBPUSD`)
-- Mode: `scalper` or `swingTrader`
+- Mode: `scalper` or `swingTrader` (internally normalized to `scalper` / `swingtrader`)
 - Thresholds: `buy_threshold` and `sell_threshold` (0–100). Internally we compute the style‑weighted Final Score and convert to Buy%/Sell% per the Calculations Reference.
-- Behavior: triggers on upward crossings into threshold for either Buy% or Sell%.
+- Behavior: triggers on crossings into threshold using Buy% as the trigger metric:
+  - BUY when style‑weighted `Buy% ≥ buy_threshold` (upward crossing)
+  - SELL when style‑weighted `Buy% ≤ sell_threshold` (downward crossing)
+  - Equivalently for SELL: `Sell% ≥ (100 − sell_threshold)` (upward crossing of Sell%).
+
+Alignment with frontend (parity)
+- The alert service uses the same computation as the frontend feed: `app/quantum.py` produces the `quantum_update` payload with `per_timeframe` and `overall` Buy%/Sell%/Final values, and the alert service reads those exact values when available.
+- When `compute_quantum_for_symbol` is used, style weighting matches:
+  - scalper: 5M:0.30, 15M:0.30, 30M:0.20, 1H:0.15, 4H:0.05, 1D:0.0
+  - swingTrader: 30M:0.10, 1H:0.25, 4H:0.35, 1D:0.30
+  - Percent conversion: `Buy% = (Final + 100) / 2`, `Sell% = 100 − Buy%`.
+  - Re‑arm policy: no margin. Buy side re‑arms when `Buy% < buy_threshold`; Sell side re‑arms when `Buy% > sell_threshold`.
+
+Verbose evaluation logs
+- Toggle: set `ALERT_VERBOSE_LOGS=true` and `LOG_LEVEL=DEBUG` to see detailed, per‑pair evaluation logs.
+- Events emitted during evaluation (all gated by `ALERT_VERBOSE_LOGS`):
+  - `alert_eval_start` / `alert_eval_end`: per‑alert cycle markers with config echo
+  - `pair_eval_start`: alert/pair baseline including thresholds and previous armed state
+  - `pair_eval_metrics`: computed Buy% / Sell% / Final Score for the pair
+  - `pair_eval_criteria`: exact comparison snapshot — Buy% vs `buy_threshold`, Buy% vs `sell_threshold` (and equivalent `Sell% ≥ 100 − sell_threshold`), current armed flags, and re‑arm thresholds
+  - `pair_rearm`: side re‑armed after leaving zone (no margin)
+  - `pair_eval_decision`: final decision for the pair — `baseline_skip` or `trigger`
+  - `heatmap_no_trigger`: includes Buy%/Sell%, thresholds, armed flags, and a `reason` field (`within_neutral_band` | `below_buy_threshold` | `above_sell_threshold` | `buy_disarmed` | `sell_disarmed`)
 
 Configuration:
 - Single alert per user (unique by `user_id`)
 - Validate pairs (≤3), trading style, and thresholds
+- Symbol normalization: pairs are canonicalized to MT5 broker symbols; if a pair is provided without the trailing `m` (e.g., `BTCUSD`), it is auto-mapped to its broker-suffixed form (e.g., `BTCUSDm`) when available. UI may display `BTC/USD`, but backend evaluation uses the canonical symbol.
 - CRUD only on alert config; backend evaluates triggers; no DB trigger table
 
 Supabase Schema: `supabase_heatmap_tracker_alerts_schema.sql`
@@ -126,6 +172,7 @@ Configuration:
 - Single alert per user (unique by `user_id`)
 - Validate pairs (≤3), timeframe, indicator
 - CRUD only on alert config; backend evaluates triggers; no DB trigger table
+- Symbol normalization: pairs are canonicalized to MT5 broker symbols; if provided without the trailing `m`, they are mapped when a matching broker symbol exists.
 
 Supabase Schema: `supabase_heatmap_indicator_tracker_alerts_schema.sql`
 - `heatmap_indicator_tracker_alerts` only (trigger tables removed)
@@ -141,7 +188,7 @@ Implementation details (backend alignment with Calculations Reference):
   - Per‑cell scoring: buy=+1, sell=−1, neutral=0; add ±0.25 on new signals; clamp in [−1.25,+1.25].
   - Weights: trading‑style timeframe weights (scalper: 5M/15M/30M/1H/4H; swingTrader: 30M/1H/4H/1D) and equal indicator weights by default.
   - Aggregation: Raw = Σ_tf Σ_ind S(tf,ind)×W_tf×W_ind; Final = 100×(Raw/1.25); Buy%=(Final+100)/2; Sell%=100−Buy%.
-  - Re‑arm policy: Buy side rearms after Buy% drops below (buy_threshold−5); Sell side rearms after Buy% rises above (sell_threshold+5). Triggers fire on crossing into thresholds.
+  - Re‑arm policy: no margin. Buy side re‑arms when `Buy% < buy_threshold`; Sell side re‑arms when `Buy% > sell_threshold`. Triggers fire on crossing into thresholds.
 - Indicator Tracker signals now derive from real OHLC:
   - EMA21/EMA50/EMA200: BUY on close crossing above EMA; SELL on crossing below.
   - RSI: BUY on RSI(14) crossing up through 50; SELL on crossing down through 50.
@@ -150,7 +197,7 @@ Implementation details (backend alignment with Calculations Reference):
 Why you might not see triggers yet
 - No active alerts: Ensure rows exist in Supabase for `heatmap_tracker_alerts` and `heatmap_indicator_tracker_alerts` with `is_active=true` and non-empty `pairs` (max 3).
 - Thresholds too strict: For Heatmap, start with Buy≥70 / Sell≤30. With multi‑indicator aggregation, Final can concentrate near neutral on choppy days, especially in swingTrader style.
-- Arm/disarm gating: Buy disarms after a BUY trigger and rearms once RSI < (buy_threshold−5); Sell disarms after a SELL trigger and rearms once RSI > (sell_threshold+5).
+- Arm/disarm gating (Heatmap): After a trigger, the corresponding side disarms and re‑arms as soon as it leaves the zone boundary (no margin): Buy re‑arms when `Buy% < buy_threshold`; Sell re‑arms when `Buy% > sell_threshold`.
 - Closed‑bar cadence: Evaluation is event‑driven (on each closed bar) with a 5‑minute safety scheduler; low TFs see more opportunities.
 
  
@@ -162,16 +209,17 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 ### ⏰ News Reminder (5 Minutes Before)
 
 - What: Sends an email with subject "News reminder" to all active users 5 minutes before each upcoming news event found in the local news cache.
-  - Impact filter: Only items with AI‑normalized `impact == "high"` qualify. Medium/low impact items are ignored.
+  - Impact filter: Only items with source‑reported `impact == "high"` qualify (mirrors upstream API). Medium/low impact items are ignored.
 - Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for news reminders and does not depend on per‑product alert tables.
   - Primary source: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
   - Pagination: `page`, `per_page` (defaults: 1..N, 1000 per page)
   - Email extraction: Primary `email`, fallback to `user_metadata.email/email_address/preferred_email`, and `identities[].email`/`identities[].identity_data.email` for OAuth providers
   - Fallback: If Auth returns no emails, falls back to union of alert tables (`rsi_tracker_alerts`, `rsi_correlation_tracker_alerts`, `heatmap_tracker_alerts`, `heatmap_indicator_tracker_alerts`)
 - When: A dedicated 1-minute scheduler runs in `server.py` and calls `app.news.check_and_send_news_reminders()`.
-  - The function filters the due window to high‑impact items only.
+  - The function filters the due window to high‑impact items only (per the upstream API impact, not AI).
 - How it avoids duplicates: Each `NewsAnalysis` item has a boolean `reminder_sent`. Once sent, the item is flagged and the cache is persisted to disk, preventing repeats across restarts.
-- Template: Minimal, mobile-friendly HTML wrapped with the unified green header (`FXLabs • News • <date/time>`) and a single common disclaimer footer.
+- Template: Minimal, mobile-friendly HTML wrapped with the unified green header (`FxLabs Prime • News • <date/time>`) and a single common disclaimer footer.
+  - Branding: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` are kept for readability and visual hierarchy.
   - Fields: `event_title`, `event_time_local` (IST by default), `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `news_auth_fetch_start`, `news_auth_fetch_page`, `news_auth_fetch_page_emails` (debug), `news_auth_fetch_done`
@@ -183,8 +231,8 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 Automated daily email to all users at a configurable local time
 
 - What: A daily brief sent to all users at 09:00 IST containing:
-  - Core signals for EUR/USD, XAU/USD, BTC/USD from the All‑in‑One (Quantum) model
-  - RSI(14) on 4H: lists of pairs currently Oversold (≤30) and Overbought (≥70)
+  - Core signals for EUR/USD, XAU/USD, BTC/USD from the All‑in‑One (Quantum) model (displayed with "Intraday" timeframe label)
+  - RSI(14) on 4H: lists of pairs currently Oversold (≤30) and Overbought (≥70), or "No pair in overbought / oversold" if none found
   - Today's high/medium‑impact news from the local news cache (IST day)
 - Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for daily emails and does not depend on per‑product alert tables.
   - Primary source: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
@@ -200,7 +248,10 @@ Automated daily email to all users at a configurable local time
   - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `scalper` style for EURUSDm, XAUUSDm, BTCUSDm
   - RSI(14) 4H: uses real MT5 OHLC via `get_ohlc_data` and computes RSI locally
   - News: filters `global_news_cache` for items with IST date == today and impact in {high, medium}
-- Template: Responsive table layout; badges (BUY=#0CCC7C, SELL=#E5494D); simple lists for RSI and a compact news table.
+- Template: Responsive table layout with three main sections:
+  - Signal Summary: Core pairs with badges (BUY=#0CCC7C, SELL=#E5494D) and probability
+  - H4 Overbought/Oversold: Separate lists for oversold/overbought pairs with RSI values, or centered empty state message when none found
+  - Today's High/Medium-Impact News: Compact news table with event details
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `daily_auth_fetch_start`, `daily_auth_fetch_page`, `daily_auth_fetch_page_emails` (debug), `daily_auth_fetch_done`
   - Send: `daily_auth_emails` (full CSV), `daily_send_batch`, `daily_completed`
@@ -210,14 +261,14 @@ Email HTML structure example (simplified):
 
 ```html
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FxLabs • News Reminder</title></head>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FxLabs Prime • News Reminder</title></head>
 <body style="margin:0;background:#F5F7FB;"> ... </body></html>
 ```
 
 ### Common Email Header (All alerts)
 
 - Color: `#07c05c`
-- Layout: `[FxLabs logo] FXLabs • <Alert Type> • <Local Date IST> • <Local Time IST>`
+- Layout: `[FxLabs logo] FxLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST>`
   - The time part is rendered in a smaller font size.
   - Logo uses the white SVG mark embedded inline for email compatibility.
 - Timezone: Defaults to `Asia/Kolkata` (IST). For Daily emails, the header shows the configured time label (e.g., `IST 09:00`).
@@ -249,7 +300,7 @@ Additionally:
   - IP Access Management: If enabled, whitelist the server IP to avoid 403.
   - Region: If your account is EU-only, ensure your environment targets the EU endpoint (contact SendGrid support/docs for region setup). 
 - Why it appears intermittent:
-  - Different shells/processes may load different env files. Ensure you set the correct tenant-specific variables (`FXLABS_*` for FXLabs or `HEXTECH_*` for HexTech) in the active environment. No fallback defaults are used.
+  - Different shells/processes may load different env files. Ensure you set the correct tenant-specific variables (`FXLABS_*` for FxLabs Prime or `HEXTECH_*` for HexTech) in the active environment. No fallback defaults are used.
 - What the app logs on failure:
   - Status code, trimmed response body, masked API key, and from/to addresses to aid diagnosis without leaking secrets.
 - A structured log line with per-category counts is emitted as `app.alert_cache | alert_cache_categories` for observability.

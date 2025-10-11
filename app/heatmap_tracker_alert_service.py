@@ -20,6 +20,8 @@ from .indicators import (
     ichimoku_series as ind_ichimoku_series,
 )
 from .quantum import compute_quantum_for_symbol
+from .mt5_utils import canonicalize_symbol
+from .constants import RSI_SUPPORTED_SYMBOLS
 
 
 configure_logging()
@@ -87,22 +89,49 @@ class HeatmapTrackerAlertService:
 
                     ts_iso = datetime.now(timezone.utc).isoformat()
                     per_alert_triggers: List[Dict[str, Any]] = []
-                    for symbol in pairs:
-                        async with pair_locks.acquire(self._key(alert_id, symbol)):
+                    for input_symbol in pairs:
+                        # Canonicalize symbol and auto-append broker suffix when missing
+                        symbol_canon = canonicalize_symbol(input_symbol)
+                        if symbol_canon not in RSI_SUPPORTED_SYMBOLS and (symbol_canon + "m") in RSI_SUPPORTED_SYMBOLS:
+                            symbol_canon = symbol_canon + "m"
+                        async with pair_locks.acquire(self._key(alert_id, symbol_canon)):
                             # Compute Buy%/Sell% via real OHLC-derived RSI mapping
-                            buy_pct, sell_pct, final_score = await self._compute_buy_sell_percent(symbol, style)
+                            buy_pct, sell_pct, final_score = await self._compute_buy_sell_percent(symbol_canon, style)
                             rsi_val = buy_pct  # Use Buy% as trigger metric for thresholds
+                            # Pair evaluation start (verbose)
+                            k = self._key(alert_id, symbol_canon)
+                            prev_state = self._armed.get(k)
+                            log_debug(
+                                logger,
+                                "pair_eval_start",
+                                alert_id=alert_id,
+                                symbol=symbol_canon,
+                                input_symbol=input_symbol,
+                                style=style,
+                                buy_threshold=buy_t,
+                                sell_threshold=sell_t,
+                                prev_armed_buy=(prev_state or {}).get("buy") if prev_state else None,
+                                prev_armed_sell=(prev_state or {}).get("sell") if prev_state else None,
+                            )
+                            log_debug(
+                                logger,
+                                "pair_eval_metrics",
+                                alert_id=alert_id,
+                                symbol=symbol_canon,
+                                buy_percent=round(buy_pct, 2),
+                                sell_percent=round(sell_pct, 2),
+                                final_score=round(final_score, 2),
+                            )
                             log_debug(
                                 logger,
                                 "heatmap_eval",
                                 alert_id=alert_id,
-                                symbol=symbol,
+                                symbol=symbol_canon,
                                 style=style,
                                 buy_percent=round(buy_pct, 2),
                                 sell_percent=round(sell_pct, 2),
                                 final_score=round(final_score, 2),
                             )
-                            k = self._key(alert_id, symbol)
                             st = self._armed.get(k)
                             if st is None:
                                 # Startup warm-up: baseline armed-state from current values.
@@ -113,16 +142,66 @@ class HeatmapTrackerAlertService:
                                 if rsi_val <= sell_t:  # already in SELL zone (RSI below sell threshold)
                                     st["sell"] = False
                                 self._armed[k] = st
+                                log_debug(
+                                    logger,
+                                    "pair_eval_decision",
+                                    alert_id=alert_id,
+                                    symbol=symbol_canon,
+                                    decision="baseline_skip",
+                                    armed_buy=st.get("buy"),
+                                    armed_sell=st.get("sell"),
+                                )
                                 # Skip triggering on this first observation after baselining
                                 continue
 
-                            # Re-arm checks
-                            # Buy side re-arms after leaving BUY zone by a margin
-                            if not st["buy"] and rsi_val < max(0.0, buy_t - 5):
+                            # Re-arm checks (no margin): re-arm as soon as we leave the zone boundary
+                            # Buy side re-arms after leaving BUY zone
+                            if not st["buy"] and rsi_val < buy_t:
                                 st["buy"] = True
-                            # Sell side re-arms after leaving SELL zone by a margin
-                            if not st["sell"] and rsi_val > min(100.0, sell_t + 5):
+                                log_debug(
+                                    logger,
+                                    "pair_rearm",
+                                    alert_id=alert_id,
+                                    symbol=symbol_canon,
+                                    side="buy",
+                                    rearm_threshold=buy_t,
+                                    buy_percent=round(rsi_val, 2),
+                                )
+                            # Sell side re-arms after leaving SELL zone
+                            if not st["sell"] and rsi_val > sell_t:
                                 st["sell"] = True
+                                log_debug(
+                                    logger,
+                                    "pair_rearm",
+                                    alert_id=alert_id,
+                                    symbol=symbol_canon,
+                                    side="sell",
+                                    rearm_threshold=sell_t,
+                                    buy_percent=round(rsi_val, 2),
+                                )
+
+                            # Criteria snapshot (verbose): show exactly what we compare against
+                            buy_rearm_th = buy_t
+                            sell_rearm_th = sell_t
+                            equiv_sell_pct_th = 100.0 - sell_t
+                            log_debug(
+                                logger,
+                                "pair_eval_criteria",
+                                alert_id=alert_id,
+                                symbol=symbol_canon,
+                                style=style,
+                                buy_percent=round(rsi_val, 2),
+                                buy_threshold=buy_t,
+                                sell_percent=round(sell_pct, 2),
+                                sell_threshold=sell_t,
+                                sell_equiv_percent_threshold=round(equiv_sell_pct_th, 2),
+                                armed_buy=st.get("buy", True),
+                                armed_sell=st.get("sell", True),
+                                rearm_buy_threshold=round(buy_rearm_th, 2),
+                                rearm_sell_threshold=round(sell_rearm_th, 2),
+                                can_trigger_buy=bool(st.get("buy", True) and rsi_val >= buy_t),
+                                can_trigger_sell=bool(st.get("sell", True) and rsi_val <= sell_t),
+                            )
 
                             trig_type: Optional[str] = None
                             # Trigger on RSI threshold crossings with per-side arming
@@ -134,8 +213,18 @@ class HeatmapTrackerAlertService:
                                 trig_type = "sell"
 
                             if trig_type:
+                                log_debug(
+                                    logger,
+                                    "pair_eval_decision",
+                                    alert_id=alert_id,
+                                    symbol=symbol_canon,
+                                    decision="trigger",
+                                    trigger=trig_type,
+                                    buy_percent=round(rsi_val, 2),
+                                    threshold=(buy_t if trig_type == "buy" else sell_t),
+                                )
                                 per_alert_triggers.append({
-                                    "symbol": symbol,
+                                    "symbol": symbol_canon,
                                     "timeframe": "style-weighted",
                                     "trigger_condition": trig_type,
                                     "buy_percent": round(buy_pct, 2),
@@ -148,16 +237,28 @@ class HeatmapTrackerAlertService:
                                     logger,
                                     "heatmap_tracker_trigger",
                                     alert_id=alert_id,
-                                    symbol=symbol,
+                                    symbol=symbol_canon,
                                     style=style,
                                     trigger=trig_type,
                                 )
                             else:
+                                # Explain why no trigger occurred
+                                reason = "within_neutral_band"
+                                if rsi_val < buy_t and rsi_val > sell_t:
+                                    reason = "within_neutral_band"
+                                elif st.get("buy") and rsi_val < buy_t:
+                                    reason = "below_buy_threshold"
+                                elif st.get("sell") and rsi_val > sell_t:
+                                    reason = "above_sell_threshold"
+                                elif not st.get("buy") and rsi_val >= buy_t:
+                                    reason = "buy_disarmed"
+                                elif not st.get("sell") and rsi_val <= sell_t:
+                                    reason = "sell_disarmed"
                                 log_debug(
                                     logger,
                                     "heatmap_no_trigger",
                                     alert_id=alert_id,
-                                    symbol=symbol,
+                                    symbol=symbol_canon,
                                     style=style,
                                     buy_percent=round(buy_pct, 2),
                                     sell_percent=round(sell_pct, 2),
@@ -165,6 +266,7 @@ class HeatmapTrackerAlertService:
                                     sell_threshold=sell_t,
                                     armed_buy=st.get("buy", True),
                                     armed_sell=st.get("sell", True),
+                                    reason=reason,
                                 )
 
                     if per_alert_triggers:

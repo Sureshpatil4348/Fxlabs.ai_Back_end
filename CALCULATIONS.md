@@ -187,10 +187,9 @@ Computes an 8‑currency strength map using subscribed FX, metals, and crypto pa
     - `BASE += r`
     - `QUOTE += −r`
 - Average per currency: `SC(currency) = (1/NC) × Σ contributions`.
-- Scale around 50: `strength = clamp(20, 80, 50 + average×200)`.
-- Normalize currencies that have data to `[10,90]` range, preserving rank.
-- Fill any missing currency with neutral `50`. Final safety clamp to `[10,90]`.
-- Output: Strength per currency (0–100 like scale used by UI coloring).
+- Internally score and rank contributions; then linearly map the ranked result to `[-100, 100]` with `0` as neutral.
+- Missing currencies are assigned neutral `0`. Safety clamp to `[-100, 100]`.
+- Output: Strength per currency in `[-100, 100]` (relative strength; not a probability).
 
 ### Legacy Method (fallback)
 - Simple percentage change per pair: `(P_t − P_{t−1}) / P_{t−1}`.
@@ -221,7 +220,7 @@ Combines three “flows” into a composite score in `[-1,1]`, then classifies b
 - Heatmap Sell%: `Sell% = 100 − Buy%`.
 - RSI Tracker Daily%: `((current − dailyOpen) / dailyOpen) × 100`.
 - Correlation%: `corr × 100`.
-- Currency Strength: rendered as 0–100 style scale after normalization; not a probability.
+- Currency Strength: rendered as −100..100 after normalization; not a probability.
 
 ## Implementation File References
 
@@ -280,4 +279,4 @@ To reproduce behavior outside this app:
    - For `real_correlation`, align closes on timestamps; use last `window+1` aligned points; compute log‑return Pearson correlation; classify/mismatch using thresholds provided.
 6) Currency Strength
    - Use only fiat currencies in {USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD} for contributions; metals/crypto are ignored by design.
-   - Log returns per pair; base gets `+r`, quote gets `−r`; average and normalize to 10–90 with neutral 50 as fallback.
+   - Log returns per pair; base gets `+r`, quote gets `−r`; average and rank-normalize to −100..100 with 0 as neutral.

@@ -32,8 +32,18 @@ BYPASS_EMAIL_ALERTS = os.environ.get("BYPASS_EMAIL_ALERTS", "false").lower() == 
 
 # News analysis configuration
 PERPLEXITY_API_KEY = os.environ.get("PERPLEXITY_API_KEY", "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")
+
+# Deprecated (kept for reference)
 JBLANKED_API_URL = os.environ.get("JBLANKED_API_URL", "https://www.jblanked.com/news/api/forex-factory/calendar/week/")
 JBLANKED_API_KEY = os.environ.get("JBLANKED_API_KEY", "OZaABMUo")
+
+# ASOasis News source (Forex Calendar - Today, IST)
+ASOASIS_API_FOREX_NEWS_ENDPOINT = os.environ.get(
+    "ASOASIS_API_FOREX_NEWS_ENDPOINT",
+    "https://api.asoasis.tech/forex-calender/today?timezone=Asia/Kolkata",
+)
+ASOASIS_API_FOREX_NEWS_CLIENT_ID = os.environ.get("ASOASIS_API_FOREX_NEWS_CLIENT_ID", "")
+ASOASIS_API_FOREX_NEWS_CLIENT_SECRET = os.environ.get("ASOASIS_API_FOREX_NEWS_CLIENT_SECRET", "")
 # Allow fractional hours (e.g., 0.5 for 30 minutes)
 try:
     NEWS_UPDATE_INTERVAL_HOURS = float(os.environ.get("NEWS_UPDATE_INTERVAL_HOURS", "0.5"))

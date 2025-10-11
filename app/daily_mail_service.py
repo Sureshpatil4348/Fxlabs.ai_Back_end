@@ -58,7 +58,7 @@ async def _collect_core_signals() -> List[Dict[str, Any]]:
                 "pair": disp,
                 "signal": signal,
                 "probability": probability,
-                "tf": "scalper",
+                "tf": "Intraday",
                 "badge_bg": badge_bg,
             })
         except Exception as e:

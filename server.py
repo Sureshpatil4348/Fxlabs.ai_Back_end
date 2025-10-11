@@ -35,6 +35,7 @@ from app.alert_cache import alert_cache
 from app.rsi_tracker_alert_service import rsi_tracker_alert_service
 from app.heatmap_tracker_alert_service import heatmap_tracker_alert_service
 from app.heatmap_indicator_tracker_alert_service import heatmap_indicator_tracker_alert_service
+from app.currency_strength_alert_service import currency_strength_alert_service
 from app.email_service import email_service
 from app.daily_mail_service import daily_mail_scheduler
 from app.models import (
@@ -63,7 +64,10 @@ from app.indicator_cache import indicator_cache
 from app.price_cache import price_cache
 from app.indicators import rsi_latest as ind_rsi_latest, ema_latest as ind_ema_latest, macd_latest as ind_macd_latest, utbot_latest as ind_utbot_latest, ichimoku_latest as ind_ichimoku_latest
 from app.quantum import compute_quantum_for_symbol
+from app.currency_strength import compute_currency_strength_for_timeframe
+from app.currency_strength_cache import currency_strength_cache
 from app.constants import RSI_SUPPORTED_SYMBOLS
+from app.trending_pairs import trending_pairs_cache, trending_pairs_scheduler, refresh_trending_pairs
 # One-time warmup to backfill indicator cache at startup
 async def _warm_populate_indicator_cache() -> None:
     try:
@@ -161,6 +165,37 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
+    # Warm populate currency strength cache (best-effort, non-blocking)
+    async def _warm_populate_currency_strength_cache() -> None:
+        try:
+            # Only supported timeframes (>=5M and WS-allowed)
+            baseline_tfs: List[Timeframe] = [Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
+            try:
+                allowed_tfs = ALLOWED_WS_TIMEFRAMES
+            except Exception:
+                allowed_tfs = set(Timeframe)
+            baseline_tfs = [tf for tf in baseline_tfs if tf in allowed_tfs]
+            try:
+                symbols_for_rollout: List[str] = list(ALLOWED_WS_SYMBOLS)
+            except Exception:
+                symbols_for_rollout = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+            for tf in baseline_tfs:
+                try:
+                    res = await compute_currency_strength_for_timeframe(tf, symbols_for_rollout)
+                    if res is None:
+                        continue
+                    ts_ms, values = res
+                    await currency_strength_cache.update(tf.value, values, ts_ms=ts_ms)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    try:
+        asyncio.create_task(_warm_populate_currency_strength_cache())
+    except Exception:
+        pass
+
     # Start minute alerts scheduler (fetch + evaluate RSI Tracker) — boundary-aligned
     global _minute_scheduler_task, _minute_scheduler_running
     _minute_scheduler_running = True
@@ -172,6 +207,33 @@ async def lifespan(app: FastAPI):
     # Start WS metrics reporter (dual-run soak)
     global _ws_metrics_task
     _ws_metrics_task = asyncio.create_task(_ws_metrics_reporter())
+
+    # Start Trending Pairs scheduler (startup + hourly)
+    async def _broadcast_trending(snapshot: Dict[str, Any]) -> None:
+        # Push to all connected clients as a concise event
+        async with _connected_clients_lock:
+            clients = list(_connected_clients)
+        if not clients:
+            return
+        msg = {"type": "trending_pairs", "data": snapshot}
+        for c in clients:
+            try:
+                if getattr(c, "v2_broadcast", False):
+                    await c._try_send_json(msg)
+            except Exception:
+                continue
+
+    try:
+        try:
+            symbols_for_trending: List[str] = list(ALLOWED_WS_SYMBOLS)
+        except Exception:
+            symbols_for_trending = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+        global _trending_task
+        _trending_task = asyncio.create_task(
+            trending_pairs_scheduler(symbols_for_trending, threshold_pct=0.05, broadcast=_broadcast_trending)
+        )
+    except Exception:
+        pass
     
     yield
     
@@ -203,6 +265,12 @@ async def lifespan(app: FastAPI):
     if _indicator_scheduler_task:
         try:
             await _indicator_scheduler_task
+        except asyncio.CancelledError:
+            pass
+    if _trending_task:
+        try:
+            _trending_task.cancel()
+            await _trending_task
         except asyncio.CancelledError:
             pass
     if _ws_metrics_task:
@@ -267,6 +335,7 @@ _ws_metrics: Dict[str, Dict[str, int]] = {
     "v2": defaultdict(int),
 }
 _ws_metrics_task: Optional[asyncio.Task] = None
+_trending_task: Optional[asyncio.Task] = None
 
 def _metrics_inc(label: str, key: str, by: int = 1) -> None:
     try:
@@ -490,6 +559,11 @@ async def _minute_alerts_scheduler():
                 logger.info("🔎 indicator_tracker_eval | triggers: %d", len(indicator_trig))
             except Exception as e:
                 print(f"❌ Indicator Tracker evaluation error: {e}")
+            try:
+                curstr_trig = await currency_strength_alert_service.check_currency_strength_alerts()
+                logger.info("🔎 curstr_tracker_eval | triggers: %d", len(curstr_trig))
+            except Exception as e:
+                print(f"❌ Currency Strength evaluation error: {e}")
 
             # Schedule next 5-minute boundary from current time
             next_run = calculate_next_update_time(datetime.now(timezone.utc), TF.M5)
@@ -536,6 +610,7 @@ async def _indicator_scheduler() -> None:
             tfs_rsi_updated: Set[str] = set()
             tfs_ema_updated: Set[str] = set()
             tfs_macd_updated: Set[str] = set()
+            tfs_cs_updated: Set[str] = set()
             for symbol, tf in pairs:
                 try:
                     # Fetch recent OHLC and gate on last closed bar
@@ -715,6 +790,64 @@ async def _indicator_scheduler() -> None:
                             except Exception:
                                 # Never let a single client block the scheduler
                                 continue
+
+                    # Compute and cache currency strength for this timeframe once per poll cycle per timeframe (closed-bar only)
+                    try:
+                        # Enforce minimum timeframe of 5M and WS-allowed timeframes for currency strength
+                        try:
+                            allowed_tfs = ALLOWED_WS_TIMEFRAMES
+                        except Exception:
+                            allowed_tfs = set(Timeframe)
+                        if tf == Timeframe.M1 or tf not in allowed_tfs:
+                            pass
+                        elif tf.value not in tfs_cs_updated:
+                            # Use the same rollout symbols set for strength calculation
+                            symbols_for_strength: List[str] = list(ALLOWED_WS_SYMBOLS)
+                            cs_res = await compute_currency_strength_for_timeframe(tf, symbols_for_strength)
+                            if cs_res is not None:
+                                cs_ts, cs_values = cs_res
+                                # Fetch previous snapshot timestamp (if any) to detect new closed bar
+                                try:
+                                    prev_latest = await currency_strength_cache.latest(tf.value)
+                                    prev_ts = int(prev_latest[0]) if prev_latest else None
+                                except Exception:
+                                    prev_ts = None
+                                await currency_strength_cache.update(tf.value, cs_values, ts_ms=cs_ts)
+                                tfs_cs_updated.add(tf.value)
+                                # Broadcast currency strength snapshot
+                                if clients:
+                                    cs_msg = {
+                                        "type": "currency_strength_update",
+                                        "timeframe": tf.value,
+                                        "data": {
+                                            "bar_time": cs_ts,
+                                            "strength": cs_values,
+                                        },
+                                    }
+                                    for c in clients:
+                                        try:
+                                            if getattr(c, "v2_broadcast", False):
+                                                await c._try_send_json(cs_msg)
+                                                continue
+                                        except Exception:
+                                            continue
+                                # Log values on server when pushing for closed candles (new bar only)
+                                try:
+                                    if prev_ts is None or (isinstance(cs_ts, int) and cs_ts > int(prev_ts)):
+                                        logger = logging.getLogger("obs.curstr")
+                                        values_json = orjson.dumps({k: float(v) for k, v in cs_values.items()}).decode("utf-8")
+                                        logger.info(
+                                            "📊 currency_strength_update | tf=%s bar_time=%d values=%s",
+                                            tf.value,
+                                            int(cs_ts) if isinstance(cs_ts, int) else 0,
+                                            values_json,
+                                        )
+                                except Exception:
+                                    # Observability must not break scheduling
+                                    pass
+                    except Exception:
+                        # Strength calculation must never break the indicator scheduler loop
+                        pass
                     # Also compute and broadcast quantum analysis snapshot for this symbol
                     q = await compute_quantum_for_symbol(symbol)
                     q_msg = {
@@ -872,19 +1005,32 @@ def health():
 def test_websocket():
     return {"message": "WebSocket endpoint available at /market-v2"}
 
+@app.get("/trending-pairs")
+async def get_trending_pairs(x_api_key: Optional[str] = Depends(require_api_token_header)):
+    """Return the current cached trending pairs snapshot.
+
+    Trending rule: abs(daily_change_pct) >= 0.05 (hardcoded threshold for now).
+    """
+    snap = await trending_pairs_cache.get_snapshot()
+    return snap
+
 @app.get("/api/indicator")
 async def get_indicator(
-    indicator: str = Query(..., description="Indicator name: rsi|quantum"),
-    timeframe: str = Query(..., description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W"),
+    indicator: str = Query(..., description="Indicator name: rsi|quantum|currency_strength"),
+    timeframe: str = Query(
+        ...,
+        description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W (currency_strength requires >=5M)",
+    ),
     pairs: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., pairs=EURUSDm&pairs=BTCUSDm) or CSV"),
     symbols: Optional[List[str]] = Query(None, description="Alias for pairs (repeatable or CSV)"),
     x_api_key: Optional[str] = Depends(require_api_token_header),
 ):
     """Return the latest closed-bar value for a single indicator across 1 to 32 pairs.
 
-    - indicator: rsi|quantum
+    - indicator: rsi|quantum|currency_strength
       - rsi: fixed period 14
       - quantum: returns per-timeframe and overall Buy/Sell% with signals
+      - currency_strength: 8-currency strength map (USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD) using ROC
     - timeframe: must be WS-supported
     - pairs/symbols: 1 to 32 symbols. Defaults to all WS-allowed symbols if omitted (capped to 32).
     """
@@ -938,40 +1084,65 @@ async def get_indicator(
         candidates = candidates[:32]
 
     indicator_key = indicator.strip().lower()
-    if indicator_key not in {"rsi", "quantum"}:
+    if indicator_key not in {"rsi", "quantum", "currency_strength"}:
         raise HTTPException(status_code=400, detail="unsupported_indicator")
 
-    results: List[Dict[str, Any]] = []
-    for sym in candidates:
-        try:
-            ensure_symbol_selected(sym)
-        except Exception:
-            pass
-
-        if indicator_key == "rsi":
-            latest = await indicator_cache.get_latest_rsi(sym, tf.value, 14)
-            value = None if not latest else float(latest[1])
-            ts_ms = None if not latest else int(latest[0])
-            results.append({"symbol": sym, "timeframe": tf.value, "ts": ts_ms, "value": value})
-        else:  # quantum
-            # Compute per-timeframe and overall quantum Buy/Sell% (closed-bar parity)
+    if indicator_key == "currency_strength":
+        # Enforce minimum timeframe 5M for currency strength
+        if tf == Timeframe.M1:
+            raise HTTPException(status_code=400, detail="min_timeframe_5M")
+        # Return cached snapshot; compute on-demand if missing
+        cs_latest = await currency_strength_cache.latest(tf.value)
+        if not cs_latest:
             try:
-                q = await compute_quantum_for_symbol(sym)
+                sym_rollout: List[str] = sorted(list(ALLOWED_WS_SYMBOLS))
             except Exception:
-                q = None
-            results.append({
-                "symbol": sym,
-                "timeframe": tf.value,
-                "ts": None,
-                "quantum": q if q else None,
-            })
+                sym_rollout = sorted([canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS])
+            res = await compute_currency_strength_for_timeframe(tf, sym_rollout)
+            if res is not None:
+                ts_ms, values = res
+                await currency_strength_cache.update(tf.value, values, ts_ms=ts_ms)
+                cs_latest = (ts_ms, values)
+        ts_ms = None if not cs_latest else int(cs_latest[0])
+        values = None if not cs_latest else cs_latest[1]
+        return {
+            "indicator": indicator_key,
+            "timeframe": tf.value,
+            "ts": ts_ms,
+            "currencies": values,
+        }
+    else:
+        results: List[Dict[str, Any]] = []
+        for sym in candidates:
+            try:
+                ensure_symbol_selected(sym)
+            except Exception:
+                pass
 
-    return {
-        "indicator": indicator_key,
-        "timeframe": tf.value,
-        "count": len(results),
-        "pairs": results,
-    }
+            if indicator_key == "rsi":
+                latest = await indicator_cache.get_latest_rsi(sym, tf.value, 14)
+                value = None if not latest else float(latest[1])
+                ts_ms = None if not latest else int(latest[0])
+                results.append({"symbol": sym, "timeframe": tf.value, "ts": ts_ms, "value": value})
+            else:  # quantum
+                # Compute per-timeframe and overall quantum Buy/Sell% (closed-bar parity)
+                try:
+                    q = await compute_quantum_for_symbol(sym)
+                except Exception:
+                    q = None
+                results.append({
+                    "symbol": sym,
+                    "timeframe": tf.value,
+                    "ts": None,
+                    "quantum": q if q else None,
+                })
+
+        return {
+            "indicator": indicator_key,
+            "timeframe": tf.value,
+            "count": len(results),
+            "pairs": results,
+        }
 
 
  
@@ -1072,12 +1243,40 @@ def search_symbols(q: str = Query(..., min_length=1), x_api_key: Optional[str] =
 @app.get("/api/news/analysis")
 def get_news_analysis(x_api_key: Optional[str] = Depends(require_api_token_header)):
     """Get all cached news analysis data"""
+    def _prune_empty_fields(d: dict) -> dict:
+        # Remove empty valued fields from client response per requirements
+        for k in ("actual", "previous", "forecast", "revision"):
+            try:
+                v = d.get(k, None)
+                if v is None:
+                    d.pop(k, None)
+                elif isinstance(v, str) and not v.strip():
+                    d.pop(k, None)
+            except Exception:
+                continue
+        return d
+
+    data = []
+    for item in news.global_news_cache:
+        try:
+            obj = item.model_dump()
+            data.append(_prune_empty_fields(obj))
+        except Exception:
+            # Fallback to minimal safe shape
+            data.append({
+                "uuid": getattr(item, "uuid", None),
+                "headline": getattr(item, "headline", None),
+                "currency": getattr(item, "currency", None),
+                "time": getattr(item, "time", None),
+                "analysis": getattr(item, "analysis", {}),
+            })
+
     return {
         "news_count": len(news.global_news_cache),
         "last_updated": news.news_cache_metadata["last_updated"],
         "next_update": news.news_cache_metadata["next_update_time"],
         "is_updating": news.news_cache_metadata["is_updating"],
-        "data": [item.model_dump() for item in news.global_news_cache]
+        "data": data,
     }
 
 @app.post("/api/news/refresh")
@@ -1635,6 +1834,7 @@ if __name__ == "__main__":
     print("   - Alert Refresh: POST /api/alerts/refresh")
     print("   - Alerts Cache: GET /api/alerts/cache")
     print("   - Refresh Alerts: POST /api/alerts/refresh")
+    print("   - Trending Pairs: GET /trending-pairs")
     print("   - Health check: GET /health")
     
     _install_sigterm_handler(asyncio.get_event_loop())

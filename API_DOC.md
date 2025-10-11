@@ -5,17 +5,17 @@ This document describes how the frontend should consume market data and indicato
 ### Answers to common questions
 
 - **Mechanism to fetch indicators for different timeframes via WebSocket?**
-  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
+  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. It also broadcasts `currency_strength_update` snapshots over WebSocket only on closed bars and only for supported (WS-allowed) timeframes, using closed-candle ROC aggregation for the 8 fiat currencies and normalizing to a −100..100 scale (0 = neutral). Note: Currency Strength enforces a minimum timeframe of `5M` (no `1M`).
   - There is no per-client subscription filtering in v2. Clients receive broadcast updates when a new closed bar is detected.
 
 - **Should the frontend use REST instead?**
   - Use both:
-    - WebSocket v2 for live ticks and closed-bar `indicator_update` pushes.
+    - WebSocket v2 for live ticks, closed-bar `indicator_update`, and closed-bar `currency_strength_update` pushes (only for WS-allowed timeframes).
     - REST for initial state via `/api/indicator`.
   - v2 does not send initial OHLC or indicator snapshots on connect; fetch initial state via REST, then merge live pushes.
 
 - **Does it work properly with all supported indicators?**
-  - WebSocket streaming includes: RSI(14), EMA(21/50/200), MACD(12,26,9), UTBot(EMA50±3×ATR10), Ichimoku(9/26/52), and Quantum Analysis summary (per‑TF and overall) computed on latest closed bars.
+  - WebSocket streaming includes: RSI(14), EMA(21/50/200), MACD(12,26,9), UTBot(EMA50±3×ATR10), Ichimoku(9/26/52), Quantum Analysis summary (per‑TF and overall), and Currency Strength (8 currencies) computed on latest closed bars.
   - Indicator implementations have unit tests and parity checks; see `tests/test_indicators.py` and `tests/test_parity.py`.
 
 ### WebSocket v2
@@ -29,6 +29,7 @@ This document describes how the frontend should consume market data and indicato
   "type": "connected",
   "message": "WebSocket connected successfully",
   "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
+  "notes": ["currency_strength requires timeframe >= 5M"],
   "supported_data_types": ["ticks","indicators"],
   "supported_price_bases": ["last","bid","ask"],
   "indicators": {
@@ -75,6 +76,17 @@ This document describes how the frontend should consume market data and indicato
     }
     ```
   - Quantum update (computed alongside indicator updates):
+  - Currency Strength update (per timeframe; pushed on closed bars only; WS-allowed timeframes ≥ 5M):
+    ```json
+    {
+      "type": "currency_strength_update",
+      "timeframe": "5M",
+      "data": {
+        "bar_time": 1696229940000,
+        "strength": {"USD": 23.5, "EUR": -12.2, "GBP": 8.7, "JPY": -31.4, "AUD": 15.9, "CAD": 2.1, "CHF": -5.6, "NZD": -1.0}
+      }
+    }
+    ```
     ```json
     {
       "type": "quantum_update",
@@ -99,6 +111,22 @@ This document describes how the frontend should consume market data and indicato
       }
     }
     ```
+  - Trending pairs snapshot (startup and hourly):
+    ```json
+    {
+      "type": "trending_pairs",
+      "data": {
+        "threshold_pct": 0.05,
+        "last_updated": "2025-10-06T12:00:00Z",
+        "count": 3,
+        "pairs": [
+          {"symbol": "BTCUSDm", "daily_change_pct": 0.42},
+          {"symbol": "XAUUSDm", "daily_change_pct": -0.11},
+          {"symbol": "EURUSDm", "daily_change_pct": 0.06}
+        ]
+      }
+    }
+    ```
   - Notes:
     - `bar_time` is epoch milliseconds (broker server time).
     - Coverage: RSI/EMA/MACD/UTBot/Ichimoku (closed bars only).
@@ -112,8 +140,9 @@ This document describes how the frontend should consume market data and indicato
   - Cache: warm-populated on startup for all allowed symbols/timeframes and updated on each scheduler cycle (closed bars only).
   - If no `pairs`/`symbols` provided, returns for WS‑allowed symbols (capped to 32).
   - Query params:
-    - `indicator` (required): `rsi` | `quantum`
+    - `indicator` (required): `rsi` | `quantum` | `currency_strength`
     - `timeframe` (required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
+      - Constraint: for `currency_strength`, minimum timeframe is `5M` (requests with `1M` return error `min_timeframe_5M`).
     - `pairs` (repeatable or CSV): symbols to include. Alias: `symbols`.
   - Response examples:
     ```json
@@ -143,6 +172,23 @@ This document describes how the frontend should consume market data and indicato
     }
     ```
 
+- `GET /trending-pairs`
+  - Returns the current cached trending pairs snapshot.
+  - Threshold is hardcoded to abs(daily_change_pct) ≥ 0.05 for now.
+  - Requires `X-API-Key` when `API_TOKEN` is configured.
+  - Response example:
+    ```json
+    {
+      "threshold_pct": 0.05,
+      "last_updated": "2025-10-06T12:00:12.345678+00:00",
+      "count": 2,
+      "pairs": [
+        {"symbol": "EURUSDm", "daily_change_pct": 0.12},
+        {"symbol": "BTCUSDm", "daily_change_pct": 0.41}
+      ]
+    }
+    ```
+
 Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` serves cache-first snapshots for convenience.
 
  
@@ -158,7 +204,7 @@ Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` ser
 
 ### Symbols and timeframes
 
-- Timeframes: fixed set `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
+- Timeframes: fixed set `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. For `currency_strength`, the minimum timeframe is `5M`.
 - Symbols: allowlisted; defaults to all supported RSI symbols (broker-suffixed). Operators can restrict via environment.
 
 ### Notes & caveats
@@ -191,5 +237,3 @@ curl -H "X-API-Key: $API_TOKEN" \
 ---
 
 Last updated: 2025-10
-
-
