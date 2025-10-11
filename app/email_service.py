@@ -1729,14 +1729,39 @@ class EmailService:
         core_html = "\n".join(rows)
 
         # H4 lists
-        os_list = "\n".join([
-            f"<div style=\"padding:6px 0;border-top:1px dashed #E5E7EB;\"><strong>{esc(x.get('pair',''))}</strong> • RSI {esc(x.get('rsi',''))}</div>"
-            for x in (payload.get("rsi_oversold") or [])
-        ])
-        ob_list = "\n".join([
-            f"<div style=\"padding:6px 0;border-top:1px dashed #E5E7EB;\"><strong>{esc(x.get('pair',''))}</strong> • RSI {esc(x.get('rsi',''))}</div>"
-            for x in (payload.get("rsi_overbought") or [])
-        ])
+        rsi_oversold = payload.get("rsi_oversold") or []
+        rsi_overbought = payload.get("rsi_overbought") or []
+        
+        # Build H4 section HTML
+        if not rsi_oversold and not rsi_overbought:
+            h4_html = """
+                <tr>
+                  <td style=\"padding:16px;text-align:center;color:#6B7280;font-size:14px;\">
+                    No pair in overbought / oversold
+                  </td>
+                </tr>
+            """
+        else:
+            h4_rows = []
+            if rsi_oversold:
+                h4_rows.append(f"""
+                  <tr>
+                    <td style=\"padding:12px;border-bottom:1px solid #E5E7EB;\">
+                      <div style=\"font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;\">Oversold (≤30)</div>
+                      {"".join([f'<div style=\"padding:4px 0;\"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_oversold])}
+                    </td>
+                  </tr>
+                """)
+            if rsi_overbought:
+                h4_rows.append(f"""
+                  <tr>
+                    <td style=\"padding:12px;\">
+                      <div style=\"font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;\">Overbought (≥70)</div>
+                      {"".join([f'<div style=\"padding:4px 0;\"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_overbought])}
+                    </td>
+                  </tr>
+                """)
+            h4_html = "\n".join(h4_rows)
 
         # News rows
         news_rows = []
@@ -1768,7 +1793,7 @@ class EmailService:
 @media screen and (max-width:600px){{ .container{{width:100%!important}} .stack{{display:block!important;width:100%!important}}}}
 </style>
 </head>
-<body style=\"margin:0;background:#F5F7FB;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 12px;\">\n        {self._build_common_header('Daily', payload.get('tz_name', self.tz_name), date_override=date_local, time_label_override=time_label)}\n        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n          <tr>\n            <td style=\"padding:20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">\n                  <td style=\"padding:10px 8px;\">Pair</td>\n                  <td style=\"padding:10px 8px;\">Signal</td>\n                  <td style=\"padding:10px 8px;\">Probability</td>\n                  <td style=\"padding:10px 8px;\">Timeframe</td>\n                </tr>\n                {core_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {news_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">\n              This information is for education only and not financial advice. © FxLabs Prime\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>
+<body style=\"margin:0;background:#F5F7FB;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 12px;\">\n        {self._build_common_header('Daily', payload.get('tz_name', self.tz_name), date_override=date_local, time_label_override=time_label)}\n        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n          <tr>\n            <td style=\"padding:20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">\n                  <td style=\"padding:10px 8px;\">Pair</td>\n                  <td style=\"padding:10px 8px;\">Signal</td>\n                  <td style=\"padding:10px 8px;\">Probability</td>\n                  <td style=\"padding:10px 8px;\">Timeframe</td>\n                </tr>\n                {core_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {h4_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Today's High/Medium-Impact News</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {news_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">\n              This information is for education only and not financial advice. © FxLabs Prime\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>
         """
 
     def _build_daily_text(self, payload: Dict[str, Any]) -> str:
@@ -1784,12 +1809,25 @@ class EmailService:
         for s in payload.get("core_signals", []) or []:
             lines.append(f"- {s.get('pair','')}: {s.get('signal','')} {s.get('probability','')}% [{s.get('tf','')}]")
         lines.append("")
-        lines.append("H4 Oversold:")
-        for x in payload.get("rsi_oversold", []) or []:
-            lines.append(f"- {x.get('pair','')}: RSI {x.get('rsi','')}")
-        lines.append("H4 Overbought:")
-        for x in payload.get("rsi_overbought", []) or []:
-            lines.append(f"- {x.get('pair','')}: RSI {x.get('rsi','')}")
+        rsi_oversold = payload.get("rsi_oversold", []) or []
+        rsi_overbought = payload.get("rsi_overbought", []) or []
+        
+        if not rsi_oversold and not rsi_overbought:
+            lines.append("H4 Overbought / Oversold:")
+            lines.append("No pair in overbought / oversold")
+        else:
+            lines.append("H4 Oversold:")
+            if rsi_oversold:
+                for x in rsi_oversold:
+                    lines.append(f"- {x.get('pair','')}: RSI {x.get('rsi','')}")
+            else:
+                lines.append("  (None)")
+            lines.append("H4 Overbought:")
+            if rsi_overbought:
+                for x in rsi_overbought:
+                    lines.append(f"- {x.get('pair','')}: RSI {x.get('rsi','')}")
+            else:
+                lines.append("  (None)")
         lines.append("")
         lines.append("Today's High/Medium-Impact News:")
         for n in payload.get("news", []) or []:

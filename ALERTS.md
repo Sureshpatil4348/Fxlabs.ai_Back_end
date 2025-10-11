@@ -231,8 +231,8 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 Automated daily email to all users at a configurable local time
 
 - What: A daily brief sent to all users at 09:00 IST containing:
-  - Core signals for EUR/USD, XAU/USD, BTC/USD from the All‑in‑One (Quantum) model
-  - RSI(14) on 4H: lists of pairs currently Oversold (≤30) and Overbought (≥70)
+  - Core signals for EUR/USD, XAU/USD, BTC/USD from the All‑in‑One (Quantum) model (displayed with "Intraday" timeframe label)
+  - RSI(14) on 4H: lists of pairs currently Oversold (≤30) and Overbought (≥70), or "No pair in overbought / oversold" if none found
   - Today's high/medium‑impact news from the local news cache (IST day)
 - Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for daily emails and does not depend on per‑product alert tables.
   - Primary source: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
@@ -248,7 +248,10 @@ Automated daily email to all users at a configurable local time
   - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `scalper` style for EURUSDm, XAUUSDm, BTCUSDm
   - RSI(14) 4H: uses real MT5 OHLC via `get_ohlc_data` and computes RSI locally
   - News: filters `global_news_cache` for items with IST date == today and impact in {high, medium}
-- Template: Responsive table layout; badges (BUY=#0CCC7C, SELL=#E5494D); simple lists for RSI and a compact news table.
+- Template: Responsive table layout with three main sections:
+  - Signal Summary: Core pairs with badges (BUY=#0CCC7C, SELL=#E5494D) and probability
+  - H4 Overbought/Oversold: Separate lists for oversold/overbought pairs with RSI values, or centered empty state message when none found
+  - Today's High/Medium-Impact News: Compact news table with event details
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `daily_auth_fetch_start`, `daily_auth_fetch_page`, `daily_auth_fetch_page_emails` (debug), `daily_auth_fetch_done`
   - Send: `daily_auth_emails` (full CSV), `daily_send_batch`, `daily_completed`
