@@ -1,7 +1,7 @@
-### Multi‑tenant plan: FXLabs (India) and HexTech (Dubai)
+### Multi‑tenant plan: FXLabs Prime (India) and HexTech (Dubai)
 
 Goal: Run two independent but feature‑identical sites with strict isolation:
-- **FXLabs (India)**: own Supabase project, users, alerts; daily brief at 09:00 IST (`Asia/Kolkata`). All alert emails for FXLabs display times in IST. If ZoneInfo is unavailable on host, a fixed +05:30 fallback is used.
+- **FXLabs Prime (India)**: own Supabase project, users, alerts; daily brief at 09:00 IST (`Asia/Kolkata`). All alert emails for FXLabs Prime display times in IST. If ZoneInfo is unavailable on host, a fixed +05:30 fallback is used.
 - **HexTech (Dubai)**: own Supabase project, users, alerts; daily brief at 09:00 Dubai time (`Asia/Dubai`)
 
 No code changes done yet. This document maps the system to tenancy touchpoints and proposes the safest approach.
@@ -28,8 +28,8 @@ No code changes done yet. This document maps the system to tenancy touchpoints a
   - `server.py` creates: `news.news_scheduler()`, `news.news_reminder_scheduler()`, `daily_mail_scheduler()`
   - `app/daily_mail_service.py` uses `DAILY_TZ_NAME` + `DAILY_SEND_LOCAL_TIME` (global)
 
-- Email branding (FXLabs by default; HexTech placeholders pending):
-  - `app/email_service.py` still renders FXLabs brand in templates. HexTech branding swap is a TODO when HexTech goes live.
+- Email branding (FXLabs Prime by default; HexTech placeholders pending):
+  - `app/email_service.py` renders FXLabs Prime brand in templates. HexTech branding swap is a TODO when HexTech goes live.
 - `FROM_EMAIL`/`FROM_NAME` are strictly tenant-specific via `app/config.py` (no global fallback).
 
 - CORS / API token (global today):
@@ -42,15 +42,15 @@ No code changes done yet. This document maps the system to tenancy touchpoints a
 Run two instances of the backend with separate env files and domains.
 
 - Domains & ingress
-  - FXLabs: `api.fxlabsprime.com` (already configured in `config.yml`)
+  - FXLabs Prime: `api.fxlabsprime.com` (already configured in `config.yml`)
   - HexTech: add a second hostname (e.g., `api.hextech.ae`) to Cloudflare Tunnel or a separate tunnel file
 
 - Environment per deployment
   - Supabase: `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` point to each tenant’s project
   - Email: `SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME` set to brand‑aligned sender
-  - Scheduling: `DAILY_TZ_NAME=Asia/Kolkata` (FXLabs), `DAILY_TZ_NAME=Asia/Dubai` (HexTech); both `DAILY_SEND_LOCAL_TIME=09:00`
+- Scheduling: `DAILY_TZ_NAME=Asia/Kolkata` (FXLabs Prime), `DAILY_TZ_NAME=Asia/Dubai` (HexTech); both `DAILY_SEND_LOCAL_TIME=09:00`
   - API/CORS: distinct `API_TOKEN`, `ALLOWED_ORIGINS` filtered to the tenant’s frontend(s)
-  - Branding (temporary): keep FXLabs HTML as‑is for FXLabs; for HexTech, when we code it, swap brand strings/logo via env
+- Branding (temporary): keep FXLabs Prime HTML as‑is for FXLabs Prime; for HexTech, when we code it, swap brand strings/logo via env
 
 - Supabase schema
   - Apply the same SQL schemas to the HexTech project:
@@ -67,19 +67,19 @@ Run two instances of the backend with separate env files and domains.
 #### Single VPS topology (same venv)
 - One repo and one venv are fine. Run two `server.py` processes on different ports; isolation comes from per‑process environment.
 - Example ports:
-  - FXLabs → `:8000`
+  - FXLabs Prime → `:8000`
   - HexTech → `:8001`
 
 #### Minimal env files (examples)
 ```env
-# .env.fxlabs
+# .env.fxlabsprime
 API_TOKEN=fxlabs_api_token
 ALLOWED_ORIGINS=https://app.fxlabsprime.com
 SUPABASE_URL=https://<fxlabs>.supabase.co
 SUPABASE_SERVICE_KEY=eyJ...
 FXLABS_SENDGRID_API_KEY=SG....
 FXLABS_FROM_EMAIL=alerts@fxlabsprime.com
-FXLABS_FROM_NAME=FX Labs Alerts
+FXLABS_FROM_NAME=FXLabs Prime Alerts
 DAILY_TZ_NAME=Asia/Kolkata
 DAILY_SEND_LOCAL_TIME=09:00
 HOST=127.0.0.1
@@ -103,7 +103,7 @@ PORT=8001
 
 #### Run commands (two processes)
 ```bash
-# Terminal 1 (FXLabs)
+# Terminal 1 (FXLabs Prime)
 python fxlabs-server.py
 
 # Terminal 2 (HexTech)
@@ -125,7 +125,7 @@ ingress:
 ```ini
 # /etc/systemd/system/fxlabs.service
 [Unit]
-Description=FXLabs Backend
+Description=FXLabs Prime Backend
 After=network.target
 
 [Service]
@@ -172,9 +172,9 @@ WantedBy=multi-user.target
 
 ### Configuration checklists
 
-- FXLabs (deployment/env)
-  - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` → FXLabs project
-  - `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL=alerts@fxlabsprime.com`, `FXLABS_FROM_NAME="FX Labs Alerts"`
+- FXLabs Prime (deployment/env)
+  - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` → FXLabs Prime project
+  - `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL=alerts@fxlabsprime.com`, `FXLABS_FROM_NAME="FXLabs Prime Alerts"`
   - `DAILY_TZ_NAME=Asia/Kolkata`, `DAILY_SEND_LOCAL_TIME=09:00`
   - `API_TOKEN=<fxlabs>`, `ALLOWED_ORIGINS=https://app.fxlabsprime.com`
 
@@ -220,7 +220,7 @@ WantedBy=multi-user.target
 
 - Timezones: compute next run for `Asia/Kolkata` and `Asia/Dubai` → 09:00 local
 - Brand headers: email HTML shows correct brand name, color, logo, and TZ label
-- Isolation: verify FXLabs users never receive HexTech emails and vice‑versa
+- Isolation: verify FXLabs Prime users never receive HexTech emails and vice‑versa
 - Alerts: triggers log to the correct Supabase tables per tenant
 - CORS/auth: each frontend can call only its tenant API with its `API_TOKEN`
 

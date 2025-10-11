@@ -4,8 +4,8 @@
 - Trigger philosophy: fire on threshold crossings; use per-side cooldown and threshold‑level re‑arm.
  - MT5 data source and closed-bar policy are described in `MT5.md` (see Data Fetch and WebSocket sections).
 
-**Domain Update (FXLabs)**
-- All FXLabs references now use the `fxlabsprime.com` domain.
+**Domain Update (FXLabs Prime)**
+- All FXLabs Prime references now use the `fxlabsprime.com` domain.
 - Sender address: `alerts@fxlabsprime.com` (update your SendGrid verified sender/domain accordingly).
 - API base URL in examples: `https://api.fxlabsprime.com`.
 - Frontend origin in examples: `https://app.fxlabsprime.com`.
@@ -78,8 +78,8 @@ Troubleshooting (Currency Strength)
 - Title: RSI Alert • {PAIR} ({TF})
 - Body: zone entered (Overbought/Oversold), RSI value, price, IST time.
 - Footer: The disclaimer appears once at the bottom of the email (not per pair).
-- RSI: "Not financial advice. © FxLabs AI"
-  - Heatmap/Indicator trackers and Daily: "Education only. © FxLabs AI" (or equivalent wording)
+- RSI: "Not financial advice. © FXLabs Prime"
+  - Heatmap/Indicator trackers and Daily: "Education only. © FXLabs Prime" (or equivalent wording)
 
 **Defaults That Work**
 - RSI Tracker: timeframe `1H`, period `14`, thresholds OB=70 / OS=30.
@@ -218,7 +218,7 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 - When: A dedicated 1-minute scheduler runs in `server.py` and calls `app.news.check_and_send_news_reminders()`.
   - The function filters the due window to high‑impact items only (per the upstream API impact, not AI).
 - How it avoids duplicates: Each `NewsAnalysis` item has a boolean `reminder_sent`. Once sent, the item is flagged and the cache is persisted to disk, preventing repeats across restarts.
-- Template: Minimal, mobile-friendly HTML wrapped with the unified green header (`FXLabs • News • <date/time>`) and a single common disclaimer footer.
+- Template: Minimal, mobile-friendly HTML wrapped with the unified green header (`FXLabs Prime • News • <date/time>`) and a single common disclaimer footer.
   - Branding: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` are kept for readability and visual hierarchy.
   - Fields: `event_title`, `event_time_local` (IST by default), `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
@@ -258,14 +258,14 @@ Email HTML structure example (simplified):
 
 ```html
 <!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FxLabs • News Reminder</title></head>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>FXLabs Prime • News Reminder</title></head>
 <body style="margin:0;background:#F5F7FB;"> ... </body></html>
 ```
 
 ### Common Email Header (All alerts)
 
 - Color: `#07c05c`
-- Layout: `[FxLabs logo] FXLabs • <Alert Type> • <Local Date IST> • <Local Time IST>`
+- Layout: `[FxLabs logo] FXLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST>`
   - The time part is rendered in a smaller font size.
   - Logo uses the white SVG mark embedded inline for email compatibility.
 - Timezone: Defaults to `Asia/Kolkata` (IST). For Daily emails, the header shows the configured time label (e.g., `IST 09:00`).
@@ -297,7 +297,7 @@ Additionally:
   - IP Access Management: If enabled, whitelist the server IP to avoid 403.
   - Region: If your account is EU-only, ensure your environment targets the EU endpoint (contact SendGrid support/docs for region setup). 
 - Why it appears intermittent:
-  - Different shells/processes may load different env files. Ensure you set the correct tenant-specific variables (`FXLABS_*` for FXLabs or `HEXTECH_*` for HexTech) in the active environment. No fallback defaults are used.
+  - Different shells/processes may load different env files. Ensure you set the correct tenant-specific variables (`FXLABS_*` for FXLabs Prime or `HEXTECH_*` for HexTech) in the active environment. No fallback defaults are used.
 - What the app logs on failure:
   - Status code, trimmed response body, masked API key, and from/to addresses to aid diagnosis without leaking secrets.
 - A structured log line with per-category counts is emitted as `app.alert_cache | alert_cache_categories` for observability.
