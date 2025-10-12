@@ -248,6 +248,7 @@ HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
 ### Daily Morning Brief
 - Uses the tenant-specific SendGrid configuration (`FXLABS_*` or `HEXTECH_*`).
 - Runs daily at a configurable local time via `daily_mail_scheduler()`.
+- **News Filtering**: Only high-impact news is included in the daily brief. If no high-impact news is scheduled for the day, a message indicates this instead of leaving the section blank.
 - Configure timezone and send time using env vars:
 
 ```env
@@ -263,6 +264,16 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
   - The code automatically paginates and deduplicates emails.
   - Core signals in the daily brief use `scalper` mode for Quantum analysis (displayed as "Intraday" in the email).
 - For observability, the batch log includes a CSV of recipient emails and count.
+
+#### Daily Brief Duplicate Prevention
+- **Date Tracking**: Each scheduler instance tracks the last sent date to prevent duplicate emails on the same day
+- **Cooldown Period**: After sending, the scheduler waits 4 hours before re-evaluating, preventing rapid re-triggering
+- **Multi-Tenant Support**: **FXLabs** and **HexTech** can run simultaneously in separate processes, each sending their own daily emails independently without interference
+  - `python fxlabs-server.py` → sends to FXLabs users at configured IST time
+  - `python hextech-server.py` → sends to HexTech users at configured Dubai time
+  - Each tenant has its own in-memory tracking and configuration
+- **Logging**: All daily email logs include the tenant name for clarity (e.g., `tenant=FXLabs`, `tenant=HexTech`)
+- **Per-Instance Protection**: If you accidentally run the same tenant server twice, each instance independently prevents duplicate sends for that tenant on the same date
 
 #### News Reminder Behavior (High‑Impact Only)
 - The 5‑minute news reminder filters to only source‑reported high‑impact items (`impact == "high"` from the upstream API). Medium/low impact items are skipped.
