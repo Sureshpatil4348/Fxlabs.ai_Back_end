@@ -93,6 +93,7 @@ def log_event(logger: logging.Logger, level: int, event: str, **fields: Any) -> 
         "corr_no_mismatch",
         "corr_persisting_mismatch",
         "daily_sleep_until",
+        "daily_already_sent_today",
         "daily_build_start",
         "daily_build_done",
         "daily_completed",

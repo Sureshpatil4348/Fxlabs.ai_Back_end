@@ -378,30 +378,62 @@ async def _send_daily_to_all_users(payload: Dict[str, Any]) -> None:
 
 
 async def daily_mail_scheduler() -> None:
-    """Scheduler that sends a Daily Morning Brief at configured local time daily."""
+    """Scheduler that sends a Daily Morning Brief at configured local time daily.
+    
+    Prevents duplicate sends by tracking the last sent date per server instance.
+    Each tenant (FXLabs/HexTech) runs in its own process with independent tracking,
+    allowing both tenants to send their own daily emails without interference.
+    """
+    last_sent_date: Optional[str] = None  # Track last sent date in YYYY-MM-DD format (per instance)
+    
+    # Get tenant info for logging clarity
+    from .tenancy import get_tenant_config
+    try:
+        tenant_name = get_tenant_config().name
+    except Exception:
+        tenant_name = "Unknown"
+    
     while True:
         try:
             now = datetime.now(timezone.utc)
             next_run = _next_send_local_utc(now)
             sleep_s = max(1.0, (next_run - now).total_seconds())
-            log_info(logger, "daily_sleep_until", next_run_utc=next_run.isoformat(), seconds=int(sleep_s))
+            log_info(logger, "daily_sleep_until", tenant=tenant_name, next_run_utc=next_run.isoformat(), seconds=int(sleep_s))
             await asyncio.sleep(sleep_s)
 
+            # Check current local date to prevent duplicate sends on the same day
+            current_local_date = _format_date_local()
+            if last_sent_date == current_local_date:
+                log_info(logger, "daily_already_sent_today", tenant=tenant_name, date=current_local_date)
+                # Skip sending and wait until next day
+                # Sleep for 1 hour to avoid tight loop, will recalculate next run time
+                await asyncio.sleep(3600)
+                continue
+
             # Build and send
-            log_info(logger, "daily_build_start")
+            log_info(logger, "daily_build_start", tenant=tenant_name, date=current_local_date)
             payload = await _build_daily_payload()
             log_info(
                 logger,
                 "daily_build_done",
+                tenant=tenant_name,
                 core=len(payload.get("core_signals", [])),
                 os=len(payload.get("rsi_oversold", [])),
                 ob=len(payload.get("rsi_overbought", [])),
                 news=len(payload.get("news", [])),
             )
             await _send_daily_to_all_users(payload)
-            log_info(logger, "daily_completed")
+            
+            # Mark as sent for today (per instance)
+            last_sent_date = current_local_date
+            log_info(logger, "daily_completed", tenant=tenant_name, date=current_local_date)
+            
+            # Add cooldown period after sending (4 hours) to prevent rapid re-triggering
+            # This ensures we don't accidentally send twice even if there's a timing issue
+            await asyncio.sleep(14400)  # 4 hours
+            
         except asyncio.CancelledError:
             return
         except Exception as e:
-            log_error(logger, "daily_scheduler_error", error=str(e))
+            log_error(logger, "daily_scheduler_error", tenant=tenant_name, error=str(e))
             await asyncio.sleep(60)
