@@ -1732,7 +1732,7 @@ class EmailService:
         rsi_oversold = payload.get("rsi_oversold") or []
         rsi_overbought = payload.get("rsi_overbought") or []
         
-        # Build H4 section HTML
+        # Build H4 section HTML - Two columns side by side
         if not rsi_oversold and not rsi_overbought:
             h4_html = """
                 <tr>
@@ -1742,28 +1742,49 @@ class EmailService:
                 </tr>
             """
         else:
-            h4_rows = []
+            # Build oversold column
             if rsi_oversold:
                 oversold_items = "".join([f'<div style="padding:4px 0;"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_oversold])
-                h4_rows.append(f"""
-                  <tr>
-                    <td style="padding:12px;border-bottom:1px solid #E5E7EB;">
-                      <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
-                      {oversold_items}
-                    </td>
-                  </tr>
-                """)
+                oversold_column = f"""
+                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
+                  {oversold_items}
+                """
+            else:
+                oversold_column = """
+                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
+                  <div style="padding:4px 0;color:#9CA3AF;">No pairs</div>
+                """
+            
+            # Build overbought column
             if rsi_overbought:
                 overbought_items = "".join([f'<div style="padding:4px 0;"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_overbought])
-                h4_rows.append(f"""
-                  <tr>
-                    <td style="padding:12px;">
-                      <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
-                      {overbought_items}
-                    </td>
-                  </tr>
-                """)
-            h4_html = "\n".join(h4_rows)
+                overbought_column = f"""
+                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
+                  {overbought_items}
+                """
+            else:
+                overbought_column = """
+                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
+                  <div style="padding:4px 0;color:#9CA3AF;">No pairs</div>
+                """
+            
+            # Two column layout with responsive design
+            h4_html = f"""
+                <tr>
+                  <td style="padding:12px;">
+                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+                      <tr>
+                        <td class="stack" style="width:50%;padding-right:8px;vertical-align:top;border-right:1px solid #E5E7EB;">
+                          {oversold_column}
+                        </td>
+                        <td class="stack" style="width:50%;padding-left:8px;vertical-align:top;">
+                          {overbought_column}
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+            """
 
         # News rows
         news_list = payload.get("news", []) or []
@@ -1802,7 +1823,7 @@ class EmailService:
 <meta charset=\"utf-8\">\n<title>FxLabs Prime • Daily Morning Brief</title>
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <style>
-@media screen and (max-width:600px){{ .container{{width:100%!important}} .stack{{display:block!important;width:100%!important}}}}
+@media screen and (max-width:600px){{ .container{{width:100%!important}} .stack{{display:block!important;width:100%!important;border-right:0!important;padding-right:0!important;padding-left:0!important;margin-bottom:12px!important}}}}
 </style>
 </head>
 <body style=\"margin:0;background:#F5F7FB;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 12px;\">\n        {self._build_common_header('Daily', payload.get('tz_name', self.tz_name), date_override=date_local, time_label_override=time_label)}\n        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n          <tr>\n            <td style=\"padding:20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">\n                  <td style=\"padding:10px 8px;\">Pair</td>\n                  <td style=\"padding:10px 8px;\">Signal</td>\n                  <td style=\"padding:10px 8px;\">Probability</td>\n                  <td style=\"padding:10px 8px;\">Timeframe</td>\n                </tr>\n                {core_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {h4_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Today's High-Impact News</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {news_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">\n              This information is for education only and not financial advice. © FxLabs Prime\n            </td>\n          </tr>\n          \n          <!-- Disclaimer -->\n          <tr>\n            <td style=\"margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;\">\n              <p style=\"margin: 0; font-size: 11px; color: #856404; line-height: 1.6;\">\n                <strong>Disclaimer:</strong> FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses.\n                Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color: #856404; text-decoration: underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color: #856404; text-decoration: underline;\">Privacy Policy</a>.\n              </p>\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>
