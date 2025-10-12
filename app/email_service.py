@@ -807,7 +807,7 @@ class EmailService:
         self._cleanup_old_cooldowns()
 
         try:
-            subject = f"Trading Alert: {alert_name}"
+            subject = "Trading Alert: Quantum Analysis"
             body = self._build_heatmap_tracker_email_body(alert_name, triggered_pairs, alert_config)
             text_body = self._build_plain_text_heatmap_tracker(alert_name, triggered_pairs, alert_config)
             mail = self._build_mail(
