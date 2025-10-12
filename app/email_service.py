@@ -1766,14 +1766,24 @@ class EmailService:
             h4_html = "\n".join(h4_rows)
 
         # News rows
-        news_rows = []
-        for n in payload.get("news", []) or []:
-            title = esc(n.get("title", ""))
-            time_local = esc(n.get("time_local", ""))
-            expected = esc(n.get("expected", "-"))
-            forecast = esc(n.get("forecast", "-"))
-            bias = esc(n.get("bias", "-"))
-            news_rows.append(f"""
+        news_list = payload.get("news", []) or []
+        if not news_list:
+            news_html = """
+                <tr>
+                  <td style=\"padding:16px;text-align:center;color:#6B7280;font-size:14px;\">
+                    No high-impact news scheduled for today
+                  </td>
+                </tr>
+            """
+        else:
+            news_rows = []
+            for n in news_list:
+                title = esc(n.get("title", ""))
+                time_local = esc(n.get("time_local", ""))
+                expected = esc(n.get("expected", "-"))
+                forecast = esc(n.get("forecast", "-"))
+                bias = esc(n.get("bias", "-"))
+                news_rows.append(f"""
                 <tr>
                   <td style=\"padding:10px;border-bottom:1px solid #E5E7EB;\">
                     <div style=\"font-size:14px;font-weight:700;\">{title} <span style=\"font-weight:400;color:#6B7280\">• {time_local}</span></div>
@@ -1782,8 +1792,8 @@ class EmailService:
                     </div>
                   </td>
                 </tr>
-            """)
-        news_html = "\n".join(news_rows)
+                """)
+            news_html = "\n".join(news_rows)
 
         return f"""
 <!doctype html>
@@ -1795,7 +1805,7 @@ class EmailService:
 @media screen and (max-width:600px){{ .container{{width:100%!important}} .stack{{display:block!important;width:100%!important}}}}
 </style>
 </head>
-<body style=\"margin:0;background:#F5F7FB;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 12px;\">\n        {self._build_common_header('Daily', payload.get('tz_name', self.tz_name), date_override=date_local, time_label_override=time_label)}\n        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n          <tr>\n            <td style=\"padding:20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">\n                  <td style=\"padding:10px 8px;\">Pair</td>\n                  <td style=\"padding:10px 8px;\">Signal</td>\n                  <td style=\"padding:10px 8px;\">Probability</td>\n                  <td style=\"padding:10px 8px;\">Timeframe</td>\n                </tr>\n                {core_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {h4_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Today's High/Medium-Impact News</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {news_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">\n              This information is for education only and not financial advice. © FxLabs Prime\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>
+<body style=\"margin:0;background:#F5F7FB;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 12px;\">\n        {self._build_common_header('Daily', payload.get('tz_name', self.tz_name), date_override=date_local, time_label_override=time_label)}\n        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n          <tr>\n            <td style=\"padding:20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">\n                  <td style=\"padding:10px 8px;\">Pair</td>\n                  <td style=\"padding:10px 8px;\">Signal</td>\n                  <td style=\"padding:10px 8px;\">Probability</td>\n                  <td style=\"padding:10px 8px;\">Timeframe</td>\n                </tr>\n                {core_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {h4_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Today's High-Impact News</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {news_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">\n              This information is for education only and not financial advice. © FxLabs Prime\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>
         """
 
     def _build_daily_text(self, payload: Dict[str, Any]) -> str:
@@ -1831,9 +1841,13 @@ class EmailService:
             else:
                 lines.append("  (None)")
         lines.append("")
-        lines.append("Today's High/Medium-Impact News:")
-        for n in payload.get("news", []) or []:
-            lines.append(f"- {n.get('time_local','')} • {n.get('title','')} (Exp {n.get('expected','-')}, Fcast {n.get('forecast','-')}, Bias {n.get('bias','-')})")
+        lines.append("Today's High-Impact News:")
+        news_list = payload.get("news", []) or []
+        if news_list:
+            for n in news_list:
+                lines.append(f"- {n.get('time_local','')} • {n.get('title','')} (Exp {n.get('expected','-')}, Fcast {n.get('forecast','-')}, Bias {n.get('bias','-')})")
+        else:
+            lines.append("No high-impact news scheduled for today")
         lines.append("")
         lines.append("FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our Terms at https://fxlabsprime.com/terms-of-service & Privacy Policy at https://fxlabsprime.com/privacy-policy.")
         return "\n".join(lines)

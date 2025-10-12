@@ -155,7 +155,7 @@ def _send_time_label() -> str:
 
 
 def _collect_today_news_compact() -> List[Dict[str, Any]]:
-    """Select today's (IST) high/medium impact news from cache with compact fields."""
+    """Select today's (IST) high impact news from cache with compact fields."""
     items: List[Dict[str, Any]] = []
     try:
         if not news_mod.global_news_cache:
@@ -166,9 +166,9 @@ def _collect_today_news_compact() -> List[Dict[str, Any]]:
         today_local = _local_now().date()
         for item in list(news_mod.global_news_cache):
             try:
-                # Impact filter
+                # Impact filter - only high impact
                 impact = (item.analysis.get("impact") if item.analysis else "").strip().lower()
-                if impact not in ("high", "medium"):
+                if impact != "high":
                     continue
                 # Date filter in IST
                 time_local = news_mod._format_event_time_local(item.time, tz_name=(DAILY_TZ_NAME or "Asia/Kolkata"))  # e.g., "YYYY-mm-dd HH:MM <LABEL>"

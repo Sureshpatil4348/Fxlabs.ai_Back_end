@@ -248,6 +248,7 @@ HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
 ### Daily Morning Brief
 - Uses the tenant-specific SendGrid configuration (`FXLABS_*` or `HEXTECH_*`).
 - Runs daily at a configurable local time via `daily_mail_scheduler()`.
+- **News Filtering**: Only high-impact news is included in the daily brief. If no high-impact news is scheduled for the day, a message indicates this instead of leaving the section blank.
 - Configure timezone and send time using env vars:
 
 ```env
