@@ -937,10 +937,10 @@ class EmailService:
             </div>
             
             <!-- Disclaimer -->
-            <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;">
-                <p style="margin: 0; font-size: 11px; color: #856404; line-height: 1.6;">
+            <div style="margin-top: 20px; padding: 15px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px;">
+                <p style="margin: 0; font-size: 11px; color: #6B7280; line-height: 1.6;">
                     <strong>Disclaimer:</strong> FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses.
-                    Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href="https://fxlabsprime.com/terms-of-service" style="color: #856404; text-decoration: underline;">Terms</a> &amp; <a href="https://fxlabsprime.com/privacy-policy" style="color: #856404; text-decoration: underline;">Privacy Policy</a>.
+                    Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href="https://fxlabsprime.com/terms-of-service" style="color: #6B7280; text-decoration: underline;">Terms</a> &amp; <a href="https://fxlabsprime.com/privacy-policy" style="color: #6B7280; text-decoration: underline;">Privacy Policy</a>.
                 </p>
             </div>
             

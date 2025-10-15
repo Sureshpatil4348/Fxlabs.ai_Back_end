@@ -265,6 +265,12 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
   - Core signals in the daily brief use `scalper` mode for Quantum analysis (displayed as "Intraday" in the email).
 - For observability, the batch log includes a CSV of recipient emails and count.
 
+#### Styling Consistency
+- Disclaimer footer styling is now unified with other emails (neutral, accessible colors), removing the previous yellow/warning palette.
+- Container: `background: #F9FAFB`, `border: 1px solid #E5E7EB`
+- Text and links: `#6B7280` with underlines for links
+- Brand note: avoid pure black; when needed prefer `#19235d` for brand-dark over `black/#000`.
+
 #### Daily Brief Duplicate Prevention
 - **Date Tracking**: Each scheduler instance tracks the last sent date to prevent duplicate emails on the same day
 - **Cooldown Period**: After sending, the scheduler waits 4 hours before re-evaluating, preventing rapid re-triggering
