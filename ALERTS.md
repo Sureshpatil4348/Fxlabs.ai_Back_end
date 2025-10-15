@@ -124,6 +124,30 @@ Troubleshooting (Currency Strength)
 
 Single per-user alert for the All-in-One/Quantum Analysis heatmap. Users select up to 3 currency pairs, a mode (trading style), and thresholds. When any selected pair’s Buy% or Sell% crosses its threshold, a trigger is recorded.
 
+Cooldown and post-cooldown behavior (per user × per pair)
+- Cooldown window: 4 hours from the moment an email is sent for that user+pair.
+- During cooldown: we do not evaluate that user+pair at all; a concise `heatmap_cd_skip` log is emitted with the cooldown-until timestamp and last trigger side.
+- After cooldown expires: if the next trigger would be the same side as the one that started the cooldown, we suppress it and only re-arm internally (log: `heatmap_cd_same_signal_suppress`). No email is sent. We resume sending once the first different-side trigger occurs (log: `heatmap_cd_start` when it fires and a new cooldown starts). This avoids repeat notifications for the same signal immediately after cooldown.
+- Scope: Cooldown is strictly per user × per pair and does not affect other pairs or other alert types.
+
+Example Scenarios (BTC/USD)
+- Scenario 1
+  - 7:00 Buy → send (start cooldown until 11:00)
+  - 7:05 Sell → ignore (in cooldown)
+  - 7:10 Buy → ignore (in cooldown)
+  - 10:55 Sell → ignore (in cooldown)
+  - 11:00 Buy → ignore (same as pre‑cooldown signal)
+- Scenario 2
+  - 7:00 Buy → send (start cooldown until 11:00)
+  - 11:00 Buy → ignore (same as pre‑cooldown signal)
+- Scenario 3
+  - 7:00 Buy → send (start cooldown until 11:00)
+  - 11:00 Buy → ignore (same as pre‑cooldown signal)
+  - 11:05 Sell → send (different from pre‑cooldown)
+- Scenario 4
+  - 7:00 Buy → send (start cooldown until 11:00)
+  - 11:00 Sell → send (different from pre‑cooldown)
+
 - Pairs: up to 3 (e.g., `EURUSD`, `GBPUSD`)
 - Mode: `scalper` or `swingTrader` (internally normalized to `scalper` / `swingtrader`)
 - Thresholds: `buy_threshold` and `sell_threshold` (0–100). Internally we compute the style‑weighted Final Score and convert to Buy%/Sell% per the Calculations Reference.
@@ -150,6 +174,9 @@ Verbose evaluation logs
   - `pair_rearm`: side re‑armed after leaving zone (no margin)
   - `pair_eval_decision`: final decision for the pair — `baseline_skip` or `trigger`
   - `heatmap_no_trigger`: includes Buy%/Sell%, thresholds, armed flags, and a `reason` field (`within_neutral_band` | `below_buy_threshold` | `above_sell_threshold` | `buy_disarmed` | `sell_disarmed`)
+  - `heatmap_cd_skip`: evaluation skipped due to active per user+pair 4h cooldown (includes `cooldown_until`, `last_trigger`)
+  - `heatmap_cd_start`: cooldown started for (user, pair) after an email is queued (includes `trigger`, `cooldown_until`)
+  - `heatmap_cd_same_signal_suppress`: post‑cooldown same‑signal suppression (disarm without sending)
 
 Configuration:
 - Single alert per user (unique by `user_id`)
