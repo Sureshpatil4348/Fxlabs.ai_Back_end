@@ -90,7 +90,13 @@ if (Test-Path $EnvFile) {
         if ($_ -match '^[\s]*$') { return }
         if ($_ -match '^(?<k>[^=\s]+)\s*=\s*(?<v>.*)$') {
             $k = $matches['k'].Trim()
-            $v = $matches['v'].Trim().Trim('"').Trim('\'')
+            $v = $matches['v'].Trim()
+            # Trim matching wrapping quotes only
+            if ($v.StartsWith('"') -and $v.EndsWith('"')) {
+                $v = $v.Trim('"')
+            } elseif ($v.StartsWith("'") -and $v.EndsWith("'")) {
+                $v = $v.Trim("'")
+            }
             [Environment]::SetEnvironmentVariable($k, $v, 'Process')
         }
     }
