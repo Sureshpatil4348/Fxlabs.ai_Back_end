@@ -191,6 +191,13 @@ Cloudflared notes (Windows):
 - Ensure `config.yml` matches your environment. Update the `credentials-file:` path to your Windows user profile if needed.
 - This repo includes an example `config.yml` with a tunnel ID and Windows path. If the credentials file is missing, the script will warn and continue without Cloudflared.
 
+Troubleshooting (Windows):
+- Double-clicking `.bat` opens then closes quickly: open `Command Prompt`, `cd` into the repo, and run `fxlabs-start.bat` so errors remain visible. The BAT now pauses on errors.
+- Double-clicking `.ps1` shows “choose an app”: right‑click the `.ps1` and choose “Run with PowerShell”, or use the BAT wrapper. You can also run from PowerShell:
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\fxlabs-start.ps1`
+- Execution policy blocks scripts: open PowerShell as Administrator and run `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` (then rerun the script). Alternatively, use the `-ExecutionPolicy Bypass` we include in the BAT.
+- Downloaded files blocked: run `Unblock-File -Path .\fxlabs-start.ps1` once.
+
 ### Verification
 
 After starting, verify the server is running:

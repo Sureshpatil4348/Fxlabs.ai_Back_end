@@ -15,6 +15,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# Ensure the working directory is the script's directory (helps double-click scenarios)
+try {
+    $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+    if ($scriptRoot -and (Test-Path $scriptRoot)) { Set-Location -LiteralPath $scriptRoot }
+} catch {}
+
 # --- Branding colors (avoid black; use #19235d) ---
 $ESC = [char]27
 $BRAND = "$ESC[38;2;25;35;93m"   # #19235d -> rgb(25,35,93)
@@ -75,6 +81,8 @@ if ($venvCreated -or $ForceInstall) {
 }
 
 # --- Load environment file (.env) if present ---
+# Resolve relative to script folder if path is not absolute
+if (-not [System.IO.Path]::IsPathRooted($EnvFile)) { $EnvFile = Join-Path -Path (Get-Location) -ChildPath $EnvFile }
 if (Test-Path $EnvFile) {
     Write-Info "Loading environment from '$EnvFile'..."
     Get-Content $EnvFile | ForEach-Object {
@@ -113,6 +121,8 @@ if ($LASTEXITCODE -ne 0) {
 # --- Start Cloudflared (background) unless disabled ---
 $cloudProc = $null
 if (-not $NoCloudflared) {
+    # Resolve relative to script folder if path is not absolute
+    if (-not [System.IO.Path]::IsPathRooted($CloudflaredConfig)) { $CloudflaredConfig = Join-Path -Path (Get-Location) -ChildPath $CloudflaredConfig }
     if (-not (Test-Path $CloudflaredConfig)) {
         Write-Warn "Cloudflared config '$CloudflaredConfig' not found. Skipping tunnel."
     } else {
