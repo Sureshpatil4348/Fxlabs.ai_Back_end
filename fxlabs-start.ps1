@@ -1,5 +1,5 @@
 # FxLabs Server: Windows Orchestrator
-# Provisions venv, installs requirements, validates MT5, starts FxLabs server, and runs Cloudflared.
+# Provisions venv, installs requirements, starts FxLabs server, and runs Cloudflared.
 # Usage examples:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\fxlabs-start.ps1
 #   .\fxlabs-start.ps1 -ForceInstall -LaunchMT5
@@ -30,7 +30,7 @@ function Write-Info([string]$msg)  { Write-Host $msg -ForegroundColor Cyan }
 function Write-Warn([string]$msg)  { Write-Host $msg -ForegroundColor Yellow }
 function Write-Err([string]$msg)   { Write-Host $msg -ForegroundColor Red }
 
-Write-Brand "================ FxLabs Server — Windows Runner ================"
+Write-Brand '================ FxLabs Server - Windows Runner ================'
 
 # --- Ensure logs directory exists ---
 if (-not (Test-Path "logs")) { New-Item -ItemType Directory -Force -Path "logs" | Out-Null }
@@ -56,7 +56,7 @@ Write-Info "Python selected: $pyCmd"
 # --- Create or reuse venv ---
 $venvCreated = $false
 if (-not (Test-Path ".venv")) {
-    Write-Info "Creating virtual environment (.venv)..."
+Write-Info 'Creating virtual environment (.venv)...'
     try {
         & py -$PythonVersion -m venv .venv
     } catch {
@@ -64,17 +64,17 @@ if (-not (Test-Path ".venv")) {
         & python -m venv .venv
     }
     if (-not (Test-Path ".venv")) {
-        Write-Err "Failed to create virtual environment."
+        Write-Err 'Failed to create virtual environment.'
         exit 1
     }
     $venvCreated = $true
 }
-Write-Info "Activating virtual environment..."
+Write-Info 'Activating virtual environment...'
 & .\.venv\Scripts\Activate.ps1
 
 # --- Install/upgrade requirements if needed ---
 if ($venvCreated -or $ForceInstall) {
-    Write-Info "Upgrading pip and installing requirements..."
+    Write-Info 'Upgrading pip and installing requirements...'
     & python -m pip install --upgrade pip
     & pip install -r requirements.txt
 }
@@ -83,7 +83,7 @@ if ($venvCreated -or $ForceInstall) {
 # Resolve relative to script folder if path is not absolute
 if (-not [System.IO.Path]::IsPathRooted($EnvFile)) { $EnvFile = Join-Path -Path (Get-Location) -ChildPath $EnvFile }
 if (Test-Path $EnvFile) {
-    Write-Info "Loading environment from '$EnvFile'..."
+    Write-Info ("Loading environment from '{0}'..." -f $EnvFile)
     Get-Content $EnvFile | ForEach-Object {
         if ($_ -match '^[\s]*#') { return }
         if ($_ -match '^[\s]*$') { return }
@@ -102,7 +102,7 @@ if (Test-Path $EnvFile) {
         }
     }
 } else {
-    Write-Warn "Env file '$EnvFile' not found. Using current process env only."
+    Write-Warn ("Env file '{0}' not found. Using current process env only." -f $EnvFile)
 }
 
 # MT5 is initialized by Python at runtime; no PS-level checks or launch.
@@ -113,7 +113,7 @@ if (-not $NoCloudflared) {
     # Resolve relative to script folder if path is not absolute
     if (-not [System.IO.Path]::IsPathRooted($CloudflaredConfig)) { $CloudflaredConfig = Join-Path -Path (Get-Location) -ChildPath $CloudflaredConfig }
     if (-not (Test-Path $CloudflaredConfig)) {
-        Write-Warn "Cloudflared config '$CloudflaredConfig' not found. Skipping tunnel."
+        Write-Warn ("Cloudflared config '{0}' not found. Skipping tunnel." -f $CloudflaredConfig)
     } else {
         $cfCmd = Get-Command cloudflared -ErrorAction SilentlyContinue
         if (-not $cfCmd) {
@@ -127,35 +127,35 @@ if (-not $NoCloudflared) {
                     # Expand ~ and env vars if any
                     $credPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($credPath)
                     if (-not (Test-Path $credPath)) {
-                        Write-Warn "Cloudflared credentials file not found: $credPath"
+                        Write-Warn ("Cloudflared credentials file not found: {0}" -f $credPath)
                     }
                 }
             } catch {}
-            Write-Info "Starting Cloudflared tunnel in background..."
+            Write-Info 'Starting Cloudflared tunnel in background...'
             if (-not (Test-Path "logs")) { New-Item -ItemType Directory -Force -Path "logs" | Out-Null }
             $cloudArgs = @("tunnel","--config", $CloudflaredConfig, "run")
             $cloudProc = Start-Process -FilePath "cloudflared" -ArgumentList $cloudArgs -RedirectStandardOutput "logs/cloudflared.out.log" -RedirectStandardError "logs/cloudflared.err.log" -PassThru -WindowStyle Hidden
-            if ($cloudProc) { Write-Ok "Cloudflared started. PID=$($cloudProc.Id)" } else { Write-Warn "Failed to start Cloudflared." }
+            if ($cloudProc) { Write-Ok ("Cloudflared started. PID={0}" -f $cloudProc.Id) } else { Write-Warn 'Failed to start Cloudflared.' }
         }
     }
 }
 
 # --- Run FxLabs server (foreground) ---
-Write-Brand "Starting FxLabs API (fxlabs-server.py) at http://127.0.0.1:8000"
-Write-Info  "Health: http://127.0.0.1:8000/health"
+Write-Brand 'Starting FxLabs API (fxlabs-server.py) at http://127.0.0.1:8000'
+Write-Info  'Health: http://127.0.0.1:8000/health'
 try {
     & python fxlabs-server.py
     $serverExit = $LASTEXITCODE
 } finally {
     if ($cloudProc -and -not $cloudProc.HasExited) {
-        Write-Info "Stopping Cloudflared (PID=$($cloudProc.Id))..."
+        Write-Info ("Stopping Cloudflared (PID={0})..." -f $cloudProc.Id)
         try { Stop-Process -Id $cloudProc.Id -Force -ErrorAction SilentlyContinue } catch {}
     }
 }
 
 if ($serverExit -ne $null -and $serverExit -ne 0) {
-    Write-Err "FxLabs server exited with code $serverExit"
+    Write-Err ("FxLabs server exited with code {0}" -f $serverExit)
     exit $serverExit
 }
 
-Write-Ok "FxLabs server stopped gracefully."
+Write-Ok 'FxLabs server stopped gracefully.'
