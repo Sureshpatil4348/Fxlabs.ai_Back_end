@@ -167,6 +167,30 @@ start.bat
 .\start.ps1
 ```
 
+### Windows: FxLabs One‑Click Runner
+
+Use the dedicated Windows orchestrator to provision the venv, install requirements, validate MT5, start the FxLabs API, and run the Cloudflared tunnel in the background. The banner uses brand color `#19235d` instead of black.
+
+```powershell
+# PowerShell (run from repo root)
+powershell -NoProfile -ExecutionPolicy Bypass -File .\fxlabs-start.ps1
+
+# Or simply
+./fxlabs-start.ps1
+
+# Optional flags
+./fxlabs-start.ps1 -ForceInstall           # reinstall/upgrade deps
+./fxlabs-start.ps1 -NoCloudflared          # do not run Cloudflared
+./fxlabs-start.ps1 -LaunchMT5              # launch MT5 if MT5_TERMINAL_PATH is set
+./fxlabs-start.ps1 -EnvFile .env           # custom env file
+./fxlabs-start.ps1 -CloudflaredConfig config.yml
+```
+
+Cloudflared notes (Windows):
+- Requires `cloudflared` installed and logged in (`cloudflared tunnel login`).
+- Ensure `config.yml` matches your environment. Update the `credentials-file:` path to your Windows user profile if needed.
+- This repo includes an example `config.yml` with a tunnel ID and Windows path. If the credentials file is missing, the script will warn and continue without Cloudflared.
+
 ### Verification
 
 After starting, verify the server is running:

@@ -110,6 +110,12 @@ python fxlabs-server.py
 python hextech-server.py
 ```
 
+Windows one-click (FxLabs):
+```powershell
+# Provisions venv, installs deps, validates MT5, starts Cloudflared and FxLabs API
+./fxlabs-start.ps1
+```
+
 #### Cloudflare Tunnel (reverse proxy) example
 Update `config.yml` ingress to route both hostnames:
 ```yaml
