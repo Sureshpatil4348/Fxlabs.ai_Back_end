@@ -7,7 +7,6 @@
 param(
     [switch]$ForceInstall = $false,
     [switch]$NoCloudflared = $false,
-    [switch]$LaunchMT5 = $false,
     [string]$EnvFile = ".env",
     [string]$CloudflaredConfig = "config.yml",
     [string]$PythonVersion = "3.11"
@@ -106,25 +105,7 @@ if (Test-Path $EnvFile) {
     Write-Warn "Env file '$EnvFile' not found. Using current process env only."
 }
 
-# --- Optional: launch MT5 terminal if requested and path known ---
-if ($LaunchMT5) {
-    $mt5Path = $env:MT5_TERMINAL_PATH
-    if ($mt5Path -and (Test-Path $mt5Path)) {
-        Write-Info "Launching MT5 terminal..."
-        Start-Process -FilePath $mt5Path | Out-Null
-    } else {
-        Write-Warn "-LaunchMT5 requested but MT5_TERMINAL_PATH is not set or invalid. Skipping."
-    }
-}
-
-# --- Validate MT5 Python module is importable ---
-Write-Info "Checking MetaTrader5 Python module..."
-& python -c "import MetaTrader5 as mt5; v=getattr(mt5,'__version__','unknown'); print('MetaTrader5 import OK (v={})'.format(v))"
-if ($LASTEXITCODE -ne 0) {
-    Write-Err "MetaTrader5 module import failed. Ensure MT5 is installed and numpy<2 is active in this venv."
-    Write-Info "Tip: pip uninstall -y numpy; pip install 'numpy<2'; pip install --force-reinstall --no-cache-dir MetaTrader5==5.0.45"
-    exit 1
-}
+# MT5 is initialized by Python at runtime; no PS-level checks or launch.
 
 # --- Start Cloudflared (background) unless disabled ---
 $cloudProc = $null

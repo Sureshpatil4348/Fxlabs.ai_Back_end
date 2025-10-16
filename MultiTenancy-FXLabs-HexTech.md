@@ -116,6 +116,8 @@ Windows one-click (FxLabs):
 ./fxlabs-start.ps1
 ```
 
+Note: The Windows runner only provisions environment, starts Cloudflared, and launches the server. MT5 detection/initialization is performed by the Python app at runtime.
+
 #### Cloudflare Tunnel (reverse proxy) example
 Update `config.yml` ingress to route both hostnames:
 ```yaml
