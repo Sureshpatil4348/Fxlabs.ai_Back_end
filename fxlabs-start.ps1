@@ -92,8 +92,8 @@ if (Test-Path $EnvFile) {
             $k = $matches['k'].Trim()
             $v = $matches['v'].Trim()
             # Trim matching wrapping quotes only without fragile quoting
-            $DQ = [char]34  # "
-            $SQ = [char]39  # '
+            $DQ = [char]34  # double-quote char
+            $SQ = [char]39  # single-quote char
             if ($v.StartsWith($DQ) -and $v.EndsWith($DQ)) {
                 $v = $v.Trim($DQ)
             } elseif ($v.StartsWith($SQ) -and $v.EndsWith($SQ)) {
@@ -119,7 +119,7 @@ if ($LaunchMT5) {
 
 # --- Validate MT5 Python module is importable ---
 Write-Info "Checking MetaTrader5 Python module..."
-& python -c 'import MetaTrader5 as mt5; import sys; v=getattr(mt5,"__version__","unknown"); print(f"MetaTrader5 import OK (v={v})")'
+& python -c "import MetaTrader5 as mt5; v=getattr(mt5,'__version__','unknown'); print('MetaTrader5 import OK (v={})'.format(v))"
 if ($LASTEXITCODE -ne 0) {
     Write-Err "MetaTrader5 module import failed. Ensure MT5 is installed and numpy<2 is active in this venv."
     Write-Info "Tip: pip uninstall -y numpy; pip install 'numpy<2'; pip install --force-reinstall --no-cache-dir MetaTrader5==5.0.45"
@@ -178,4 +178,3 @@ if ($serverExit -ne $null -and $serverExit -ne 0) {
 }
 
 Write-Ok "FxLabs server stopped gracefully."
-
