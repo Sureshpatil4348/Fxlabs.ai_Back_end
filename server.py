@@ -85,6 +85,13 @@ async def _symbol_info_tick_async(symbol: str):
     except Exception:
         return None
 
+# Windows event-loop policy: prefer Selector policy for better WebSocket compatibility
+try:
+    if sys.platform.startswith("win"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # type: ignore[attr-defined]
+except Exception:
+    pass
+
 async def _daily_change_pct_bid_async(symbol: str):
     try:
         return await asyncio.to_thread(get_daily_change_pct_bid, symbol)
@@ -633,6 +640,8 @@ async def _indicator_scheduler() -> None:
             tfs_ema_updated: Set[str] = set()
             tfs_macd_updated: Set[str] = set()
             tfs_cs_updated: Set[str] = set()
+            # Ensure quantum is computed once per symbol per cycle
+            quantum_done: Set[str] = set()
             for symbol, tf in pairs:
                 try:
                     # Fetch recent OHLC and gate on last closed bar (offloaded)
@@ -870,26 +879,35 @@ async def _indicator_scheduler() -> None:
                     except Exception:
                         # Strength calculation must never break the indicator scheduler loop
                         pass
-                    # Also compute and broadcast quantum analysis snapshot for this symbol
-                    q = await compute_quantum_for_symbol(symbol)
-                    q_msg = {
-                        "type": "quantum_update",
-                        "symbol": symbol,
-                        "data": q,
-                    }
-                    for c in clients:
-                        try:
-                            if getattr(c, "v2_broadcast", False):
-                                await c._try_send_json(q_msg)
+                    # Also compute and broadcast quantum analysis snapshot once per symbol per cycle
+                    if symbol not in quantum_done:
+                        quantum_done.add(symbol)
+                        q = await compute_quantum_for_symbol(symbol)
+                        q_msg = {
+                            "type": "quantum_update",
+                            "symbol": symbol,
+                            "data": q,
+                        }
+                        for c in clients:
+                            try:
+                                if getattr(c, "v2_broadcast", False):
+                                    await c._try_send_json(q_msg)
+                                    continue
+                            except Exception:
                                 continue
-                        except Exception:
-                            continue
 
                     # Correlation updates removed per product decision
                 except Exception as e:
                     error_count += 1
                     print(f"❌ Indicator scheduler error for {symbol} {tf.value}: {e}")
                     continue
+
+                # Yield occasionally to keep event loop responsive (Windows handshake stability)
+                if (processed % 10) == 0:
+                    try:
+                        await asyncio.sleep(0)
+                    except Exception:
+                        pass
 
             ended_at = datetime.now(timezone.utc)
             cpu_t1 = time.process_time()
@@ -1551,6 +1569,7 @@ class WSClient:
             return
             
         updates: List[dict] = []
+        iter_count = 0
         for sym in list(tick_symbols):
             try:
                 await _ensure_symbol_selected_async(sym)
@@ -1608,12 +1627,20 @@ class WSClient:
                         )
                     except Exception:
                         pass
-                        
+                
             except HTTPException:
                 # symbol disappeared or invalid; drop it
                 # Clean internal scheduling state
                 if sym in self.subscriptions:
                     del self.subscriptions[sym]
+            finally:
+                iter_count += 1
+                if (iter_count % 10) == 0:
+                    # Yield to keep event loop responsive for new connections
+                    try:
+                        await asyncio.sleep(0)
+                    except Exception:
+                        pass
                     
         if updates:
             # Create bid-only tick data for frontend (only send bid prices)

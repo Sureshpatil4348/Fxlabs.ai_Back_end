@@ -1205,6 +1205,10 @@ The system provides comprehensive logging for:
 - Fix (implemented): Offload MT5 calls to threads so the event loop stays responsive.
   - server.py: async wrappers `_get_ohlc_data_async`, `_update_ohlc_cache_async`, `_ensure_symbol_selected_async`, `_symbol_info_tick_async`, `_daily_change_pct_bid_async` and their usage in tick/indicator paths.
   - app/currency_strength.py: MT5 calls inside `compute_currency_strength_for_timeframe` now use `asyncio.to_thread`.
+  - app/quantum.py: OHLC fetches use `asyncio.to_thread` to avoid blocking.
+  - server.py: quantum analysis is computed once per symbol per cycle (not per timeframe), and long loops yield with `await asyncio.sleep(0)` periodically to keep the loop responsive.
+- Windows event loop policy: select-based policy for better WS stability.
+  - server.py sets `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())` on Windows.
 - Other checks:
   - IPv6 vs IPv4 localhost: Some Windows setups resolve `localhost` to `::1` while the server binds to `127.0.0.1`. Use `ws://127.0.0.1:8000/market-v2` explicitly, or set `HOST=0.0.0.0`.
     ```env
