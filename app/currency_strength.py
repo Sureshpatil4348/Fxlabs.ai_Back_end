@@ -4,6 +4,7 @@ from math import log
 from typing import Dict, List, Optional, Tuple
 
 from .models import Timeframe
+import asyncio
 from .mt5_utils import canonicalize_symbol, ensure_symbol_selected, get_ohlc_data
 
 
@@ -62,11 +63,11 @@ async def compute_currency_strength_for_timeframe(
             continue
         base, quote = pq
         try:
-            ensure_symbol_selected(sym)
+            await asyncio.to_thread(ensure_symbol_selected, sym)
         except Exception:
             # Best-effort; continue
             pass
-        bars = get_ohlc_data(sym, timeframe, 5)
+        bars = await asyncio.to_thread(get_ohlc_data, sym, timeframe, 5)
         if not bars:
             continue
         closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
@@ -155,4 +156,3 @@ __all__ = [
     "compute_currency_strength_for_timeframe",
     "SUPPORTED_FIAT",
 ]
-

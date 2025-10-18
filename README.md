@@ -1199,6 +1199,21 @@ The system provides comprehensive logging for:
 - Meaning: The client closed or the connection wasn't fully established when the server tried to read. This is a normal transient condition with flaky clients or quick reconnects.
 - Handling: The server now treats this as a clean disconnect and exits the read loop gracefully; no action required unless it's frequent. If frequent, check client networking and retry logic.
 
+#### Troubleshooting: Intermittent WebSocket connect/accept failures (Windows)
+- Symptom: The frontend occasionally fails to establish a WebSocket connection to `/market-v2` even when CPU/memory look fine.
+- Root cause (common): Event loop stalls caused by blocking MT5 calls performed inside async loops (indicator scheduler, tick streamer). On Windows this can surface as handshake timeouts or "accept"-state disconnects.
+- Fix (implemented): Offload MT5 calls to threads so the event loop stays responsive.
+  - server.py: async wrappers `_get_ohlc_data_async`, `_update_ohlc_cache_async`, `_ensure_symbol_selected_async`, `_symbol_info_tick_async`, `_daily_change_pct_bid_async` and their usage in tick/indicator paths.
+  - app/currency_strength.py: MT5 calls inside `compute_currency_strength_for_timeframe` now use `asyncio.to_thread`.
+- Other checks:
+  - IPv6 vs IPv4 localhost: Some Windows setups resolve `localhost` to `::1` while the server binds to `127.0.0.1`. Use `ws://127.0.0.1:8000/market-v2` explicitly, or set `HOST=0.0.0.0`.
+    ```env
+    HOST=0.0.0.0
+    PORT=8000
+    ```
+  - Browser auth headers: Browsers cannot set custom headers in the WS handshake. If `API_TOKEN` is set, prefer query tokens or disable in local dev.
+  - Local firewall/proxy: Ensure no security software is terminating or delaying WebSocket upgrades.
+
 #### File Logging (added)
 - Logs are written both to the terminal and to `logs/<YYYY-MM-DDTHH-mm-ssZ>.log` (UTC start time) in the repository root. A new file is created for each server start.
 - File logs rotate automatically at ~10 MB per file with up to 5 backups kept: `<timestamp>.log`, `<timestamp>.log.1`, ..., `<timestamp>.log.5`.

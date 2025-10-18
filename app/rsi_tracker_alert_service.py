@@ -255,10 +255,10 @@ class RSITrackerAlertService:
             }
             mt5_tf = tf_map.get(timeframe)
             if mt5_tf:
-                ohlc = get_ohlc_data(symbol, mt5_tf, 1)
+                ohlc = await asyncio.to_thread(get_ohlc_data, symbol, mt5_tf, 1)
                 if ohlc:
                     bar = ohlc[-1]
-                    tick = mt5.symbol_info_tick(symbol)
+                    tick = await asyncio.to_thread(mt5.symbol_info_tick, symbol)
                     data = {
                         "symbol": symbol,
                         "timeframe": timeframe,

@@ -68,6 +68,28 @@ from app.currency_strength import compute_currency_strength_for_timeframe
 from app.currency_strength_cache import currency_strength_cache
 from app.constants import RSI_SUPPORTED_SYMBOLS
 from app.trending_pairs import trending_pairs_cache, trending_pairs_scheduler, refresh_trending_pairs
+
+# Async wrappers for blocking MT5 calls to avoid event-loop stalls (especially on Windows)
+async def _get_ohlc_data_async(symbol: str, timeframe: Timeframe, count: int = 300):
+    return await asyncio.to_thread(get_ohlc_data, symbol, timeframe, count)
+
+async def _update_ohlc_cache_async(symbol: str, timeframe: Timeframe):
+    return await asyncio.to_thread(update_ohlc_cache, symbol, timeframe)
+
+async def _ensure_symbol_selected_async(symbol: str):
+    return await asyncio.to_thread(ensure_symbol_selected, symbol)
+
+async def _symbol_info_tick_async(symbol: str):
+    try:
+        return await asyncio.to_thread(mt5.symbol_info_tick, symbol)
+    except Exception:
+        return None
+
+async def _daily_change_pct_bid_async(symbol: str):
+    try:
+        return await asyncio.to_thread(get_daily_change_pct_bid, symbol)
+    except Exception:
+        return None
 # One-time warmup to backfill indicator cache at startup
 async def _warm_populate_indicator_cache() -> None:
     try:
@@ -83,7 +105,7 @@ async def _warm_populate_indicator_cache() -> None:
         for sym in symbols_for_rollout:
             for tf in baseline_tfs:
                 try:
-                    bars = get_ohlc_data(sym, tf, 300)
+                    bars = await _get_ohlc_data_async(sym, tf, 300)
                     if not bars:
                         continue
                     closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
@@ -613,8 +635,8 @@ async def _indicator_scheduler() -> None:
             tfs_cs_updated: Set[str] = set()
             for symbol, tf in pairs:
                 try:
-                    # Fetch recent OHLC and gate on last closed bar
-                    bars = get_ohlc_data(symbol, tf, 300)
+                    # Fetch recent OHLC and gate on last closed bar (offloaded)
+                    bars = await _get_ohlc_data_async(symbol, tf, 300)
                     if not bars:
                         continue
                     closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
@@ -1115,7 +1137,7 @@ async def get_indicator(
         results: List[Dict[str, Any]] = []
         for sym in candidates:
             try:
-                ensure_symbol_selected(sym)
+                await _ensure_symbol_selected_async(sym)
             except Exception:
                 pass
 
@@ -1194,15 +1216,15 @@ async def get_pricing(
             # Prefer cache
             snap = await price_cache.get_latest(sym)
             if not snap:
-                # Fallback to live MT5 tick
-                ensure_symbol_selected(sym)
-                info = mt5.symbol_info_tick(sym)
+                # Fallback to live MT5 tick (offloaded)
+                await _ensure_symbol_selected_async(sym)
+                info = await _symbol_info_tick_async(sym)
                 if info is not None:
                     ts_ms = getattr(info, "time_msc", 0) or int(getattr(info, "time", 0)) * 1000
                     dt_iso = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).isoformat()
                     bid = getattr(info, "bid", None)
                     ask = getattr(info, "ask", None)
-                    dcp = get_daily_change_pct_bid(sym)
+                    dcp = await _daily_change_pct_bid_async(sym)
                     snap = {
                         "symbol": sym,
                         "time": ts_ms,
@@ -1453,7 +1475,7 @@ class WSClient:
                 baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
                 for sym in RSI_SUPPORTED_SYMBOLS:
                     try:
-                        ensure_symbol_selected(sym)
+                        await _ensure_symbol_selected_async(sym)
                     except Exception:
                         continue
                     for tf in baseline_tfs:
@@ -1531,8 +1553,8 @@ class WSClient:
         updates: List[dict] = []
         for sym in list(tick_symbols):
             try:
-                ensure_symbol_selected(sym)
-                info = mt5.symbol_info_tick(sym)
+                await _ensure_symbol_selected_async(sym)
+                info = await _symbol_info_tick_async(sym)
                 if info is None:
                     continue
                 ts_ms = getattr(info, "time_msc", 0) or int(getattr(info, "time", 0)) * 1000
@@ -1547,14 +1569,14 @@ class WSClient:
                         cache_key = _d1_ref_cache.get(sym)
                         if not cache_key or cache_key[0] != today_key:
                             # Refresh reference once per day per symbol
-                            ref = get_daily_change_pct_bid(sym)
+                            ref = await _daily_change_pct_bid_async(sym)
                             # get_daily_change_pct_bid computes using current bid; extract ref by reversing would be noisy
                             # For per-tick efficiency, we will compute dcp directly each time with helper, no separate ref exposure
                             dcp_val = ref
                             _d1_ref_cache[sym] = (today_key, ref if ref is not None else float('nan'))
                         else:
                             # Recompute with helper to honor spec with latest bid; fallback to cached ref-derived value
-                            dcp_val = get_daily_change_pct_bid(sym)
+                            dcp_val = await _daily_change_pct_bid_async(sym)
                     except Exception:
                         dcp_val = None
                     tick_dict = tick.model_dump()
@@ -1571,7 +1593,7 @@ class WSClient:
                         try:
                             baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
                             for tf in baseline_tfs:
-                                update_ohlc_cache(sym, tf)
+                                await _update_ohlc_cache_async(sym, tf)
                         except Exception:
                             pass
                     # Update latest price cache for REST pricing endpoint
