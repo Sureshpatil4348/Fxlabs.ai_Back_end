@@ -1875,7 +1875,7 @@ class EmailService:
                   <td style=\"padding:10px;border-bottom:1px solid #E5E7EB;\">
                     <div style=\"font-size:14px;font-weight:700;\">{title} <span style=\"font-weight:400;color:#6B7280\">• {time_local}</span></div>
                     <div style=\"font-size:13px;margin-top:4px;\">
-                      Exp: <strong>{expected}</strong> | Fcast: <strong>{forecast}</strong> | Bias: <strong>{bias}</strong>
+                      Forecast: <strong>{forecast}</strong> | Bias: <strong>{bias}</strong>
                     </div>
                   </td>
                 </tr>
@@ -1932,7 +1932,7 @@ class EmailService:
         news_list = payload.get("news", []) or []
         if news_list:
             for n in news_list:
-                lines.append(f"- {n.get('time_local','')} • {n.get('title','')} (Exp {n.get('expected','-')}, Fcast {n.get('forecast','-')}, Bias {n.get('bias','-')})")
+                lines.append(f"- {n.get('time_local','')} • {n.get('title','')} (Forecast {n.get('forecast','-')}, Bias {n.get('bias','-')})")
         else:
             lines.append("No high-impact news scheduled for today")
         lines.append("")
