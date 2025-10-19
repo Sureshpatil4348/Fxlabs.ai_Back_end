@@ -1172,7 +1172,7 @@ async def check_and_send_news_reminders() -> None:
         except Exception:
             pass
         log_info(logger, "news_reminder_recipients", users=len(emails), emails_csv=emails_csv)
-            for item in due_items:
+        for item in due_items:
                 title = (item.headline or "News Event").strip()
                 event_time_local = _format_event_time_local(item.time)
                 impact = (item.analysis.get("impact") if item.analysis else None) or "medium"
