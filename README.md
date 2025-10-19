@@ -51,6 +51,7 @@ Note — FxLabs Prime Domain Update
 - **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FxLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
 - **Comprehensive Legal Disclaimer**: All alert emails now include a comprehensive legal disclaimer footer that outlines risks, disclaims financial advice, and links to Terms of Service and Privacy Policy at fxlabsprime.com. This ensures full legal compliance and transparency with users about trading risks. Daily Morning Brief now uses the same neutral gray disclaimer styling as other emails (no yellow highlight).
 - **Email Brand Color Update**: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` remain for readability and hierarchy.
+- **RSI Email Price Formatting**: Prices shown in RSI alert emails are formatted to at most 5 decimal places to avoid float artifacts from broker feeds (e.g., `1.64309999999999` → `1.6431`). Trailing zeros are trimmed; no more than 5 decimals are shown.
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers, per the Calculations Reference (EMA21/50/200, MACD, RSI, UTBot, Ichimoku; new‑signal boost; quiet‑market damping)
   - Per‑alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
 

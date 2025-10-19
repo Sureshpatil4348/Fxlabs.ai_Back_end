@@ -96,9 +96,10 @@ Troubleshooting (Currency Strength)
   - Values are sourced from the single source of truth `indicator_cache` (populated by the indicator scheduler using broker OHLC). Closed‑bar only; warm‑up enforced. No per-alert recomputation.
 5) Trigger Logic
   - Crossing policy: Overbought (prev < OB and curr ≥ OB), Oversold (prev > OS and curr ≤ OS), evaluated on closed bars only.
-  - Threshold‑level re‑arm per side. No additional per-pair cooldown applied for RSI Tracker.
+ - Threshold‑level re‑arm per side. No additional per-pair cooldown applied for RSI Tracker.
 6) Alert Content
   - Email Subject: `RSI Alert - <alert_name>`; includes per‑pair summary (zone, RSI value, price, IST time).
+  - Price formatting: Prices are rendered up to 5 decimal places to eliminate float artifacts from broker feeds (e.g., `1.64309999999999` → `1.6431`). Trailing zeros are trimmed; no more than 5 decimals are shown.
 7) Example Config (JSON)
 ```json
 {

@@ -9,6 +9,7 @@ from urllib.parse import quote as url_quote
 from threading import RLock
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
+from decimal import Decimal, ROUND_HALF_UP
 try:
     from sendgrid import SendGridAPIClient
     from sendgrid.helpers.mail import (
@@ -407,7 +408,7 @@ class EmailService:
         for p in pairs:
             sym = self._pair_display(p.get("symbol", "?"))
             rsi = p.get("rsi", p.get("rsi_value", "?"))
-            price = p.get("current_price", "?")
+            price = self._format_price_for_email(p.get("current_price", "?"))
             chg = p.get("price_change_percent", "?")
             lines.append(f"- {sym}: RSI {rsi}, Px {price}, Chg {chg}%")
         return "\n".join(lines)
@@ -1278,7 +1279,7 @@ class EmailService:
             symbol = self._pair_display(pair.get("symbol", "N/A"))
             timeframe = pair.get("timeframe", "N/A")
             rsi_value = pair.get("rsi_value", 0)
-            price = pair.get("current_price", 0)
+            price = self._format_price_for_email(pair.get("current_price", 0))
             cond = str(pair.get("trigger_condition", "")).lower()
             if "overbought" in cond:
                 zone = "Overbought"
@@ -1342,6 +1343,31 @@ class EmailService:
         )
 
         return html
+
+    def _format_price_for_email(self, value: Any) -> str:
+        """Format price to at most 5 decimal places, trimming trailing zeros.
+
+        - Uses Decimal for stable rounding to avoid float artifacts like 1.64309999999999
+        - Rounds HALF_UP to 5 places
+        - Strips trailing zeros and any trailing decimal point
+        """
+        try:
+            if value is None or (isinstance(value, str) and not value.strip()):
+                return "?"
+            d = Decimal(str(value))
+            q = d.quantize(Decimal("0.00001"), rounding=ROUND_HALF_UP)
+            # Normalize and format to plain string without scientific notation
+            s = format(q.normalize(), "f")
+            # Ensure "-0" becomes "0"
+            if s == "-0":
+                s = "0"
+            return s
+        except Exception:
+            # Fallback to string; better to show something than crash email
+            try:
+                return str(value)
+            except Exception:
+                return "?"
 
 
 
