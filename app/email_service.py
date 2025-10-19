@@ -739,7 +739,7 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"Trading Alert: {alert_name}"
+            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
             
             # Build email body
             body = self._build_heatmap_alert_email_body(
@@ -810,7 +810,7 @@ class EmailService:
         self._cleanup_old_cooldowns()
 
         try:
-            subject = "Trading Alert: Quantum Analysis"
+            subject = "FxLabs Prime • Trading Alert: Quantum Analysis"
             body = self._build_heatmap_tracker_email_body(alert_name, triggered_pairs, alert_config)
             text_body = self._build_plain_text_heatmap_tracker(alert_name, triggered_pairs, alert_config)
             mail = self._build_mail(
@@ -1056,7 +1056,7 @@ class EmailService:
         # Unsubscribe support removed
         
         try:
-            subject = "System Test - FxLabs Prime"
+            subject = "FxLabs Prime • System Test"
             
             body = f"""
             <!DOCTYPE html>
@@ -1142,7 +1142,7 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"RSI Alert - {alert_name}"
+            subject = f"FxLabs Prime • RSI Alert - {alert_name}"
             logger.info(f"📝 Email subject: {subject}")
             
             # Build email body
@@ -1230,7 +1230,7 @@ class EmailService:
         self._cleanup_old_cooldowns()
 
         try:
-            subject = f"Trading Alert: {alert_name}"
+            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
             body = self._build_custom_indicator_email_body(alert_name, triggered_pairs, alert_config)
             text_body = self._build_plain_text_custom_indicator(alert_name, triggered_pairs, alert_config)
             mail = self._build_mail(
@@ -1474,7 +1474,7 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"Trading Alert: {alert_name}"
+            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
             
             # Build email body
             body = self._build_rsi_correlation_alert_email_body(
@@ -1695,7 +1695,7 @@ class EmailService:
             bias=_fmt(bias, "-"),
         )
 
-        subject = "News reminder"
+        subject = "FxLabs Prime • News reminder"
         mail = self._build_mail(
             subject=subject,
             to_email_addr=user_email,
@@ -2116,7 +2116,7 @@ class EmailService:
             return False
 
         try:
-            subject = f"Trading Alert: {alert_name}"
+            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
             html_body = self._build_currency_strength_email_body(alert_name, timeframe, triggered_items, prev_winners, all_values)
             # Build a simple text alternative
             try:

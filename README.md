@@ -635,7 +635,7 @@ Notes:
 
 Notes:
 - Multiple triggered pairs render as multiple cards within a single email.
-- Subject remains `Trading Alert: <alert_name>` and a text/plain alternative is included.
+- Subject format: `FxLabs Prime • Trading Alert: <alert_name>` and a text/plain alternative is included.
 
 ### Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)
 
@@ -681,7 +681,7 @@ Notes:
   - **ts_local**: generated server-side in IST
 Notes:
 - Multiple triggers render multiple cards in one email.
-- Subject remains `Trading Alert: <alert_name>` and a text/plain alternative is included.
+- Subject format: `FxLabs Prime • Trading Alert: <alert_name>` and a text/plain alternative is included.
 
 ### Alert Scheduling & Re‑triggering (Global)
 

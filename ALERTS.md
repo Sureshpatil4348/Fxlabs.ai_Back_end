@@ -98,7 +98,7 @@ Troubleshooting (Currency Strength)
   - Crossing policy: Overbought (prev < OB and curr ≥ OB), Oversold (prev > OS and curr ≤ OS), evaluated on closed bars only.
  - Threshold‑level re‑arm per side. No additional per-pair cooldown applied for RSI Tracker.
 6) Alert Content
-  - Email Subject: `RSI Alert - <alert_name>`; includes per‑pair summary (zone, RSI value, price, IST time).
+  - Email Subject: `FxLabs Prime • RSI Alert - <alert_name>`; includes per‑pair summary (zone, RSI value, price, IST time).
   - Price formatting: Prices are rendered up to 5 decimal places to eliminate float artifacts from broker feeds (e.g., `1.64309999999999` → `1.6431`). Trailing zeros are trimmed; no more than 5 decimals are shown.
 7) Example Config (JSON)
 ```json
@@ -236,7 +236,7 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 
 ### ⏰ News Reminder (5 Minutes Before)
 
-- What: Sends an email with subject "News reminder" to all active users 5 minutes before each upcoming news event found in the local news cache.
+- What: Sends an email with subject "FxLabs Prime • News reminder" to all active users 5 minutes before each upcoming news event found in the local news cache.
   - Impact filter: Only items with source‑reported `impact == "high"` qualify (mirrors upstream API). Medium/low impact items are ignored.
 - Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for news reminders and does not depend on per‑product alert tables.
   - Primary source: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
