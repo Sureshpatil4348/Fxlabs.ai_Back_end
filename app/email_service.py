@@ -1608,6 +1608,7 @@ class EmailService:
         self,
         event_title: str,
         event_time_local: str,
+        currency: str,
         impact: str,
         previous: str,
         forecast: str,
@@ -1629,6 +1630,7 @@ class EmailService:
         self,
         event_title: str,
         event_time_local: str,
+        currency: str,
         impact: str,
         previous: str,
         forecast: str,
@@ -1638,7 +1640,7 @@ class EmailService:
         return (
             f"Starts in 5 Minutes\n"
             f"{event_title}\n"
-            f"Time: {event_time_local} • Impact: {impact}\n"
+            f"Time: {event_time_local} • Currency: {currency} • Impact: {impact}\n"
             f"Previous: {previous} | Forecast: {forecast} | Expected: {expected} | Bias: {bias}\n"
             f"Volatility risk. Consider spreads, slippage and cooldown windows.\n\n"
             f"FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our Terms at https://fxlabsprime.com/terms-of-service & Privacy Policy at https://fxlabsprime.com/privacy-policy."
@@ -1649,6 +1651,7 @@ class EmailService:
         user_email: str,
         event_title: str,
         event_time_local: str,
+        currency: Optional[str],
         impact: Optional[str],
         previous: Optional[str],
         forecast: Optional[str],
@@ -1679,6 +1682,7 @@ class EmailService:
         html = self._build_news_reminder_html(
             event_title=_fmt(event_title, "News Event"),
             event_time_local=_fmt(event_time_local, ""),
+            currency=_fmt(currency, "-"),
             impact=_fmt(impact, "-"),
             previous=_fmt(previous, "-"),
             forecast=_fmt(forecast, "-"),
@@ -1688,6 +1692,7 @@ class EmailService:
         text = self._build_news_reminder_text(
             event_title=_fmt(event_title, "News Event"),
             event_time_local=_fmt(event_time_local, ""),
+            currency=_fmt(currency, "-"),
             impact=_fmt(impact, "-"),
             previous=_fmt(previous, "-"),
             forecast=_fmt(forecast, "-"),
@@ -1885,13 +1890,14 @@ class EmailService:
             for n in news_list:
                 title = esc(n.get("title", ""))
                 time_local = esc(n.get("time_local", ""))
+                currency = esc(n.get("currency", ""))
                 expected = esc(n.get("expected", "-"))
                 forecast = esc(n.get("forecast", "-"))
                 bias = esc(n.get("bias", "-"))
                 news_rows.append(f"""
                 <tr>
                   <td style=\"padding:10px;border-bottom:1px solid #E5E7EB;\">
-                    <div style=\"font-size:14px;font-weight:700;\">{title} <span style=\"font-weight:400;color:#6B7280\">• {time_local}</span></div>
+                    <div style=\"font-size:14px;font-weight:700;\">[{currency}] {title} <span style=\"font-weight:400;color:#6B7280\">• {time_local}</span></div>
                     <div style=\"font-size:13px;margin-top:4px;\">
                       Forecast: <strong>{forecast}</strong> | Bias: <strong style=\"color:{self._get_bias_color(bias)};\">{bias}</strong>
                     </div>
@@ -1950,7 +1956,7 @@ class EmailService:
         news_list = payload.get("news", []) or []
         if news_list:
             for n in news_list:
-                lines.append(f"- {n.get('time_local','')} • {n.get('title','')} (Forecast {n.get('forecast','-')}, Bias {n.get('bias','-')})")
+                lines.append(f"- [{n.get('currency','-')}] {n.get('time_local','')} • {n.get('title','')} (Forecast {n.get('forecast','-')}, Bias {n.get('bias','-')})")
         else:
             lines.append("No high-impact news scheduled for today")
         lines.append("")

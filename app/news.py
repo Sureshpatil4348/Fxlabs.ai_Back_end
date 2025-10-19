@@ -1172,14 +1172,14 @@ async def check_and_send_news_reminders() -> None:
         except Exception:
             pass
         log_info(logger, "news_reminder_recipients", users=len(emails), emails_csv=emails_csv)
-        for item in due_items:
-            title = (item.headline or "News Event").strip()
-            event_time_local = _format_event_time_local(item.time)
-            impact = (item.analysis.get("impact") if item.analysis else None) or "medium"
-            previous = item.previous or "-"
-            forecast = item.forecast or "-"
-            expected = "-"  # Not available pre-release
-            bias = _derive_bias(item.analysis.get("effect") if item.analysis else None)
+            for item in due_items:
+                title = (item.headline or "News Event").strip()
+                event_time_local = _format_event_time_local(item.time)
+                impact = (item.analysis.get("impact") if item.analysis else None) or "medium"
+                previous = item.previous or "-"
+                forecast = item.forecast or "-"
+                expected = "-"  # Not available pre-release
+                bias = _derive_bias(item.analysis.get("effect") if item.analysis else None)
 
             # Fire-and-forget per-user to avoid blocking; await join for this batch
             tasks = []
@@ -1187,8 +1187,9 @@ async def check_and_send_news_reminders() -> None:
                 tasks.append(
                     email_service.send_news_reminder(
                         user_email=em,
-                        event_title=title,
+                        event_title=f"[{(item.currency or '-').strip()}] {title}",
                         event_time_local=event_time_local,
+                        currency=(item.currency or "-") if hasattr(item, 'currency') else "-",
                         impact=str(impact).title(),
                         previous=str(previous),
                         forecast=str(forecast),

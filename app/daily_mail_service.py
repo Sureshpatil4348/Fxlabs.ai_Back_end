@@ -186,6 +186,7 @@ def _collect_today_news_compact() -> List[Dict[str, Any]]:
                 items.append({
                     "title": title,
                     "time_local": time_local,
+                    "currency": item.currency or "-",
                     "forecast": item.forecast or "-",
                     "bias": bias,
                 })

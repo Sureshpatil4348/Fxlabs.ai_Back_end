@@ -248,7 +248,7 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 - How it avoids duplicates: Each `NewsAnalysis` item has a boolean `reminder_sent`. Once sent, the item is flagged and the cache is persisted to disk, preventing repeats across restarts.
 - Template: Minimal, mobile-friendly HTML wrapped with the unified green header (`FxLabs Prime • News • <date/time>`) and a single common disclaimer footer.
   - Branding: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` are kept for readability and visual hierarchy.
-  - Fields: `event_title`, `event_time_local` (IST by default), `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
+  - Fields: `event_title`, `event_time_local` (IST by default), `currency`, `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `news_auth_fetch_start`, `news_auth_fetch_page`, `news_auth_fetch_page_emails` (debug), `news_auth_fetch_done`
   - Fallback: `news_users_fetch_fallback_alert_tables`
@@ -279,7 +279,7 @@ Automated daily email to all users at a configurable local time
 - Template: Responsive table layout with three main sections:
   - Signal Summary: Core pairs with badges (BUY=#0CCC7C, SELL=#E5494D) and probability
   - H4 Overbought/Oversold: Separate lists for oversold/overbought pairs with RSI values, or centered empty state message when none found
-  - Today's High/Medium-Impact News: Compact news table with event details
+  - Today's High-Impact News: Compact news table with event details; each row includes the event's `currency` (e.g., `[GBP]`)
   - Footer: A single gray disclaimer footer (no separate "education only" footer, no yellow block). Links styled in neutral gray; black is avoided in favor of #19235d for headings where applicable.
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `daily_auth_fetch_start`, `daily_auth_fetch_page`, `daily_auth_fetch_page_emails` (debug), `daily_auth_fetch_done`

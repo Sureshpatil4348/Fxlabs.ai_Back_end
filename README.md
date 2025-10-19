@@ -304,6 +304,8 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
   - Core signals in the daily brief use `scalper` mode for Quantum analysis (displayed as "Intraday" in the email).
 - For observability, the batch log includes a CSV of recipient emails and count.
 
+- News rows now include the source currency code for each event (e.g., `[USD] Nonfarm Payrolls`). This matches the API payloads where `currency` is already provided.
+
 #### Styling Consistency
 - Disclaimer footer styling is now unified with other emails (neutral, accessible colors), removing the previous yellow/warning palette.
 - Container: `background: #F9FAFB`, `border: 1px solid #E5E7EB`
