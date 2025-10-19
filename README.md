@@ -1545,3 +1545,4 @@ Why Outlook flagged it:
 
 Code defaults updated:
 - No code defaults for email sender. Set tenant-specific sender (`FXLABS_FROM_EMAIL` or `HEXTECH_FROM_EMAIL`) and configure your domain in SendGrid.
+- Daily Brief footer unified to a single gray disclaimer block; removed duplicate footer and yellow disclaimer styling. Headings avoid black; use #19235d where applicable.

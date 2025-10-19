@@ -279,6 +279,7 @@ Automated daily email to all users at a configurable local time
   - Signal Summary: Core pairs with badges (BUY=#0CCC7C, SELL=#E5494D) and probability
   - H4 Overbought/Oversold: Separate lists for oversold/overbought pairs with RSI values, or centered empty state message when none found
   - Today's High/Medium-Impact News: Compact news table with event details
+  - Footer: A single gray disclaimer footer (no separate "education only" footer, no yellow block). Links styled in neutral gray; black is avoided in favor of #19235d for headings where applicable.
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `daily_auth_fetch_start`, `daily_auth_fetch_page`, `daily_auth_fetch_page_emails` (debug), `daily_auth_fetch_done`
   - Send: `daily_auth_emails` (full CSV), `daily_send_batch`, `daily_completed`
