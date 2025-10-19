@@ -1312,20 +1312,28 @@ class EmailService:
         # Outer background wrapper (single body, multiple cards)
         html = f"""
 <!doctype html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FxLabs Prime • RSI Alert</title>
 </head>
-<body style=\"margin:0;background:#F5F7FB;\">\n
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI', self.tz_name)}\n{cards_html}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr>            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;\">\n              FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>.
-                "FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>."
-            )
-            .replace(
-                "font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;",
-                "font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;"
-            )
-        )
+<body style="margin:0;background:#F5F7FB;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FB;">
+<tr><td align="center" style="padding:24px 12px;">
+{self._build_common_header('RSI', self.tz_name)}
+{cards_html}
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+  <tr>
+    <td style="padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;">
+      FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href="https://fxlabsprime.com/terms-of-service" style="color:#6B7280;text-decoration:underline;">Terms</a> &amp; <a href="https://fxlabsprime.com/privacy-policy" style="color:#6B7280;text-decoration:underline;">Privacy Policy</a>.
+    </td>
+  </tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+"""
 
         # Remove the extra yellow disclaimer block entirely (keep only single gray footer)
         html = html.replace(
