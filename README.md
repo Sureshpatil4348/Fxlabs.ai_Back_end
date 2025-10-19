@@ -284,6 +284,10 @@ HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
 - Uses the tenant-specific SendGrid configuration (`FXLABS_*` or `HEXTECH_*`).
 - Runs daily at a configurable local time via `daily_mail_scheduler()`.
 - **News Filtering**: Only high-impact news is included in the daily brief. If no high-impact news is scheduled for the day, a message indicates this instead of leaving the section blank.
+- **Bias Color Coding**: News bias in the daily brief is displayed with color coding for better visual clarity:
+  - **Bullish bias**: Displayed in green (`#10B981`)
+  - **Bearish bias**: Displayed in red (`#EF4444`) 
+  - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
 - Configure timezone and send time using env vars:
 
 ```env
@@ -319,6 +323,10 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 #### News Reminder Behavior (High‑Impact Only)
 - The 5‑minute news reminder filters to only source‑reported high‑impact items (`impact == "high"` from the upstream API). Medium/low impact items are skipped.
 - Impact is not AI‑derived for reminders or display; it mirrors the upstream field.
+- **Bias Color Coding**: News bias is displayed with color coding for better visual clarity:
+  - **Bullish bias**: Displayed in green (`#10B981`)
+  - **Bearish bias**: Displayed in red (`#EF4444`) 
+  - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
 - Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
 
 #### Auth Fetch Logging (Verbose)
