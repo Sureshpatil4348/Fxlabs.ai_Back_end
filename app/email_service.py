@@ -1828,27 +1828,27 @@ class EmailService:
         else:
             # Build oversold column
             if rsi_oversold:
-                oversold_items = "".join([f'<div style="padding:4px 0;"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_oversold])
+                oversold_items = "".join([f'<div style="padding:4px 0;font-size:12px;">{esc(x.get("pair",""))} • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_oversold])
                 oversold_column = f"""
-                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
+                  <div style="font-size:13px;font-weight:700;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
                   {oversold_items}
                 """
             else:
                 oversold_column = """
-                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
+                  <div style="font-size:13px;font-weight:700;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
                   <div style="padding:4px 0;color:#9CA3AF;">No pairs</div>
                 """
             
             # Build overbought column
             if rsi_overbought:
-                overbought_items = "".join([f'<div style="padding:4px 0;"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_overbought])
+                overbought_items = "".join([f'<div style="padding:4px 0;font-size:12px;">{esc(x.get("pair",""))} • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_overbought])
                 overbought_column = f"""
-                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
+                  <div style="font-size:13px;font-weight:700;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
                   {overbought_items}
                 """
             else:
                 overbought_column = """
-                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
+                  <div style="font-size:13px;font-weight:700;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
                   <div style="padding:4px 0;color:#9CA3AF;">No pairs</div>
                 """
             
