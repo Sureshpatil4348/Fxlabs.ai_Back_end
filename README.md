@@ -528,6 +528,7 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 - Auth: `Authorization: Bearer {DEBUG_API_TOKEN}` (debug bearer token from `.env`, env var name: `DEBUG_API_TOKEN`; applies to all `/api/debug/*`)
 - Supported `type` values: `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`
   - Aliases: `quantum`, `tracker`, `quantum_tracker` → `heatmap_tracker`; `correlation` → `rsi_correlation`; `cs` → `currency_strength`
+ - Recipient validation: all domains are allowed. Invalid email format returns `400 {"detail":"invalid_recipient"}`. Exceeding the per‑token debug rate returns `429 {"detail":"rate_limited"}`.
   
 Example:
 ```bash

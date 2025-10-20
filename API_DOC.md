@@ -185,6 +185,8 @@ This document describes how the frontend should consume market data and indicato
       -H "Authorization: Bearer $DEBUG_API_TOKEN" \
       "http://localhost:8000/api/debug/email/send?type=rsi&to=user@gmail.com"
     ```
+  - Notes:
+    - All recipient domains are allowed; only email format is validated. Invalid format returns `400 {"detail":"invalid_recipient"}`. Debug sends are rate‑limited per token.
   - Response example:
     ```json
     {"type":"rsi","to":"user@gmail.com","sent":true,"detail":{"pairs":2}}

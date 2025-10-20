@@ -569,7 +569,7 @@ def _ws_is_authorized(websocket: WebSocket) -> bool:
         return False if API_TOKEN else True
 
 def validate_test_email_recipient(email: str) -> bool:
-    """Validate that email recipient is allowed"""
+    """Validate basic email format only; allow all domains."""
     if not email or not isinstance(email, str):
         return False
     
@@ -577,12 +577,9 @@ def validate_test_email_recipient(email: str) -> bool:
     email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     if not re.match(email_pattern, email):
         return False
-    
-    # Extract domain
-    domain = email.split('@')[1].lower()
-    
-    # Check if domain is allowed
-    return domain in ALLOWED_EMAIL_DOMAINS
+
+    # All domains allowed (no allowlist)
+    return True
 
     # (helpers removed; using app.mt5_utils for OHLC conversion, fetch, caching, and scheduling)
 
