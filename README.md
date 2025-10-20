@@ -289,7 +289,7 @@ HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
   - **Bearish bias**: Displayed in red (`#EF4444`) 
   - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
 - **Signal Summary Badges**: BUY badges are always green (`#0CCC7C`), SELL badges are always red (`#E5494D`) for clear visual distinction.
-- **H4 Overbought/Oversold Layout**: Rendered in two columns (Oversold on the left, Overbought on the right) using table-based columns for robust email client compatibility; stacks to a single column on narrow/mobile screens.
+- **H4 Overbought/Oversold Layout**: Rendered in two fixed columns (Oversold left, Overbought right) using table-based columns so they remain side-by-side across clients, including mobile.
 - **Brand Text Color**: Primary text color inside the daily brief is updated to `#19235d` instead of near-black for consistency with brand guidelines.
 - Configure timezone and send time using env vars:
 

@@ -284,7 +284,7 @@ Automated daily email to all users at a configurable local time
   - News: filters `global_news_cache` for items with IST date == today and impact in {high, medium}
 - Template: Responsive table layout with three main sections:
   - Signal Summary: Core pairs with badges (BUY=#0CCC7C, SELL=#E5494D) and probability
-  - H4 Overbought/Oversold: Two-column table layout (Oversold left, Overbought right) with RSI values; stacks to a single column on mobile. Shows a centered empty state when none found
+  - H4 Overbought/Oversold: Two-column table layout (Oversold left, Overbought right) with RSI values; layout stays side-by-side even on mobile. Shows a centered empty state when none found
   - Today's High-Impact News: Compact news table with event details; each row includes the event's `currency` (e.g., `[GBP]`)
   - Footer: A single gray disclaimer footer (no separate "education only" footer, no yellow block). Links styled in neutral gray; primary text uses brand-dark `#19235d` instead of near-black.
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
