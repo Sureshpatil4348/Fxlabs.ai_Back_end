@@ -179,6 +179,8 @@ This document describes how the frontend should consume market data and indicato
     - `type` (string, required): one of `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`.
       - Aliases: `quantum`, `tracker`, `quantum_tracker` → `heatmap_tracker`; `correlation` → `rsi_correlation`; `cs` → `currency_strength`.
     - `to` (string, required): recipient email address.
+  - Behavior:
+    - Returns HTTP 200 with a JSON body that includes `sent: true|false`. A value of `false` indicates the provider rejected the send (e.g., SendGrid 400/403). The endpoint does not mirror the provider's HTTP status.
   - Curl example:
     ```bash
     curl -X POST \

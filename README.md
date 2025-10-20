@@ -529,6 +529,7 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 - Supported `type` values: `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`
   - Aliases: `quantum`, `tracker`, `quantum_tracker` → `heatmap_tracker`; `correlation` → `rsi_correlation`; `cs` → `currency_strength`
  - Recipient validation: all domains are allowed. Invalid email format returns `400 {"detail":"invalid_recipient"}`. Exceeding the per‑token debug rate returns `429 {"detail":"rate_limited"}`.
+ - Response semantics: endpoint returns HTTP 200 and includes `sent: true|false` in the JSON response. If your provider (e.g., SendGrid) rejects the request (400/403), the endpoint still returns 200 with `sent: false` and logs the provider error.
   
 Example:
 ```bash
@@ -1459,6 +1460,7 @@ Expected logs when working:
   - Region mismatch: EU-only accounts must use the EU endpoint; ensure your environment uses the correct SendGrid region (contact SendGrid if unsure).
 - Why intermittent? Different processes or shells might pick up different env files. Ensure you set the tenant-specific variables (`FXLABS_*` for FxLabs Prime or `HEXTECH_*` for HexTech) in the active environment for that process. No code defaults are used.
 - What we log now (for failures): status, a trimmed response body, masked API key, and `from/to` addresses to speed up diagnosis without leaking secrets.
+  - Enhanced: also logs selected response headers (e.g., `X-Message-Id`, `X-Request-Id`), parses SendGrid JSON `errors[]` to surface `code`, `field`, `message`, `help`, and prints a minimal mail preview (subject, recipient, text/html lengths).
 - Quick checklist:
   - Confirm your env defines tenant-specific keys: for FxLabs Prime use `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL`, `FXLABS_FROM_NAME`; for HexTech use `HEXTECH_SENDGRID_API_KEY`, `HEXTECH_FROM_EMAIL`, `HEXTECH_FROM_NAME`.
   - Verify the sender identity in SendGrid (Single Sender) or authenticate the `fxlabsprime.com` domain.

@@ -644,14 +644,28 @@ class EmailService:
         except Exception:
             pass
 
-        # Log response body (trimmed)
+        # Log response body (trimmed) and attempt to parse JSON errors
         try:
             if body:
                 if isinstance(body, (bytes, bytearray)):
-                    preview = body[:512].decode(errors="ignore")
+                    raw_text = body.decode(errors="ignore")
                 else:
-                    preview = str(body)[:512]
+                    raw_text = str(body)
+                preview = (raw_text or "")[:1024]
                 logger.error("   SendGrid response body (trimmed): %s", preview)
+                # Try to parse SendGrid JSON error format
+                try:
+                    j = json.loads(raw_text)
+                    errs = j.get("errors") if isinstance(j, dict) else None
+                    if isinstance(errs, list) and errs:
+                        for idx, er in enumerate(errs, 1):
+                            msg = (er or {}).get("message")
+                            field = (er or {}).get("field")
+                            help_url = (er or {}).get("help")
+                            code = (er or {}).get("code")
+                            logger.error("   [%d] SG error | code=%s field=%s msg=%s help=%s", idx, code or "-", field or "-", msg or "-", help_url or "-")
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -686,6 +700,68 @@ class EmailService:
                 "   Hint: configure tenant-specific email credentials (%s, %s, %s). No global defaults are used.",
                 exp_key, exp_from_email, exp_from_name,
             )
+        except Exception:
+            pass
+
+    def _log_mail_preview(self, context: str, subject: str, to_email: str, html_body: Optional[str], text_body: Optional[str]) -> None:
+        """Log a minimal, sanitized preview of the message being sent."""
+        try:
+            html_len = len(html_body or "")
+            text_len = len(text_body or "")
+            # Preview first 128 chars of text only (safer than HTML)
+            text_preview = (text_body or "")[:128].replace("\n", " ")
+            logger.info(
+                "   Mail preview | ctx=%s subject=%s to=%s text_len=%d html_len=%d text_preview=%s",
+                context,
+                (subject or "").strip()[:140],
+                (to_email or "").strip(),
+                text_len,
+                html_len,
+                text_preview,
+            )
+        except Exception:
+            pass
+
+    def _log_sendgrid_response_details(self, context: str, response: Any, to_email: Optional[str] = None) -> None:
+        """Log structured details from a non-2xx SendGrid response."""
+        try:
+            status = getattr(response, "status_code", None)
+            headers = getattr(response, "headers", None)
+            masked_key = self._mask(self.sendgrid_api_key)
+            logger.error("   SendGrid response → status=%s, from=%s, to=%s, key=%s", status, self.from_email, (to_email or ""), masked_key)
+            # Selected headers preview
+            try:
+                hdrs = {}
+                if isinstance(headers, dict):
+                    for k in ["Date", "Server", "X-Message-Id", "X-Request-Id"]:
+                        v = headers.get(k) or headers.get(k.lower())
+                        if v:
+                            hdrs[k] = v
+                if hdrs:
+                    logger.error("   Headers: %s", hdrs)
+            except Exception:
+                pass
+            # Body/JSON handled similarly to exception path
+            try:
+                body = getattr(response, "body", None)
+                if body:
+                    txt = body.decode(errors="ignore") if isinstance(body, (bytes, bytearray)) else str(body)
+                    preview = (txt or "")[:1024]
+                    logger.error("   Body (trimmed): %s", preview)
+                    try:
+                        j = json.loads(txt)
+                        errs = j.get("errors") if isinstance(j, dict) else None
+                        if isinstance(errs, list) and errs:
+                            for idx, er in enumerate(errs, 1):
+                                msg = (er or {}).get("message")
+                                field = (er or {}).get("field")
+                                help_url = (er or {}).get("help")
+                                code = (er or {}).get("code")
+                                logger.error("   [%d] SG error | code=%s field=%s msg=%s help=%s", idx, code or "-", field or "-", msg or "-", help_url or "-")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         except Exception:
             pass
     
@@ -1992,9 +2068,25 @@ class EmailService:
                 logger.info(f"✅ Daily brief sent to {user_email}")
                 return True
             logger.error(f"❌ Failed to send daily brief: status={response.status_code}")
+            # Log provider response details and a minimal mail preview
+            try:
+                self._log_sendgrid_response_details(context="daily-brief", response=response, to_email=user_email)
+                self._log_mail_preview(context="daily-brief", subject=subject, to_email=user_email, html_body=html, text_body=text)
+            except Exception:
+                pass
             return False
         except Exception as e:
             logger.error(f"❌ Error sending daily brief: {e}")
+            # Emit structured diagnostics and a minimal mail preview
+            try:
+                self._log_sendgrid_exception(context="daily-brief", error=e, to_email=user_email)
+                self._log_mail_preview(context="daily-brief", subject=subject, to_email=user_email, html_body=html, text_body=text)
+                # Also include configuration diagnostics to aid triage
+                diag_text = self.get_config_diagnostics_text()
+                if diag_text:
+                    logger.warning("   Email config diagnostics: %s", diag_text)
+            except Exception:
+                pass
             return False
 
     def _build_currency_strength_email_body(
