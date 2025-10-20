@@ -1102,7 +1102,11 @@ class EmailService:
             .replace('color: #856404', 'color:#6B7280')
             .replace('margin: 0; font-size: 11px; color: #856404; line-height: 1.6;', 'margin:0;color:#6B7280;')
         )
-        return html
+        # Enforce brand text color: replace near-black with #19235d for this template
+        try:
+            return html.replace("color:#111827;", "color:#19235d;")
+        except Exception:
+            return html
 
     def _build_plain_text_heatmap_tracker(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
         lines = [
@@ -1884,7 +1888,14 @@ class EmailService:
             signal = esc(s.get("signal", ""))
             probability = esc(s.get("probability", ""))
             tf = esc(s.get("tf", ""))
-            badge_bg = esc(s.get("badge_bg", "#6B7280"))
+            # Enforce badge colors: BUY → green, SELL → red; otherwise allow provided fallback
+            sig_upper = (signal or "").strip().upper()
+            if sig_upper == "BUY":
+                badge_bg = "#0CCC7C"
+            elif sig_upper == "SELL":
+                badge_bg = "#E5494D"
+            else:
+                badge_bg = esc(s.get("badge_bg", "#6B7280"))
             rows.append(f"""
                 <tr>
                   <td style=\"padding:10px 8px;border-top:1px solid #F1F5F9;\">{pair}</td>
@@ -1911,48 +1922,38 @@ class EmailService:
                 </tr>
             """
         else:
-            # Build oversold column
+            # Build oversold column (use nested table for robust email rendering)
             if rsi_oversold:
-                oversold_items = "".join([f'<div style="padding:4px 0;font-size:12px;">{esc(x.get("pair",""))} • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_oversold])
+                oversold_rows = "".join([
+                    f'<tr><td style="padding:4px 0;font-size:12px;">{esc(x.get("pair",""))} • RSI {esc(x.get("rsi",""))}</td></tr>'
+                    for x in rsi_oversold
+                ])
                 oversold_column = f"""
-                  <div style="font-size:13px;font-weight:700;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
-                  {oversold_items}
+                  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n                    <tr><td style=\"font-size:13px;font-weight:700;color:#6B7280;padding-bottom:6px;\">Oversold (≤30)</td></tr>\n                    {oversold_rows}\n                  </table>
                 """
             else:
                 oversold_column = """
-                  <div style="font-size:13px;font-weight:700;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
-                  <div style="padding:4px 0;color:#9CA3AF;">No pairs</div>
+                  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n                    <tr><td style=\"font-size:13px;font-weight:700;color:#6B7280;padding-bottom:6px;\">Oversold (≤30)</td></tr>\n                    <tr><td style=\"padding:4px 0;color:#9CA3AF;\">No pairs</td></tr>\n                  </table>
                 """
-            
-            # Build overbought column
+
+            # Build overbought column (use nested table for robust email rendering)
             if rsi_overbought:
-                overbought_items = "".join([f'<div style="padding:4px 0;font-size:12px;">{esc(x.get("pair",""))} • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_overbought])
+                overbought_rows = "".join([
+                    f'<tr><td style="padding:4px 0;font-size:12px;">{esc(x.get("pair",""))} • RSI {esc(x.get("rsi",""))}</td></tr>'
+                    for x in rsi_overbought
+                ])
                 overbought_column = f"""
-                  <div style="font-size:13px;font-weight:700;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
-                  {overbought_items}
+                  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n                    <tr><td style=\"font-size:13px;font-weight:700;color:#6B7280;padding-bottom:6px;\">Overbought (≥70)</td></tr>\n                    {overbought_rows}\n                  </table>
                 """
             else:
                 overbought_column = """
-                  <div style="font-size:13px;font-weight:700;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
-                  <div style="padding:4px 0;color:#9CA3AF;">No pairs</div>
+                  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n                    <tr><td style=\"font-size:13px;font-weight:700;color:#6B7280;padding-bottom:6px;\">Overbought (≥70)</td></tr>\n                    <tr><td style=\"padding:4px 0;color:#9CA3AF;\">No pairs</td></tr>\n                  </table>
                 """
-            
-            # Two column layout with responsive design
+
+            # Two column layout with responsive design (explicit width attributes for email clients)
             h4_html = f"""
                 <tr>
-                  <td style="padding:12px;">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-                      <tr>
-                        <td class="stack" style="width:50%;padding-right:8px;vertical-align:top;border-right:1px solid #E5E7EB;">
-                          {oversold_column}
-                        </td>
-                        <td class="stack" style="width:50%;padding-left:8px;vertical-align:top;">
-                          {overbought_column}
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
+                  <td style=\"padding:12px;\">\n                    <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n                      <tr>\n                        <td class=\"stack\" width=\"50%\" valign=\"top\" style=\"padding:12px 8px;border-right:1px solid #E5E7EB;\">\n                          {oversold_column}\n                        </td>\n                        <td class=\"stack\" width=\"50%\" valign=\"top\" style=\"padding:12px 8px;\">\n                          {overbought_column}\n                        </td>\n                      </tr>\n                    </table>\n                  </td>\n                </tr>
             """
 
         # News rows

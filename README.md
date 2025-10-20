@@ -288,6 +288,9 @@ HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
   - **Bullish bias**: Displayed in green (`#10B981`)
   - **Bearish bias**: Displayed in red (`#EF4444`) 
   - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
+- **Signal Summary Badges**: BUY badges are always green (`#0CCC7C`), SELL badges are always red (`#E5494D`) for clear visual distinction.
+- **H4 Overbought/Oversold Layout**: Rendered in two columns (Oversold on the left, Overbought on the right) using table-based columns for robust email client compatibility; stacks to a single column on narrow/mobile screens.
+- **Brand Text Color**: Primary text color inside the daily brief is updated to `#19235d` instead of near-black for consistency with brand guidelines.
 - Configure timezone and send time using env vars:
 
 ```env
@@ -310,7 +313,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 - Disclaimer footer styling is now unified with other emails (neutral, accessible colors), removing the previous yellow/warning palette.
 - Container: `background: #F9FAFB`, `border: 1px solid #E5E7EB`
 - Text and links: `#6B7280` with underlines for links
-- Brand note: avoid pure black; when needed prefer `#19235d` for brand-dark over `black/#000`.
+- Brand note: avoid pure black; use `#19235d` for brand-dark instead of `black/#000` or near-black.
 
 #### Daily Brief Duplicate Prevention
 - **Date Tracking**: Each scheduler instance tracks the last sent date to prevent duplicate emails on the same day
