@@ -174,9 +174,7 @@ This document describes how the frontend should consume market data and indicato
 
 - `POST /api/debug/email/send?type={type}&to={email}`
   - Sends a debug email with random content for the specified template type to the given address.
-  - Auth: `Authorization: Bearer {API_TOKEN}` (from `.env`).
-  - Recipient safety: only domains in `ALLOWED_EMAIL_DOMAINS` env var are allowed (default: `gmail.com,yahoo.com,outlook.com,hotmail.com`).
-  - Rate limit: 5 requests/hour per bearer token.
+  - Auth: `Authorization: Bearer {API_TOKEN}` (common token from `.env`, env var name: `API_TOKEN`).
   - Query params:
     - `type` (string, required): one of `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`.
       - Aliases: `quantum`, `tracker`, `quantum_tracker` → `heatmap_tracker`; `correlation` → `rsi_correlation`; `cs` → `currency_strength`.

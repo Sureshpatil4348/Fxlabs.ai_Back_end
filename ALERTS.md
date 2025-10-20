@@ -32,10 +32,8 @@
 
 **Debug Email Testing**
 - Endpoint: `POST /api/debug/email/send?type={type}&to={email}`
-  - Auth: `Authorization: Bearer {API_TOKEN}` (from `.env`)
+  - Auth: `Authorization: Bearer {API_TOKEN}` (common token from `.env`, env var name: `API_TOKEN`)
   - Allowed types: `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`
-  - Recipient safety: Only domains in `ALLOWED_EMAIL_DOMAINS` are accepted (default includes gmail.com, yahoo.com, outlook.com, hotmail.com)
-  - Rate limit: 5/hour per bearer token
   - Sends a template-accurate email populated with random but plausible values for quick verification.
 
 **Simplified Scope (Current Support)**

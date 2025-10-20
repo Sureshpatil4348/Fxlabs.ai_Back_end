@@ -525,9 +525,7 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 #### Debug Email Endpoint
 
 - Path: `/api/debug/email/send?type={type}&to={email}`
-- Auth: `Authorization: Bearer {API_TOKEN}` (from `.env`)
-- Safety: recipient domain must be in `ALLOWED_EMAIL_DOMAINS` (default includes gmail.com, yahoo.com, outlook.com, hotmail.com)
-- Rate limit: 5/hour per bearer token
+- Auth: `Authorization: Bearer {API_TOKEN}` (common bearer token from `.env`, env var name: `API_TOKEN`)
 - Supported `type` values: `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`
   - Aliases: `quantum`, `tracker`, `quantum_tracker` → `heatmap_tracker`; `correlation` → `rsi_correlation`; `cs` → `currency_strength`
   
