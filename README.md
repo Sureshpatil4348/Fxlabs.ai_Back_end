@@ -1388,6 +1388,11 @@ For support and questions:
 **Compatibility**: Python 3.8+, MT5 Python API, FastAPI 0.100+
 
 ## 🛠️ Troubleshooting
+### Heatmap tracker email fails: name 'html' is not defined
+- Symptom: Logs show `❌ Error sending heatmap tracker alert email: name 'html' is not defined`.
+- Root cause: An internal helper `_pair_display()` erroneously referenced an undefined variable and lacked HTML escaping.
+- Fixed: Update to the latest code. The helper now formats symbols safely (e.g., `EURUSD` → `EUR/USD`) and escapes output for email templates.
+
 ### SyntaxError at server.py:808 "try:" on startup (Windows)
 - Symptom: Startup fails with a traceback pointing to `server.py` around line ~808 with `try:` highlighted.
 - Cause: A nested `try` block was placed inside an `except` in the indicator scheduler, which could lead to parser confusion and brittle indentation handling in some environments.

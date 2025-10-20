@@ -339,6 +339,11 @@ Additionally:
   - Heatmap Tracker: `style`, `buy_threshold`, `sell_threshold`, `pairs`
   - Indicator Tracker: `indicator`, `tf`, `pairs`
 
+**Troubleshooting: `name 'html' is not defined` when sending Heatmap Tracker email**
+- Symptom: `❌ Error sending heatmap tracker alert email: name 'html' is not defined`.
+- Cause: Legacy `_pair_display()` used an undefined variable; triggered when formatting symbol names for email.
+- Fix: Update to the latest code. `_pair_display()` is corrected and now safely escapes output used in HTML emails.
+
 ### REST: Alerts by Category
 
 - Endpoint: `GET /api/alerts/by-category`

@@ -10,6 +10,7 @@ from threading import RLock
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from decimal import Decimal, ROUND_HALF_UP
+import html as html_lib
 try:
     from sendgrid import SendGridAPIClient
     from sendgrid.helpers.mail import (
@@ -177,17 +178,18 @@ class EmailService:
 
         Non-breaking: only affects presentation; does not alter underlying symbols.
         """
-        return html
-        return html
         raw = self._unsuffix_symbol(symbol)
         try:
             if len(raw) >= 6:
                 base = raw[:3]
                 quote = raw[3:6]
-                return f"{base}/{quote}"
-            return raw
+                display = f"{base}/{quote}"
+            else:
+                display = raw
+            # Escape for safe HTML/text contexts
+            return html_lib.escape(str(display))
         except Exception:
-            return raw
+            return html_lib.escape(str(raw))
 
     def _zoneinfo_or_fallback(self, tz_name: str):
         """Return tzinfo for tz_name. Fallback to fixed IST or UTC when ZoneInfo is unavailable."""
