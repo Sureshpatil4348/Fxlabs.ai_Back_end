@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Set, Tuple, Any
 import re
 import time
 import random
+import hashlib
 
 try:
     import MetaTrader5 as mt5
@@ -452,10 +453,36 @@ def require_debug_bearer_token(authorization: Optional[str] = Header(default=Non
     Returns provided token on success; raises 401 with explicit reason otherwise.
     """
     expected = (DEBUG_API_TOKEN or "").strip()
+    logger = logging.getLogger("auth.debug")
+
+    def _mask_token(s: str) -> str:
+        try:
+            if not s:
+                return "<empty>"
+            n = len(s)
+            head = s[:4]
+            tail = s[-4:] if n > 8 else ""
+            return f"{head}...{tail} (len={n})"
+        except Exception:
+            return "<unprintable>"
+
+    def _fp(s: str) -> str:
+        try:
+            return hashlib.blake2b(s.encode("utf-8"), digest_size=8).hexdigest()
+        except Exception:
+            return "na"
     if not expected:
+        logger.warning(
+            "auth.debug unauthorized | reason=debug_token_not_configured"
+        )
         raise HTTPException(status_code=401, detail={"error": "debug_token_not_configured"})
 
     if authorization is None:
+        logger.warning(
+            "auth.debug unauthorized | reason=missing_authorization_header | expected_fp=%s expected_mask=%s",
+            _fp(expected),
+            _mask_token(expected),
+        )
         raise HTTPException(
             status_code=401,
             detail={
@@ -464,10 +491,19 @@ def require_debug_bearer_token(authorization: Optional[str] = Header(default=Non
             },
         )
     if not isinstance(authorization, str):
+        logger.warning(
+            "auth.debug unauthorized | reason=invalid_authorization_type | expected_fp=%s",
+            _fp(expected),
+        )
         raise HTTPException(status_code=401, detail={"error": "invalid_authorization_type"})
 
     parts = authorization.strip().split(" ", 1)
     if len(parts) != 2:
+        logger.warning(
+            "auth.debug unauthorized | reason=invalid_authorization_format | header_preview=%s | expected_fp=%s",
+            authorization[:24] + ("…" if len(authorization) > 24 else ""),
+            _fp(expected),
+        )
         raise HTTPException(
             status_code=401,
             detail={
@@ -477,13 +513,29 @@ def require_debug_bearer_token(authorization: Optional[str] = Header(default=Non
         )
     scheme, token = parts[0], parts[1].strip()
     if scheme.lower() != "bearer":
+        logger.warning(
+            "auth.debug unauthorized | reason=invalid_authorization_scheme | scheme=%s | expected=Bearer | expected_fp=%s",
+            scheme,
+            _fp(expected),
+        )
         raise HTTPException(
             status_code=401,
             detail={"error": "invalid_authorization_scheme", "expected": "Bearer"},
         )
     if not token:
+        logger.warning(
+            "auth.debug unauthorized | reason=missing_token | expected_fp=%s",
+            _fp(expected),
+        )
         raise HTTPException(status_code=401, detail={"error": "missing_token"})
     if token != expected:
+        logger.warning(
+            "auth.debug unauthorized | reason=invalid_token | expected_fp=%s expected_mask=%s | received_fp=%s received_mask=%s",
+            _fp(expected),
+            _mask_token(expected),
+            _fp(token),
+            _mask_token(token),
+        )
         raise HTTPException(status_code=401, detail={"error": "invalid_token"})
     return token
 
