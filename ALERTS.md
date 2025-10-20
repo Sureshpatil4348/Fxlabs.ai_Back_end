@@ -30,6 +30,14 @@
  - To reduce noise, non‑critical diagnostics (e.g., `alert_eval_config`, `alert_eval_start/end`, no‑trigger reasons) are gated behind `ALERT_VERBOSE_LOGS` (default: `false`). Set `export ALERT_VERBOSE_LOGS=true` to see them during debugging.
 - Note on `🧭 liveRSI` debugging: when `LIVE_RSI_DEBUGGING=true`, logs are emitted by the indicator scheduler on each M1 closed bar using cache‑aligned RSI values (same source as alerts/WS). The previous helper `app.mt5_utils._maybe_log_live_rsi()` and boundary task have been removed to avoid duplicate math.
 
+**Debug Email Testing**
+- Endpoint: `POST /api/debug/email/send?type={type}&to={email}`
+  - Auth: `Authorization: Bearer {API_TOKEN}` (from `.env`)
+  - Allowed types: `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`
+  - Recipient safety: Only domains in `ALLOWED_EMAIL_DOMAINS` are accepted (default includes gmail.com, yahoo.com, outlook.com, hotmail.com)
+  - Rate limit: 5/hour per bearer token
+  - Sends a template-accurate email populated with random but plausible values for quick verification.
+
 **Simplified Scope (Current Support)**
 - RSI Tracker Alert (single per user)
   - Timeframe: choose exactly one (e.g., `5M`, `15M`, `30M`, `1H`, `4H`, `1D`, `1W`).

@@ -520,6 +520,22 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 | `/api/alerts/cache` | GET | In-memory alerts cache (RSI Tracker) | Yes |
 | `/api/alerts/by-category` | GET | Alerts grouped by category (type) | Yes |
 | `/api/alerts/refresh` | POST | Force refresh alerts cache | Yes |
+| `/api/debug/email/send` | POST | Send a debug email with random content for a given template | Yes (Bearer) |
+
+#### Debug Email Endpoint
+
+- Path: `/api/debug/email/send?type={type}&to={email}`
+- Auth: `Authorization: Bearer {API_TOKEN}` (from `.env`)
+- Safety: recipient domain must be in `ALLOWED_EMAIL_DOMAINS` (default includes gmail.com, yahoo.com, outlook.com, hotmail.com)
+- Rate limit: 5/hour per bearer token
+- Supported `type` values: `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`
+  - Aliases: `quantum`, `tracker`, `quantum_tracker` → `heatmap_tracker`; `correlation` → `rsi_correlation`; `cs` → `currency_strength`
+  
+Example:
+```bash
+curl -X POST -H "Authorization: Bearer $API_TOKEN" \
+  "http://localhost:8000/api/debug/email/send?type=rsi&to=user@gmail.com"
+```
 
 ### RSI Tracker Alert — Closed‑bar Crossing
 

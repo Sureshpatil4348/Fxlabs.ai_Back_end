@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Tuple, Any
 import re
 import time
+import random
 
 try:
     import MetaTrader5 as mt5
@@ -19,7 +20,7 @@ except ImportError:
 import orjson
 import logging
 from app.logging_config import configure_logging
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Header
 from starlette.websockets import WebSocketState
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -443,6 +444,23 @@ def require_api_token_header(x_api_key: Optional[str] = None):
     # For REST: expect header "X-API-Key"
     if API_TOKEN and x_api_key != API_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
+
+def require_bearer_token_header(authorization: Optional[str] = Header(default=None)) -> Optional[str]:
+    """Require Authorization: Bearer <API_TOKEN> when API_TOKEN is configured.
+
+    Returns the token string when present (useful for rate limiting keys).
+    """
+    if not API_TOKEN:
+        return None
+    if not authorization or not isinstance(authorization, str):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    parts = authorization.strip().split(" ", 1)
+    if len(parts) != 2 or parts[0].lower() != "bearer":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = parts[1].strip()
+    if token != API_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return token
 
 """Unsubscribe feature removed per spec: no unsubscribe token validation."""
 
@@ -1375,6 +1393,212 @@ async def refresh_alerts_manual(x_api_key: Optional[str] = Depends(require_api_t
     """Manually trigger alert cache refresh (for testing)"""
     await alert_cache._refresh_cache()
     return {"message": "Alert cache refresh triggered", "status": "success"}
+
+# Debug email sender — secured with Authorization: Bearer <API_TOKEN>
+@app.post("/api/debug/email/send")
+async def debug_send_email(
+    mail_type: str = Query(..., alias="type", description="Email type: rsi|heatmap|heatmap_tracker|custom_indicator|rsi_correlation|news_reminder|daily_brief|currency_strength|test"),
+    to: str = Query(..., description="Recipient email address"),
+    bearer_token: Optional[str] = Depends(require_bearer_token_header),
+):
+    # Validate recipient domain for safety
+    if not validate_test_email_recipient(to):
+        raise HTTPException(status_code=400, detail="invalid_recipient")
+
+    # Rate limit per bearer token (5/hour) to avoid abuse
+    rate_key = bearer_token or "anon"
+    if not check_test_email_rate_limit(rate_key):
+        raise HTTPException(status_code=429, detail="rate_limited")
+
+    # Normalize mail type and define allowed set
+    t = (mail_type or "").strip().lower()
+    # Map common aliases
+    aliases = {
+        "quantum": "heatmap_tracker",
+        "tracker": "heatmap_tracker",
+        "quantum_tracker": "heatmap_tracker",
+        "correlation": "rsi_correlation",
+        "cs": "currency_strength",
+    }
+    t = aliases.get(t, t)
+    allowed = {
+        "rsi",
+        "heatmap",
+        "heatmap_tracker",
+        "custom_indicator",
+        "rsi_correlation",
+        "news_reminder",
+        "daily_brief",
+        "currency_strength",
+        "test",
+    }
+    if t not in allowed:
+        raise HTTPException(status_code=400, detail={"error": "unknown_type", "allowed": sorted(list(allowed))})
+
+    # Sample data factories
+    def sample_symbols(n: int = 2) -> List[str]:
+        try:
+            pool = list(ALLOWED_WS_SYMBOLS)
+            if not pool:
+                raise Exception()
+        except Exception:
+            pool = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+        random.shuffle(pool)
+        return pool[: max(1, n)]
+
+    def sample_tf() -> str:
+        try:
+            return random.choice([tf.value for tf in _rollout_timeframes()])
+        except Exception:
+            return "5M"
+
+    def sample_indicators(k: int = 3) -> List[str]:
+        base = ["EMA21", "EMA50", "EMA200", "MACD", "RSI", "UTBOT", "ICHIMOKU"]
+        random.shuffle(base)
+        return base[:k]
+
+    # Dispatch per email type with random payloads
+    ok = False
+    detail: Dict[str, Any] = {}
+    try:
+        if t == "test":
+            ok = await email_service.send_test_email(to)
+        elif t == "rsi":
+            pairs = []
+            for sym in sample_symbols(random.randint(1, 2)):
+                pairs.append({
+                    "symbol": sym,
+                    "timeframe": sample_tf(),
+                    "rsi_value": round(random.uniform(10, 90), 1),
+                    "current_price": round(random.uniform(0.5, 30000.0), 5),
+                    "trigger_condition": random.choice(["overbought", "oversold"]),
+                })
+            cfg = {
+                "rsi_overbought_threshold": 70,
+                "rsi_oversold_threshold": 30,
+            }
+            ok = await email_service.send_rsi_alert(to, f"RSI Debug #{random.randint(1000,9999)}", pairs, cfg)
+            detail = {"pairs": len(pairs)}
+        elif t == "heatmap":
+            pairs = []
+            for sym in sample_symbols(random.randint(1, 3)):
+                pairs.append({
+                    "symbol": sym,
+                    "strength": round(random.uniform(0, 100), 1),
+                    "signal": random.choice(["BUY", "SELL", "NEUTRAL"]),
+                    "timeframe": sample_tf(),
+                })
+            cfg = {
+                "trading_style": random.choice(["scalper", "swingtrader"]),
+                "buy_threshold_min": 70,
+                "buy_threshold_max": 100,
+                "sell_threshold_min": 0,
+                "sell_threshold_max": 30,
+                "selected_indicators": sample_indicators(3),
+            }
+            ok = await email_service.send_heatmap_alert(to, f"Heatmap Debug #{random.randint(1000,9999)}", pairs, cfg)
+            detail = {"pairs": len(pairs)}
+        elif t == "heatmap_tracker":
+            pairs = []
+            for sym in sample_symbols(random.randint(1, 3)):
+                cond = random.choice(["BUY", "SELL"])
+                buy_pct = round(random.uniform(60, 95), 2)
+                sell_pct = round(100 - buy_pct + random.uniform(-5, 5), 2)
+                pairs.append({
+                    "symbol": sym,
+                    "trigger_condition": cond,
+                    "buy_percent": buy_pct,
+                    "sell_percent": sell_pct,
+                    "final_score": round(random.uniform(10, 90), 2),
+                    "timeframe": random.choice(["style-weighted", sample_tf()]),
+                })
+            cfg = {
+                "selected_indicators": sample_indicators(4),
+                "buy_threshold": 70,
+                "sell_threshold": 30,
+            }
+            ok = await email_service.send_heatmap_tracker_alert(to, f"Quantum Debug #{random.randint(1000,9999)}", pairs, cfg)
+            detail = {"pairs": len(pairs)}
+        elif t == "custom_indicator":
+            pairs = []
+            for sym in sample_symbols(random.randint(1, 3)):
+                cond = random.choice(["BUY", "SELL"])
+                prob = round(random.uniform(55, 92), 2)
+                pairs.append({
+                    "symbol": sym,
+                    "timeframe": sample_tf(),
+                    "trigger_condition": cond,
+                    "buy_percent": prob if cond == "BUY" else None,
+                    "sell_percent": prob if cond == "SELL" else None,
+                })
+            cfg = {"selected_indicators": sample_indicators(3)}
+            ok = await email_service.send_custom_indicator_alert(to, f"Indicator Debug #{random.randint(1000,9999)}", pairs, cfg)
+            detail = {"pairs": len(pairs)}
+        elif t == "rsi_correlation":
+            pairs = []
+            for _ in range(random.randint(1, 2)):
+                s1, s2 = sample_symbols(2)
+                pairs.append({
+                    "symbol1": s1,
+                    "symbol2": s2,
+                    "timeframe": sample_tf(),
+                    "correlation_value": round(random.uniform(-1, 1), 2),
+                    "trigger_condition": random.choice(["strong_positive", "strong_negative", "weak_correlation", "correlation_break"]),
+                })
+            cfg = {
+                "strong_correlation_threshold": 0.70,
+                "moderate_correlation_threshold": 0.30,
+                "weak_correlation_threshold": 0.15,
+            }
+            ok = await email_service.send_rsi_correlation_alert(to, f"RSI Corr Debug #{random.randint(1000,9999)}", "real_correlation", pairs, cfg)
+            detail = {"pairs": len(pairs)}
+        elif t == "news_reminder":
+            ok = await email_service.send_news_reminder(
+                to,
+                event_title="CPI YoY",
+                event_time_local=f"{datetime.now().strftime('%Y-%m-%d %H:%M')} IST",
+                currency=random.choice(["USD", "EUR", "GBP", "JPY"]),
+                impact=random.choice(["High", "Medium"]),
+                previous=f"{round(random.uniform(1.0, 6.0), 1)}%",
+                forecast=f"{round(random.uniform(1.0, 6.0), 1)}%",
+                expected=f"{round(random.uniform(1.0, 6.0), 1)}%",
+                bias=random.choice(["bullish", "bearish", "neutral"]),
+            )
+        elif t == "daily_brief":
+            payload = {
+                "date_local": datetime.now().strftime("%Y-%m-%d"),
+                "time_label": "IST",
+                "core_signals": [
+                    {"pair": s, "signal": random.choice(["BUY", "SELL"]), "probability": round(random.uniform(55, 90), 1), "tf": sample_tf(), "badge_bg": "#19235d"}
+                    for s in sample_symbols(3)
+                ],
+                "rsi_oversold": [{"pair": s, "rsi": round(random.uniform(10, 25), 1)} for s in sample_symbols(2)],
+                "rsi_overbought": [{"pair": s, "rsi": round(random.uniform(75, 90), 1)} for s in sample_symbols(2)],
+                "news": [
+                    {"title": "CPI YoY", "time_local": "09:00 IST", "currency": "USD", "expected": "2.1%", "forecast": "2.2%", "bias": random.choice(["bullish", "bearish"])},
+                ],
+            }
+            ok = await email_service.send_daily_brief(to, payload)
+        elif t == "currency_strength":
+            timeframe = random.choice(["5M", "15M", "30M", "1H", "4H", "1D", "1W"])
+            strong = random.choice(["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"])
+            weak = random.choice([c for c in ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"] if c != strong])
+            ti = [
+                {"signal": "strongest", "symbol": strong, "strength": round(random.uniform(20, 80), 2)},
+                {"signal": "weakest", "symbol": weak, "strength": round(random.uniform(-80, -20), 2)},
+            ]
+            all_vals = {c: round(random.uniform(-100, 100), 2) for c in ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]}
+            prev = {"strongest": {"symbol": random.choice(list(all_vals.keys()))}, "weakest": {"symbol": random.choice(list(all_vals.keys()))}}
+            ok = await email_service.send_currency_strength_alert(to, f"Currency Strength Debug #{random.randint(1000,9999)}", timeframe, ti, prev_winners=prev, all_values=all_vals)
+            detail = {"timeframe": timeframe}
+        else:
+            raise HTTPException(status_code=400, detail="unhandled_type")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"type": t, "to": to, "sent": bool(ok), "detail": detail}
 
 """Heatmap/RSI/Correlation endpoints removed: using single RSI Tracker alert path."""
 
