@@ -1635,6 +1635,7 @@ async def debug_send_email(
             payload = {
                 "date_local": datetime.now().strftime("%Y-%m-%d"),
                 "time_label": "IST",
+                "tz_name": "Asia/Kolkata",
                 "core_signals": [
                     {"pair": s, "signal": random.choice(["BUY", "SELL"]), "probability": round(random.uniform(55, 90), 1), "tf": sample_tf(), "badge_bg": "#19235d"}
                     for s in sample_symbols(3)
