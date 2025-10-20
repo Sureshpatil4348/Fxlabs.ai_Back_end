@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # Core helpers and models
 from .models import Timeframe as TF
 from .mt5_utils import get_ohlc_data
+import asyncio
 from .indicator_cache import indicator_cache
 from .indicators import (
     rsi_series as ind_rsi_series,
@@ -79,7 +80,7 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
         if not mtf:
             continue
         try:
-            bars = get_ohlc_data(symbol, mtf, 300)
+            bars = await asyncio.to_thread(get_ohlc_data, symbol, mtf, 300)
             if not bars:
                 continue
             closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
@@ -341,5 +342,4 @@ async def compute_quantum_for_symbol(symbol: str) -> Dict[str, Any]:
         "overall": overall,
         "bar_times": bar_times,
     }
-
 

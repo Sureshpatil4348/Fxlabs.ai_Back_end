@@ -30,6 +30,12 @@
  - To reduce noise, non‑critical diagnostics (e.g., `alert_eval_config`, `alert_eval_start/end`, no‑trigger reasons) are gated behind `ALERT_VERBOSE_LOGS` (default: `false`). Set `export ALERT_VERBOSE_LOGS=true` to see them during debugging.
 - Note on `🧭 liveRSI` debugging: when `LIVE_RSI_DEBUGGING=true`, logs are emitted by the indicator scheduler on each M1 closed bar using cache‑aligned RSI values (same source as alerts/WS). The previous helper `app.mt5_utils._maybe_log_live_rsi()` and boundary task have been removed to avoid duplicate math.
 
+**Debug Email Testing**
+- Endpoint: `POST /api/debug/email/send?type={type}&to={email}`
+  - Auth: `Authorization: Bearer {DEBUG_API_TOKEN}` (debug token from `.env`, env var name: `DEBUG_API_TOKEN`; applies to all `/api/debug/*`)
+  - Allowed types: `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`
+  - Sends a template-accurate email populated with random but plausible values for quick verification.
+
 **Simplified Scope (Current Support)**
 - RSI Tracker Alert (single per user)
   - Timeframe: choose exactly one (e.g., `5M`, `15M`, `30M`, `1H`, `4H`, `1D`, `1W`).
@@ -96,9 +102,10 @@ Troubleshooting (Currency Strength)
   - Values are sourced from the single source of truth `indicator_cache` (populated by the indicator scheduler using broker OHLC). Closed‑bar only; warm‑up enforced. No per-alert recomputation.
 5) Trigger Logic
   - Crossing policy: Overbought (prev < OB and curr ≥ OB), Oversold (prev > OS and curr ≤ OS), evaluated on closed bars only.
-  - Threshold‑level re‑arm per side. No additional per-pair cooldown applied for RSI Tracker.
+ - Threshold‑level re‑arm per side. No additional per-pair cooldown applied for RSI Tracker.
 6) Alert Content
-  - Email Subject: `RSI Alert - <alert_name>`; includes per‑pair summary (zone, RSI value, price, IST time).
+  - Email Subject: `FxLabs Prime • RSI Alert - <alert_name>`; includes per‑pair summary (zone, RSI value, price, IST time).
+  - Price formatting: Prices are rendered up to 5 decimal places to eliminate float artifacts from broker feeds (e.g., `1.64309999999999` → `1.6431`). Trailing zeros are trimmed; no more than 5 decimals are shown.
 7) Example Config (JSON)
 ```json
 {
@@ -123,6 +130,30 @@ Troubleshooting (Currency Strength)
 ## Quantum Analysis (Heatmap) Tracker Alert
 
 Single per-user alert for the All-in-One/Quantum Analysis heatmap. Users select up to 3 currency pairs, a mode (trading style), and thresholds. When any selected pair’s Buy% or Sell% crosses its threshold, a trigger is recorded.
+
+Cooldown and post-cooldown behavior (per user × per pair)
+- Cooldown window: 4 hours from the moment an email is sent for that user+pair.
+- During cooldown: we do not evaluate that user+pair at all; a concise `heatmap_cd_skip` log is emitted with the cooldown-until timestamp and last trigger side.
+- After cooldown expires: if the next trigger would be the same side as the one that started the cooldown, we suppress it and only re-arm internally (log: `heatmap_cd_same_signal_suppress`). No email is sent. We resume sending once the first different-side trigger occurs (log: `heatmap_cd_start` when it fires and a new cooldown starts). This avoids repeat notifications for the same signal immediately after cooldown.
+- Scope: Cooldown is strictly per user × per pair and does not affect other pairs or other alert types.
+
+Example Scenarios (BTC/USD)
+- Scenario 1
+  - 7:00 Buy → send (start cooldown until 11:00)
+  - 7:05 Sell → ignore (in cooldown)
+  - 7:10 Buy → ignore (in cooldown)
+  - 10:55 Sell → ignore (in cooldown)
+  - 11:00 Buy → ignore (same as pre‑cooldown signal)
+- Scenario 2
+  - 7:00 Buy → send (start cooldown until 11:00)
+  - 11:00 Buy → ignore (same as pre‑cooldown signal)
+- Scenario 3
+  - 7:00 Buy → send (start cooldown until 11:00)
+  - 11:00 Buy → ignore (same as pre‑cooldown signal)
+  - 11:05 Sell → send (different from pre‑cooldown)
+- Scenario 4
+  - 7:00 Buy → send (start cooldown until 11:00)
+  - 11:00 Sell → send (different from pre‑cooldown)
 
 - Pairs: up to 3 (e.g., `EURUSD`, `GBPUSD`)
 - Mode: `scalper` or `swingTrader` (internally normalized to `scalper` / `swingtrader`)
@@ -150,6 +181,9 @@ Verbose evaluation logs
   - `pair_rearm`: side re‑armed after leaving zone (no margin)
   - `pair_eval_decision`: final decision for the pair — `baseline_skip` or `trigger`
   - `heatmap_no_trigger`: includes Buy%/Sell%, thresholds, armed flags, and a `reason` field (`within_neutral_band` | `below_buy_threshold` | `above_sell_threshold` | `buy_disarmed` | `sell_disarmed`)
+  - `heatmap_cd_skip`: evaluation skipped due to active per user+pair 4h cooldown (includes `cooldown_until`, `last_trigger`)
+  - `heatmap_cd_start`: cooldown started for (user, pair) after an email is queued (includes `trigger`, `cooldown_until`)
+  - `heatmap_cd_same_signal_suppress`: post‑cooldown same‑signal suppression (disarm without sending)
 
 Configuration:
 - Single alert per user (unique by `user_id`)
@@ -208,7 +242,7 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 
 ### ⏰ News Reminder (5 Minutes Before)
 
-- What: Sends an email with subject "News reminder" to all active users 5 minutes before each upcoming news event found in the local news cache.
+- What: Sends an email with subject "FxLabs Prime • News reminder" to all active users 5 minutes before each upcoming news event found in the local news cache.
   - Impact filter: Only items with source‑reported `impact == "high"` qualify (mirrors upstream API). Medium/low impact items are ignored.
 - Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for news reminders and does not depend on per‑product alert tables.
   - Primary source: `GET {SUPABASE_URL}/auth/v1/admin/users` with `Authorization: Bearer {SUPABASE_SERVICE_KEY}`
@@ -220,7 +254,7 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 - How it avoids duplicates: Each `NewsAnalysis` item has a boolean `reminder_sent`. Once sent, the item is flagged and the cache is persisted to disk, preventing repeats across restarts.
 - Template: Minimal, mobile-friendly HTML wrapped with the unified green header (`FxLabs Prime • News • <date/time>`) and a single common disclaimer footer.
   - Branding: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` are kept for readability and visual hierarchy.
-  - Fields: `event_title`, `event_time_local` (IST by default), `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
+  - Fields: `event_title`, `event_time_local` (IST by default), `currency`, `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `news_auth_fetch_start`, `news_auth_fetch_page`, `news_auth_fetch_page_emails` (debug), `news_auth_fetch_done`
   - Fallback: `news_users_fetch_fallback_alert_tables`
@@ -250,8 +284,9 @@ Automated daily email to all users at a configurable local time
   - News: filters `global_news_cache` for items with IST date == today and impact in {high, medium}
 - Template: Responsive table layout with three main sections:
   - Signal Summary: Core pairs with badges (BUY=#0CCC7C, SELL=#E5494D) and probability
-  - H4 Overbought/Oversold: Separate lists for oversold/overbought pairs with RSI values, or centered empty state message when none found
-  - Today's High/Medium-Impact News: Compact news table with event details
+  - H4 Overbought/Oversold: Two-column table layout (Oversold left, Overbought right) with RSI values; layout stays side-by-side even on mobile. Shows a centered empty state when none found
+  - Today's High-Impact News: Compact news table with event details; each row includes the event's `currency` (e.g., `[GBP]`)
+  - Footer: A single gray disclaimer footer (no separate "education only" footer, no yellow block). Links styled in neutral gray; primary text uses brand-dark `#19235d` instead of near-black.
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `daily_auth_fetch_start`, `daily_auth_fetch_page`, `daily_auth_fetch_page_emails` (debug), `daily_auth_fetch_done`
   - Send: `daily_auth_emails` (full CSV), `daily_send_batch`, `daily_completed`
@@ -309,6 +344,11 @@ Additionally:
   - RSI Correlation Tracker: `tf`, `mode`, `period`, `ob`, `os`, `window`
   - Heatmap Tracker: `style`, `buy_threshold`, `sell_threshold`, `pairs`
   - Indicator Tracker: `indicator`, `tf`, `pairs`
+
+**Troubleshooting: `name 'html' is not defined` when sending Heatmap Tracker email**
+- Symptom: `❌ Error sending heatmap tracker alert email: name 'html' is not defined`.
+- Cause: Legacy `_pair_display()` used an undefined variable; triggered when formatting symbol names for email.
+- Fix: Update to the latest code. `_pair_display()` is corrected and now safely escapes output used in HTML emails.
 
 ### REST: Alerts by Category
 

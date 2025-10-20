@@ -38,6 +38,7 @@ Note — FxLabs Prime Domain Update
 - **Comprehensive Alert Systems**: Heatmap and RSI alerts with email notifications
  - Currency Strength alerts: notifies whenever the strongest/weakest fiat currency changes for a configured timeframe
  - **Event‑Driven Alerts**: Alerts are evaluated immediately after the indicator scheduler updates the in‑memory `indicator_cache` on closed bars. A minute scheduler remains as a safety net.
+ - **Heatmap (Quantum) Cooldown**: Per user × per pair 4‑hour cooldown. During cooldown, the user+pair is not evaluated at all (logged), and after cooldown a same‑side signal is suppressed until a different‑side trigger occurs.
 - **Smart Email Cooldown**: Value-based cooldown prevents spam while allowing significant RSI changes (email-level only; RSI Tracker pair-level cooldown removed)
 - **Intelligent Caching**: Memory-efficient selective data caching
 - **High Performance**: 99.9% bandwidth reduction through selective streaming
@@ -48,8 +49,9 @@ Note — FxLabs Prime Domain Update
 - **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
   - FxLabs Prime tenant: All alert emails are enforced to IST (Asia/Kolkata) regardless of host tz. If the OS tz database is missing, a robust +05:30 (IST) fallback is applied.
 - **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FxLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
-- **Comprehensive Legal Disclaimer**: All alert emails now include a comprehensive legal disclaimer footer that outlines risks, disclaims financial advice, and links to Terms of Service and Privacy Policy at fxlabsprime.com. This ensures full legal compliance and transparency with users about trading risks.
+- **Comprehensive Legal Disclaimer**: All alert emails now include a comprehensive legal disclaimer footer that outlines risks, disclaims financial advice, and links to Terms of Service and Privacy Policy at fxlabsprime.com. This ensures full legal compliance and transparency with users about trading risks. Daily Morning Brief now uses the same neutral gray disclaimer styling as other emails (no yellow highlight).
 - **Email Brand Color Update**: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` remain for readability and hierarchy.
+- **RSI Email Price Formatting**: Prices shown in RSI alert emails are formatted to at most 5 decimal places to avoid float artifacts from broker feeds (e.g., `1.64309999999999` → `1.6431`). Trailing zeros are trimmed; no more than 5 decimals are shown.
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers, per the Calculations Reference (EMA21/50/200, MACD, RSI, UTBot, Ichimoku; new‑signal boost; quiet‑market damping)
   - Per‑alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
 
@@ -166,6 +168,39 @@ start.bat
 .\start.ps1
 ```
 
+### Windows: FxLabs One‑Click Runner
+
+Use the dedicated Windows orchestrator to provision the venv, install requirements, validate MT5, start the FxLabs API, and run the Cloudflared tunnel in the background. The banner uses brand color `#19235d` instead of black.
+
+```powershell
+# PowerShell (run from repo root)
+powershell -NoProfile -ExecutionPolicy Bypass -File .\fxlabs-start.ps1
+
+# Or simply
+./fxlabs-start.ps1
+
+# Optional flags
+./fxlabs-start.ps1 -ForceInstall           # reinstall/upgrade deps
+./fxlabs-start.ps1 -NoCloudflared          # do not run Cloudflared
+./fxlabs-start.ps1 -EnvFile .env           # custom env file
+./fxlabs-start.ps1 -CloudflaredConfig config.yml
+```
+
+Cloudflared notes (Windows):
+- Requires `cloudflared` installed and logged in (`cloudflared tunnel login`).
+- Ensure `config.yml` matches your environment. Update the `credentials-file:` path to your Windows user profile if needed.
+- This repo includes an example `config.yml` with a tunnel ID and Windows path. If the credentials file is missing, the script will warn and continue without Cloudflared.
+
+Notes:
+- MT5 initialization and usage are handled entirely by the Python server (`server.py` / `fxlabs-server.py`). The Windows runner does not start or validate MT5.
+
+Troubleshooting (Windows):
+- Double-clicking `.bat` opens then closes quickly: open `Command Prompt`, `cd` into the repo, and run `fxlabs-start.bat` so errors remain visible. The BAT now pauses on errors.
+- Double-clicking `.ps1` shows “choose an app”: right‑click the `.ps1` and choose “Run with PowerShell”, or use the BAT wrapper. You can also run from PowerShell:
+  - `powershell -NoProfile -ExecutionPolicy Bypass -File .\fxlabs-start.ps1`
+- Execution policy blocks scripts: open PowerShell as Administrator and run `Set-ExecutionPolicy RemoteSigned -Scope CurrentUser` (then rerun the script). Alternatively, use the `-ExecutionPolicy Bypass` we include in the BAT.
+- Downloaded files blocked: run `Unblock-File -Path .\fxlabs-start.ps1` once.
+
 ### Verification
 
 After starting, verify the server is running:
@@ -249,6 +284,13 @@ HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
 - Uses the tenant-specific SendGrid configuration (`FXLABS_*` or `HEXTECH_*`).
 - Runs daily at a configurable local time via `daily_mail_scheduler()`.
 - **News Filtering**: Only high-impact news is included in the daily brief. If no high-impact news is scheduled for the day, a message indicates this instead of leaving the section blank.
+- **Bias Color Coding**: News bias in the daily brief is displayed with color coding for better visual clarity:
+  - **Bullish bias**: Displayed in green (`#10B981`)
+  - **Bearish bias**: Displayed in red (`#EF4444`) 
+  - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
+- **Signal Summary Badges**: BUY badges are always green (`#0CCC7C`), SELL badges are always red (`#E5494D`) for clear visual distinction.
+- **H4 Overbought/Oversold Layout**: Rendered in two fixed columns (Oversold left, Overbought right) using table-based columns so they remain side-by-side across clients, including mobile.
+- **Brand Text Color**: Primary text color inside the daily brief is updated to `#19235d` instead of near-black for consistency with brand guidelines.
 - Configure timezone and send time using env vars:
 
 ```env
@@ -265,6 +307,14 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
   - Core signals in the daily brief use `scalper` mode for Quantum analysis (displayed as "Intraday" in the email).
 - For observability, the batch log includes a CSV of recipient emails and count.
 
+- News rows now include the source currency code for each event (e.g., `[USD] Nonfarm Payrolls`). This matches the API payloads where `currency` is already provided.
+
+#### Styling Consistency
+- Disclaimer footer styling is now unified with other emails (neutral, accessible colors), removing the previous yellow/warning palette.
+- Container: `background: #F9FAFB`, `border: 1px solid #E5E7EB`
+- Text and links: `#6B7280` with underlines for links
+- Brand note: avoid pure black; use `#19235d` for brand-dark instead of `black/#000` or near-black.
+
 #### Daily Brief Duplicate Prevention
 - **Date Tracking**: Each scheduler instance tracks the last sent date to prevent duplicate emails on the same day
 - **Cooldown Period**: After sending, the scheduler waits 4 hours before re-evaluating, preventing rapid re-triggering
@@ -278,6 +328,10 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 #### News Reminder Behavior (High‑Impact Only)
 - The 5‑minute news reminder filters to only source‑reported high‑impact items (`impact == "high"` from the upstream API). Medium/low impact items are skipped.
 - Impact is not AI‑derived for reminders or display; it mirrors the upstream field.
+- **Bias Color Coding**: News bias is displayed with color coding for better visual clarity:
+  - **Bullish bias**: Displayed in green (`#10B981`)
+  - **Bearish bias**: Displayed in red (`#EF4444`) 
+  - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
 - Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
 
 #### Auth Fetch Logging (Verbose)
@@ -469,6 +523,22 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 | `/api/alerts/cache` | GET | In-memory alerts cache (RSI Tracker) | Yes |
 | `/api/alerts/by-category` | GET | Alerts grouped by category (type) | Yes |
 | `/api/alerts/refresh` | POST | Force refresh alerts cache | Yes |
+| `/api/debug/email/send` | POST | Send a debug email with random content for a given template | Yes (Bearer; `DEBUG_API_TOKEN`) |
+
+#### Debug Email Endpoint
+
+- Path: `/api/debug/email/send?type={type}&to={email}`
+- Auth: `Authorization: Bearer {DEBUG_API_TOKEN}` (debug bearer token from `.env`, env var name: `DEBUG_API_TOKEN`; applies to all `/api/debug/*`)
+- Supported `type` values: `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`
+  - Aliases: `quantum`, `tracker`, `quantum_tracker` → `heatmap_tracker`; `correlation` → `rsi_correlation`; `cs` → `currency_strength`
+ - Recipient validation: all domains are allowed. Invalid email format returns `400 {"detail":"invalid_recipient"}`. Exceeding the per‑token debug rate returns `429 {"detail":"rate_limited"}`.
+ - Response semantics: endpoint returns HTTP 200 and includes `sent: true|false` in the JSON response. If your provider (e.g., SendGrid) rejects the request (400/403), the endpoint still returns 200 with `sent: false` and logs the provider error.
+  
+Example:
+```bash
+curl -X POST -H "Authorization: Bearer $DEBUG_API_TOKEN" \
+  "http://localhost:8000/api/debug/email/send?type=rsi&to=user@gmail.com"
+```
 
 ### RSI Tracker Alert — Closed‑bar Crossing
 
@@ -586,7 +656,7 @@ Notes:
 
 Notes:
 - Multiple triggered pairs render as multiple cards within a single email.
-- Subject remains `Trading Alert: <alert_name>` and a text/plain alternative is included.
+- Subject format: `FxLabs Prime • Trading Alert: <alert_name>` and a text/plain alternative is included.
 
 ### Heatmap Alerts — Final Score & Buy Now % (Style‑Weighted)
 
@@ -632,7 +702,7 @@ Notes:
   - **ts_local**: generated server-side in IST
 Notes:
 - Multiple triggers render multiple cards in one email.
-- Subject remains `Trading Alert: <alert_name>` and a text/plain alternative is included.
+- Subject format: `FxLabs Prime • Trading Alert: <alert_name>` and a text/plain alternative is included.
 
 ### Alert Scheduling & Re‑triggering (Global)
 
@@ -1159,6 +1229,25 @@ The system provides comprehensive logging for:
 - Meaning: The client closed or the connection wasn't fully established when the server tried to read. This is a normal transient condition with flaky clients or quick reconnects.
 - Handling: The server now treats this as a clean disconnect and exits the read loop gracefully; no action required unless it's frequent. If frequent, check client networking and retry logic.
 
+#### Troubleshooting: Intermittent WebSocket connect/accept failures (Windows)
+- Symptom: The frontend occasionally fails to establish a WebSocket connection to `/market-v2` even when CPU/memory look fine.
+- Root cause (common): Event loop stalls caused by blocking MT5 calls performed inside async loops (indicator scheduler, tick streamer). On Windows this can surface as handshake timeouts or "accept"-state disconnects.
+- Fix (implemented): Offload MT5 calls to threads so the event loop stays responsive.
+  - server.py: async wrappers `_get_ohlc_data_async`, `_update_ohlc_cache_async`, `_ensure_symbol_selected_async`, `_symbol_info_tick_async`, `_daily_change_pct_bid_async` and their usage in tick/indicator paths.
+  - app/currency_strength.py: MT5 calls inside `compute_currency_strength_for_timeframe` now use `asyncio.to_thread`.
+  - app/quantum.py: OHLC fetches use `asyncio.to_thread` to avoid blocking.
+  - server.py: quantum analysis is computed once per symbol per cycle (not per timeframe), and long loops yield with `await asyncio.sleep(0)` periodically to keep the loop responsive.
+- Windows event loop policy: select-based policy for better WS stability.
+  - server.py sets `asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())` on Windows.
+- Other checks:
+  - IPv6 vs IPv4 localhost: Some Windows setups resolve `localhost` to `::1` while the server binds to `127.0.0.1`. Use `ws://127.0.0.1:8000/market-v2` explicitly, or set `HOST=0.0.0.0`.
+    ```env
+    HOST=0.0.0.0
+    PORT=8000
+    ```
+  - Browser auth headers: Browsers cannot set custom headers in the WS handshake. If `API_TOKEN` is set, prefer query tokens or disable in local dev.
+  - Local firewall/proxy: Ensure no security software is terminating or delaying WebSocket upgrades.
+
 #### File Logging (added)
 - Logs are written both to the terminal and to `logs/<YYYY-MM-DDTHH-mm-ssZ>.log` (UTC start time) in the repository root. A new file is created for each server start.
 - File logs rotate automatically at ~10 MB per file with up to 5 backups kept: `<timestamp>.log`, `<timestamp>.log.1`, ..., `<timestamp>.log.5`.
@@ -1318,6 +1407,11 @@ For support and questions:
 **Compatibility**: Python 3.8+, MT5 Python API, FastAPI 0.100+
 
 ## 🛠️ Troubleshooting
+### Heatmap tracker email fails: name 'html' is not defined
+- Symptom: Logs show `❌ Error sending heatmap tracker alert email: name 'html' is not defined`.
+- Root cause: An internal helper `_pair_display()` erroneously referenced an undefined variable and lacked HTML escaping.
+- Fixed: Update to the latest code. The helper now formats symbols safely (e.g., `EURUSD` → `EUR/USD`) and escapes output for email templates.
+
 ### SyntaxError at server.py:808 "try:" on startup (Windows)
 - Symptom: Startup fails with a traceback pointing to `server.py` around line ~808 with `try:` highlighted.
 - Cause: A nested `try` block was placed inside an `except` in the indicator scheduler, which could lead to parser confusion and brittle indentation handling in some environments.
@@ -1369,6 +1463,7 @@ Expected logs when working:
   - Region mismatch: EU-only accounts must use the EU endpoint; ensure your environment uses the correct SendGrid region (contact SendGrid if unsure).
 - Why intermittent? Different processes or shells might pick up different env files. Ensure you set the tenant-specific variables (`FXLABS_*` for FxLabs Prime or `HEXTECH_*` for HexTech) in the active environment for that process. No code defaults are used.
 - What we log now (for failures): status, a trimmed response body, masked API key, and `from/to` addresses to speed up diagnosis without leaking secrets.
+  - Enhanced: also logs selected response headers (e.g., `X-Message-Id`, `X-Request-Id`), parses SendGrid JSON `errors[]` to surface `code`, `field`, `message`, `help`, and prints a minimal mail preview (subject, recipient, text/html lengths).
 - Quick checklist:
   - Confirm your env defines tenant-specific keys: for FxLabs Prime use `FXLABS_SENDGRID_API_KEY`, `FXLABS_FROM_EMAIL`, `FXLABS_FROM_NAME`; for HexTech use `HEXTECH_SENDGRID_API_KEY`, `HEXTECH_FROM_EMAIL`, `HEXTECH_FROM_NAME`.
   - Verify the sender identity in SendGrid (Single Sender) or authenticate the `fxlabsprime.com` domain.
@@ -1486,3 +1581,4 @@ Why Outlook flagged it:
 
 Code defaults updated:
 - No code defaults for email sender. Set tenant-specific sender (`FXLABS_FROM_EMAIL` or `HEXTECH_FROM_EMAIL`) and configure your domain in SendGrid.
+- Daily Brief footer unified to a single gray disclaimer block; removed duplicate footer and yellow disclaimer styling. Headings avoid black; use #19235d where applicable.

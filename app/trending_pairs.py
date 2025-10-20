@@ -6,6 +6,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Callable, Awaitable
 
 from .mt5_utils import get_daily_change_pct_bid, canonicalize_symbol, ensure_symbol_selected
+import asyncio
 
 
 class TrendingPairsCache:
@@ -64,10 +65,10 @@ async def refresh_trending_pairs(symbols: List[str], *, threshold_pct: float = 0
         try:
             # Ensure MT5 symbol is ready and compute dcp (Bid-based)
             try:
-                ensure_symbol_selected(sym)
+                await asyncio.to_thread(ensure_symbol_selected, sym)
             except Exception:
                 pass
-            dcp = get_daily_change_pct_bid(sym)
+            dcp = await asyncio.to_thread(get_daily_change_pct_bid, sym)
             if dcp is None:
                 continue
             if abs(float(dcp)) >= float(threshold_pct):
@@ -143,5 +144,4 @@ async def trending_pairs_scheduler(
             logger.error("❌ trending_scheduler_error: %s", str(e))
         except Exception:
             pass
-
 

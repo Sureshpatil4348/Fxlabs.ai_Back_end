@@ -1173,39 +1173,40 @@ async def check_and_send_news_reminders() -> None:
             pass
         log_info(logger, "news_reminder_recipients", users=len(emails), emails_csv=emails_csv)
         for item in due_items:
-            title = (item.headline or "News Event").strip()
-            event_time_local = _format_event_time_local(item.time)
-            impact = (item.analysis.get("impact") if item.analysis else None) or "medium"
-            previous = item.previous or "-"
-            forecast = item.forecast or "-"
-            expected = "-"  # Not available pre-release
-            bias = _derive_bias(item.analysis.get("effect") if item.analysis else None)
+                title = (item.headline or "News Event").strip()
+                event_time_local = _format_event_time_local(item.time)
+                impact = (item.analysis.get("impact") if item.analysis else None) or "medium"
+                previous = item.previous or "-"
+                forecast = item.forecast or "-"
+                expected = "-"  # Not available pre-release
+                bias = _derive_bias(item.analysis.get("effect") if item.analysis else None)
 
-            # Fire-and-forget per-user to avoid blocking; await join for this batch
-            tasks = []
-            for em in emails:
-                tasks.append(
-                    email_service.send_news_reminder(
-                        user_email=em,
-                        event_title=title,
-                        event_time_local=event_time_local,
-                        impact=str(impact).title(),
-                        previous=str(previous),
-                        forecast=str(forecast),
-                        expected=str(expected),
-                        bias=str(bias),
+                # Fire-and-forget per-user to avoid blocking; await join for this batch
+                tasks = []
+                for em in emails:
+                    tasks.append(
+                        email_service.send_news_reminder(
+                            user_email=em,
+                            event_title=f"[{(item.currency or '-').strip()}] {title}",
+                            event_time_local=event_time_local,
+                            currency=(item.currency or "-") if hasattr(item, 'currency') else "-",
+                            impact=str(impact).title(),
+                            previous=str(previous),
+                            forecast=str(forecast),
+                            expected=str(expected),
+                            bias=str(bias),
+                        )
                     )
-                )
-            try:
-                await asyncio.gather(*tasks, return_exceptions=True)
-            except Exception as e:
-                log_error(logger, "news_reminder_send_batch_error", error=str(e))
+                try:
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                except Exception as e:
+                    log_error(logger, "news_reminder_send_batch_error", error=str(e))
 
-            # Mark this item as reminded regardless of individual send failures
-            try:
-                setattr(item, "reminder_sent", True)
-            except Exception:
-                pass
+                # Mark this item as reminded regardless of individual send failures
+                try:
+                    setattr(item, "reminder_sent", True)
+                except Exception:
+                    pass
 
         # Persist to disk after flag updates
         _save_news_cache_to_disk()

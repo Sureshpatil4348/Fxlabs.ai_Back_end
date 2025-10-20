@@ -9,6 +9,8 @@ from urllib.parse import quote as url_quote
 from threading import RLock
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
+from decimal import Decimal, ROUND_HALF_UP
+import html as html_lib
 try:
     from sendgrid import SendGridAPIClient
     from sendgrid.helpers.mail import (
@@ -181,10 +183,13 @@ class EmailService:
             if len(raw) >= 6:
                 base = raw[:3]
                 quote = raw[3:6]
-                return f"{base}/{quote}"
-            return raw
+                display = f"{base}/{quote}"
+            else:
+                display = raw
+            # Escape for safe HTML/text contexts
+            return html_lib.escape(str(display))
         except Exception:
-            return raw
+            return html_lib.escape(str(raw))
 
     def _zoneinfo_or_fallback(self, tz_name: str):
         """Return tzinfo for tz_name. Fallback to fixed IST or UTC when ZoneInfo is unavailable."""
@@ -334,11 +339,13 @@ class EmailService:
         mail = Mail(from_email, to_email, subject)
         # Add text first, then HTML per MIME best practices
         try:
-            mail.add_content(Content("text/plain", text_body or ""))
+            if text_body and text_body.strip():
+                mail.add_content(Content("text/plain", text_body.strip()))
         except Exception:
             pass
         try:
-            mail.add_content(Content("text/html", html_body or ""))
+            if html_body and html_body.strip():
+                mail.add_content(Content("text/html", html_body.strip()))
         except Exception:
             pass
         # Optional reply-to mirrors from address
@@ -405,7 +412,7 @@ class EmailService:
         for p in pairs:
             sym = self._pair_display(p.get("symbol", "?"))
             rsi = p.get("rsi", p.get("rsi_value", "?"))
-            price = p.get("current_price", "?")
+            price = self._format_price_for_email(p.get("current_price", "?"))
             chg = p.get("price_change_percent", "?")
             lines.append(f"- {sym}: RSI {rsi}, Px {price}, Chg {chg}%")
         return "\n".join(lines)
@@ -639,14 +646,28 @@ class EmailService:
         except Exception:
             pass
 
-        # Log response body (trimmed)
+        # Log response body (trimmed) and attempt to parse JSON errors
         try:
             if body:
                 if isinstance(body, (bytes, bytearray)):
-                    preview = body[:512].decode(errors="ignore")
+                    raw_text = body.decode(errors="ignore")
                 else:
-                    preview = str(body)[:512]
+                    raw_text = str(body)
+                preview = (raw_text or "")[:1024]
                 logger.error("   SendGrid response body (trimmed): %s", preview)
+                # Try to parse SendGrid JSON error format
+                try:
+                    j = json.loads(raw_text)
+                    errs = j.get("errors") if isinstance(j, dict) else None
+                    if isinstance(errs, list) and errs:
+                        for idx, er in enumerate(errs, 1):
+                            msg = (er or {}).get("message")
+                            field = (er or {}).get("field")
+                            help_url = (er or {}).get("help")
+                            code = (er or {}).get("code")
+                            logger.error("   [%d] SG error | code=%s field=%s msg=%s help=%s", idx, code or "-", field or "-", msg or "-", help_url or "-")
+                except Exception:
+                    pass
         except Exception:
             pass
 
@@ -681,6 +702,68 @@ class EmailService:
                 "   Hint: configure tenant-specific email credentials (%s, %s, %s). No global defaults are used.",
                 exp_key, exp_from_email, exp_from_name,
             )
+        except Exception:
+            pass
+
+    def _log_mail_preview(self, context: str, subject: str, to_email: str, html_body: Optional[str], text_body: Optional[str]) -> None:
+        """Log a minimal, sanitized preview of the message being sent."""
+        try:
+            html_len = len(html_body or "")
+            text_len = len(text_body or "")
+            # Preview first 128 chars of text only (safer than HTML)
+            text_preview = (text_body or "")[:128].replace("\n", " ")
+            logger.info(
+                "   Mail preview | ctx=%s subject=%s to=%s text_len=%d html_len=%d text_preview=%s",
+                context,
+                (subject or "").strip()[:140],
+                (to_email or "").strip(),
+                text_len,
+                html_len,
+                text_preview,
+            )
+        except Exception:
+            pass
+
+    def _log_sendgrid_response_details(self, context: str, response: Any, to_email: Optional[str] = None) -> None:
+        """Log structured details from a non-2xx SendGrid response."""
+        try:
+            status = getattr(response, "status_code", None)
+            headers = getattr(response, "headers", None)
+            masked_key = self._mask(self.sendgrid_api_key)
+            logger.error("   SendGrid response → status=%s, from=%s, to=%s, key=%s", status, self.from_email, (to_email or ""), masked_key)
+            # Selected headers preview
+            try:
+                hdrs = {}
+                if isinstance(headers, dict):
+                    for k in ["Date", "Server", "X-Message-Id", "X-Request-Id"]:
+                        v = headers.get(k) or headers.get(k.lower())
+                        if v:
+                            hdrs[k] = v
+                if hdrs:
+                    logger.error("   Headers: %s", hdrs)
+            except Exception:
+                pass
+            # Body/JSON handled similarly to exception path
+            try:
+                body = getattr(response, "body", None)
+                if body:
+                    txt = body.decode(errors="ignore") if isinstance(body, (bytes, bytearray)) else str(body)
+                    preview = (txt or "")[:1024]
+                    logger.error("   Body (trimmed): %s", preview)
+                    try:
+                        j = json.loads(txt)
+                        errs = j.get("errors") if isinstance(j, dict) else None
+                        if isinstance(errs, list) and errs:
+                            for idx, er in enumerate(errs, 1):
+                                msg = (er or {}).get("message")
+                                field = (er or {}).get("field")
+                                help_url = (er or {}).get("help")
+                                code = (er or {}).get("code")
+                                logger.error("   [%d] SG error | code=%s field=%s msg=%s help=%s", idx, code or "-", field or "-", msg or "-", help_url or "-")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         except Exception:
             pass
     
@@ -736,7 +819,7 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"Trading Alert: {alert_name}"
+            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
             
             # Build email body
             body = self._build_heatmap_alert_email_body(
@@ -807,7 +890,7 @@ class EmailService:
         self._cleanup_old_cooldowns()
 
         try:
-            subject = "Trading Alert: Quantum Analysis"
+            subject = "FxLabs Prime • Trading Alert: Quantum Analysis"
             body = self._build_heatmap_tracker_email_body(alert_name, triggered_pairs, alert_config)
             text_body = self._build_plain_text_heatmap_tracker(alert_name, triggered_pairs, alert_config)
             mail = self._build_mail(
@@ -937,10 +1020,10 @@ class EmailService:
             </div>
             
             <!-- Disclaimer -->
-            <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;">
-                <p style="margin: 0; font-size: 11px; color: #856404; line-height: 1.6;">
+            <div style="margin-top: 20px; padding: 15px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 8px;">
+                <p style="margin: 0; font-size: 11px; color: #6B7280; line-height: 1.6;">
                     <strong>Disclaimer:</strong> FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses.
-                    Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href="https://fxlabsprime.com/terms-of-service" style="color: #856404; text-decoration: underline;">Terms</a> &amp; <a href="https://fxlabsprime.com/privacy-policy" style="color: #856404; text-decoration: underline;">Privacy Policy</a>.
+                    Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href="https://fxlabsprime.com/terms-of-service" style="color: #6B7280; text-decoration: underline;">Terms</a> &amp; <a href="https://fxlabsprime.com/privacy-policy" style="color: #6B7280; text-decoration: underline;">Privacy Policy</a>.
                 </p>
             </div>
             
@@ -1000,7 +1083,7 @@ class EmailService:
             """
             cards.append(card)
 
-        return f"""
+        html = f"""
 <!doctype html>
 <html lang=\"en\">
 <head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs Prime • Probability Signal</title></head>
@@ -1008,6 +1091,22 @@ class EmailService:
 <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('Probability Signal', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;\">FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>.</td></tr>\n</table>\n</td></tr></table>
 </body></html>
         """
+
+        # Normalize Daily disclaimer styling to match other emails (neutral gray)
+        html = (
+            html
+            .replace('background: #fff3cd', 'background:#F9FAFB')
+            .replace('border: 1px solid #ffeaa7', 'border:1px solid #E5E7EB')
+            .replace('border-radius: 8px', 'border-radius:10px')
+            .replace('font-size: 11px', 'font-size:10px')
+            .replace('color: #856404', 'color:#6B7280')
+            .replace('margin: 0; font-size: 11px; color: #856404; line-height: 1.6;', 'margin:0;color:#6B7280;')
+        )
+        # Enforce brand text color: replace near-black with #19235d for this template
+        try:
+            return html.replace("color:#111827;", "color:#19235d;")
+        except Exception:
+            return html
 
     def _build_plain_text_heatmap_tracker(self, alert_name: str, pairs: List[Dict[str, Any]], cfg: Dict[str, Any]) -> str:
         lines = [
@@ -1041,7 +1140,7 @@ class EmailService:
         # Unsubscribe support removed
         
         try:
-            subject = "System Test - FxLabs Prime"
+            subject = "FxLabs Prime • System Test"
             
             body = f"""
             <!DOCTYPE html>
@@ -1127,7 +1226,7 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"RSI Alert - {alert_name}"
+            subject = f"FxLabs Prime • RSI Alert - {alert_name}"
             logger.info(f"📝 Email subject: {subject}")
             
             # Build email body
@@ -1215,7 +1314,7 @@ class EmailService:
         self._cleanup_old_cooldowns()
 
         try:
-            subject = f"Trading Alert: {alert_name}"
+            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
             body = self._build_custom_indicator_email_body(alert_name, triggered_pairs, alert_config)
             text_body = self._build_plain_text_custom_indicator(alert_name, triggered_pairs, alert_config)
             mail = self._build_mail(
@@ -1264,7 +1363,7 @@ class EmailService:
             symbol = self._pair_display(pair.get("symbol", "N/A"))
             timeframe = pair.get("timeframe", "N/A")
             rsi_value = pair.get("rsi_value", 0)
-            price = pair.get("current_price", 0)
+            price = self._format_price_for_email(pair.get("current_price", 0))
             cond = str(pair.get("trigger_condition", "")).lower()
             if "overbought" in cond:
                 zone = "Overbought"
@@ -1295,17 +1394,74 @@ class EmailService:
         cards_html = "".join(cards)
 
         # Outer background wrapper (single body, multiple cards)
-        return f"""
+        html = f"""
 <!doctype html>
-<html lang=\"en\">
+<html lang="en">
 <head>
-<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>FxLabs Prime • RSI Alert</title>
 </head>
-<body style=\"margin:0;background:#F5F7FB;\">\n
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('RSI', self.tz_name)}\n{cards_html}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;\">FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>.</td></tr>\n</table>\n</td></tr></table>
-</body></html>
+<body style="margin:0;background:#F5F7FB;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F7FB;">
+<tr><td align="center" style="padding:24px 12px;">
+{self._build_common_header('RSI', self.tz_name)}
+{cards_html}
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+  <tr>
+    <td style="padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;">
+      FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href="https://fxlabsprime.com/terms-of-service" style="color:#6B7280;text-decoration:underline;">Terms</a> &amp; <a href="https://fxlabsprime.com/privacy-policy" style="color:#6B7280;text-decoration:underline;">Privacy Policy</a>.
+    </td>
+  </tr>
+</table>
+</td></tr>
+</table>
+</body>
+</html>
+"""
+
+        # Remove the extra yellow disclaimer block entirely (keep only single gray footer)
+        html = html.replace(
+            '''          <!-- Disclaimer -->
+          <tr>
+            <td style="margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;">
+              <p style="margin: 0; font-size: 11px; color: #856404; line-height: 1.6;">
+                <strong>Disclaimer:</strong> FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses.
+                Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href="https://fxlabsprime.com/terms-of-service" style="color: #856404; text-decoration: underline;">Terms</a> &amp; <a href="https://fxlabsprime.com/privacy-policy" style="color: #856404; text-decoration: underline;">Privacy Policy</a>.
+              </p>
+            </td>
+          </tr>
+''',
+            ''
+        )
+
+        return html
+
+    def _format_price_for_email(self, value: Any) -> str:
+        """Format price to at most 5 decimal places, trimming trailing zeros.
+
+        - Uses Decimal for stable rounding to avoid float artifacts like 1.64309999999999
+        - Rounds HALF_UP to 5 places
+        - Strips trailing zeros and any trailing decimal point
         """
+        try:
+            if value is None or (isinstance(value, str) and not value.strip()):
+                return "?"
+            d = Decimal(str(value))
+            q = d.quantize(Decimal("0.00001"), rounding=ROUND_HALF_UP)
+            # Normalize and format to plain string without scientific notation
+            s = format(q.normalize(), "f")
+            # Ensure "-0" becomes "0"
+            if s == "-0":
+                s = "0"
+            return s
+        except Exception:
+            # Fallback to string; better to show something than crash email
+            try:
+                return str(value)
+            except Exception:
+                return "?"
+
+
 
     def _build_custom_indicator_email_body(
         self,
@@ -1346,7 +1502,7 @@ class EmailService:
             """
             cards.append(card)
 
-        return f"""
+        html = f"""
 <!doctype html>
 <html lang=\"en\">
 <head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs Prime • Custom Indicator Signal</title></head>
@@ -1402,7 +1558,7 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"Trading Alert: {alert_name}"
+            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
             
             # Build email body
             body = self._build_rsi_correlation_alert_email_body(
@@ -1522,22 +1678,33 @@ class EmailService:
 </body></html>
         """
 
+    def _get_bias_color(self, bias: str) -> str:
+        """Get color for bias display: green for bullish, red for bearish, default for others."""
+        bias_lower = (bias or "").strip().lower()
+        if bias_lower == "bullish":
+            return "#10B981"  # Green color
+        elif bias_lower == "bearish":
+            return "#EF4444"  # Red color
+        else:
+            return "#19235d"  # Default brand color
+
     def _build_news_reminder_html(
         self,
         event_title: str,
         event_time_local: str,
+        currency: str,
         impact: str,
         previous: str,
         forecast: str,
         expected: str,
         bias: str,
     ) -> str:
-        return f"""
+        html = f"""
 <!doctype html>
 <html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs Prime • News Reminder</title></head>
 <body style=\"margin:0;background:#F5F7FB;\">\n
 <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('News', self.tz_name)}\n
-<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Starts in 5 Minutes</td></tr>\n  <tr><td style=\"padding:20px;\">\n    <div style=\"font-size:16px;margin-bottom:6px;\"><strong>{event_title}</strong></div>\n    <div style=\"font-size:13px;color:#374151;margin-bottom:12px;\">\n      Time: {event_time_local} • Impact: <strong>{impact}</strong>\n    </div>\n    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;width:100%;\">\n      <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">\n        <td style=\"padding:10px\">Previous</td><td style=\"padding:10px\">Forecast</td><td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">Bias</td>\n      </tr>\n      <tr>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{previous}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{forecast}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{expected}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\"><strong>{bias}</strong></td>\n      </tr>\n    </table>\n    <div style=\"margin-top:14px;padding:12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:10px;font-size:13px;\">\n      Volatility risk. Consider spreads, slippage and cooldown windows.\n    </div>\n  </td></tr>\n</table>\n
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Starts in 5 Minutes</td></tr>\n  <tr><td style=\"padding:20px;\">\n    <div style=\"font-size:16px;margin-bottom:6px;\"><strong>{event_title}</strong></div>\n    <div style=\"font-size:13px;color:#374151;margin-bottom:12px;\">\n      Time: {event_time_local} • Currency: <strong>{currency}</strong> • Impact: <strong>{impact}</strong>\n    </div>\n    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;width:100%;\">\n      <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">\n        <td style=\"padding:10px\">Previous</td><td style=\"padding:10px\">Forecast</td><td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">Bias</td>\n      </tr>\n      <tr>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{previous}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{forecast}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{expected}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\"><strong style=\"color:{self._get_bias_color(bias)};\">{bias}</strong></td>\n      </tr>\n    </table>\n    <div style=\"margin-top:14px;padding:12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:10px;font-size:13px;\">\n      Volatility risk. Consider spreads, slippage and cooldown windows.\n    </div>\n  </td></tr>\n</table>\n
 <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;\">FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>.</td></tr>\n</table>\n
 </td></tr></table>\n
 </body></html>
@@ -1547,6 +1714,7 @@ class EmailService:
         self,
         event_title: str,
         event_time_local: str,
+        currency: str,
         impact: str,
         previous: str,
         forecast: str,
@@ -1556,7 +1724,7 @@ class EmailService:
         return (
             f"Starts in 5 Minutes\n"
             f"{event_title}\n"
-            f"Time: {event_time_local} • Impact: {impact}\n"
+            f"Time: {event_time_local} • Currency: {currency} • Impact: {impact}\n"
             f"Previous: {previous} | Forecast: {forecast} | Expected: {expected} | Bias: {bias}\n"
             f"Volatility risk. Consider spreads, slippage and cooldown windows.\n\n"
             f"FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our Terms at https://fxlabsprime.com/terms-of-service & Privacy Policy at https://fxlabsprime.com/privacy-policy."
@@ -1567,6 +1735,7 @@ class EmailService:
         user_email: str,
         event_title: str,
         event_time_local: str,
+        currency: Optional[str],
         impact: Optional[str],
         previous: Optional[str],
         forecast: Optional[str],
@@ -1597,6 +1766,7 @@ class EmailService:
         html = self._build_news_reminder_html(
             event_title=_fmt(event_title, "News Event"),
             event_time_local=_fmt(event_time_local, ""),
+            currency=_fmt(currency, "-"),
             impact=_fmt(impact, "-"),
             previous=_fmt(previous, "-"),
             forecast=_fmt(forecast, "-"),
@@ -1606,6 +1776,7 @@ class EmailService:
         text = self._build_news_reminder_text(
             event_title=_fmt(event_title, "News Event"),
             event_time_local=_fmt(event_time_local, ""),
+            currency=_fmt(currency, "-"),
             impact=_fmt(impact, "-"),
             previous=_fmt(previous, "-"),
             forecast=_fmt(forecast, "-"),
@@ -1613,7 +1784,7 @@ class EmailService:
             bias=_fmt(bias, "-"),
         )
 
-        subject = "News reminder"
+        subject = "FxLabs Prime • News reminder"
         mail = self._build_mail(
             subject=subject,
             to_email_addr=user_email,
@@ -1699,6 +1870,8 @@ class EmailService:
 </body></html>
             """
 
+    # Removed footer normalization helper; template directly renders a single gray disclaimer.
+
     def _build_daily_html(self, payload: Dict[str, Any]) -> str:
         def esc(v: Any) -> str:
             try:
@@ -1715,7 +1888,14 @@ class EmailService:
             signal = esc(s.get("signal", ""))
             probability = esc(s.get("probability", ""))
             tf = esc(s.get("tf", ""))
-            badge_bg = esc(s.get("badge_bg", "#6B7280"))
+            # Enforce badge colors: BUY → green, SELL → red; otherwise allow provided fallback
+            sig_upper = (signal or "").strip().upper()
+            if sig_upper == "BUY":
+                badge_bg = "#0CCC7C"
+            elif sig_upper == "SELL":
+                badge_bg = "#E5494D"
+            else:
+                badge_bg = esc(s.get("badge_bg", "#6B7280"))
             rows.append(f"""
                 <tr>
                   <td style=\"padding:10px 8px;border-top:1px solid #F1F5F9;\">{pair}</td>
@@ -1742,48 +1922,38 @@ class EmailService:
                 </tr>
             """
         else:
-            # Build oversold column
+            # Build oversold column (use nested table for robust email rendering)
             if rsi_oversold:
-                oversold_items = "".join([f'<div style="padding:4px 0;"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_oversold])
+                oversold_rows = "".join([
+                    f'<tr><td style="padding:4px 0;font-size:12px;">{esc(x.get("pair",""))} • RSI {esc(x.get("rsi",""))}</td></tr>'
+                    for x in rsi_oversold
+                ])
                 oversold_column = f"""
-                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
-                  {oversold_items}
+                  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n                    <tr><td style=\"font-size:13px;font-weight:700;color:#6B7280;padding-bottom:6px;\">Oversold (≤30)</td></tr>\n                    {oversold_rows}\n                  </table>
                 """
             else:
                 oversold_column = """
-                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Oversold (≤30)</div>
-                  <div style="padding:4px 0;color:#9CA3AF;">No pairs</div>
+                  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n                    <tr><td style=\"font-size:13px;font-weight:700;color:#6B7280;padding-bottom:6px;\">Oversold (≤30)</td></tr>\n                    <tr><td style=\"padding:4px 0;color:#9CA3AF;\">No pairs</td></tr>\n                  </table>
                 """
-            
-            # Build overbought column
+
+            # Build overbought column (use nested table for robust email rendering)
             if rsi_overbought:
-                overbought_items = "".join([f'<div style="padding:4px 0;"><strong>{esc(x.get("pair",""))}</strong> • RSI {esc(x.get("rsi",""))}</div>' for x in rsi_overbought])
+                overbought_rows = "".join([
+                    f'<tr><td style="padding:4px 0;font-size:12px;">{esc(x.get("pair",""))} • RSI {esc(x.get("rsi",""))}</td></tr>'
+                    for x in rsi_overbought
+                ])
                 overbought_column = f"""
-                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
-                  {overbought_items}
+                  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n                    <tr><td style=\"font-size:13px;font-weight:700;color:#6B7280;padding-bottom:6px;\">Overbought (≥70)</td></tr>\n                    {overbought_rows}\n                  </table>
                 """
             else:
                 overbought_column = """
-                  <div style="font-size:13px;font-weight:600;color:#6B7280;margin-bottom:6px;">Overbought (≥70)</div>
-                  <div style="padding:4px 0;color:#9CA3AF;">No pairs</div>
+                  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\">\n                    <tr><td style=\"font-size:13px;font-weight:700;color:#6B7280;padding-bottom:6px;\">Overbought (≥70)</td></tr>\n                    <tr><td style=\"padding:4px 0;color:#9CA3AF;\">No pairs</td></tr>\n                  </table>
                 """
-            
-            # Two column layout with responsive design
+
+            # Two column layout with fixed table to ensure side-by-side columns in email clients
             h4_html = f"""
                 <tr>
-                  <td style="padding:12px;">
-                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-                      <tr>
-                        <td class="stack" style="width:50%;padding-right:8px;vertical-align:top;border-right:1px solid #E5E7EB;">
-                          {oversold_column}
-                        </td>
-                        <td class="stack" style="width:50%;padding-left:8px;vertical-align:top;">
-                          {overbought_column}
-                        </td>
-                      </tr>
-                    </table>
-                  </td>
-                </tr>
+                  <td style=\"padding:12px;\">\n                    <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;table-layout:fixed;\">\n                      <tr>\n                        <td width=\"50%\" valign=\"top\" style=\"padding:12px 10px;border-right:1px solid #E5E7EB;\">\n                          {oversold_column}\n                        </td>\n                        <td width=\"50%\" valign=\"top\" style=\"padding:12px 10px;\">\n                          {overbought_column}\n                        </td>\n                      </tr>\n                    </table>\n                  </td>\n                </tr>
             """
 
         # News rows
@@ -1801,33 +1971,35 @@ class EmailService:
             for n in news_list:
                 title = esc(n.get("title", ""))
                 time_local = esc(n.get("time_local", ""))
+                currency = esc(n.get("currency", ""))
                 expected = esc(n.get("expected", "-"))
                 forecast = esc(n.get("forecast", "-"))
                 bias = esc(n.get("bias", "-"))
                 news_rows.append(f"""
                 <tr>
                   <td style=\"padding:10px;border-bottom:1px solid #E5E7EB;\">
-                    <div style=\"font-size:14px;font-weight:700;\">{title} <span style=\"font-weight:400;color:#6B7280\">• {time_local}</span></div>
+                    <div style=\"font-size:14px;font-weight:700;\">[{currency}] {title} <span style=\"font-weight:400;color:#6B7280\">• {time_local}</span></div>
                     <div style=\"font-size:13px;margin-top:4px;\">
-                      Exp: <strong>{expected}</strong> | Fcast: <strong>{forecast}</strong> | Bias: <strong>{bias}</strong>
+                      Forecast: <strong>{forecast}</strong> | Bias: <strong style=\"color:{self._get_bias_color(bias)};\">{bias}</strong>
                     </div>
                   </td>
                 </tr>
                 """)
             news_html = "\n".join(news_rows)
 
-        return f"""
+        html = f"""
 <!doctype html>
 <html lang=\"en\">
 <head>
 <meta charset=\"utf-8\">\n<title>FxLabs Prime • Daily Morning Brief</title>
 <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
 <style>
-@media screen and (max-width:600px){{ .container{{width:100%!important}} .stack{{display:block!important;width:100%!important;border-right:0!important;padding-right:0!important;padding-left:0!important;margin-bottom:12px!important}}}}
+@media screen and (max-width:600px){{ .container{{width:100%!important}} }}
 </style>
 </head>
-<body style=\"margin:0;background:#F5F7FB;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 12px;\">\n        {self._build_common_header('Daily', payload.get('tz_name', self.tz_name), date_override=date_local, time_label_override=time_label)}\n        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n          <tr>\n            <td style=\"padding:20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">\n                  <td style=\"padding:10px 8px;\">Pair</td>\n                  <td style=\"padding:10px 8px;\">Signal</td>\n                  <td style=\"padding:10px 8px;\">Probability</td>\n                  <td style=\"padding:10px 8px;\">Timeframe</td>\n                </tr>\n                {core_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {h4_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Today's High-Impact News</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {news_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:12px;color:#6B7280;border-top:1px solid #E5E7EB;\">\n              This information is for education only and not financial advice. © FxLabs Prime\n            </td>\n          </tr>\n          \n          <!-- Disclaimer -->\n          <tr>\n            <td style=\"margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;\">\n              <p style=\"margin: 0; font-size: 11px; color: #856404; line-height: 1.6;\">\n                <strong>Disclaimer:</strong> FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses.\n                Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color: #856404; text-decoration: underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color: #856404; text-decoration: underline;\">Privacy Policy</a>.\n              </p>\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>
+<body style=\"margin:0;background:#F5F7FB;\">\n  <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">\n    <tr>\n      <td align=\"center\" style=\"padding:24px 12px;\">\n        {self._build_common_header('Daily', payload.get('tz_name', self.tz_name), date_override=date_local, time_label_override=time_label)}\n        <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n          <tr>\n            <td style=\"padding:20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Signal Summary (Core Pairs)</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-collapse:collapse;\">\n                <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">\n                  <td style=\"padding:10px 8px;\">Pair</td>\n                  <td style=\"padding:10px 8px;\">Signal</td>\n                  <td style=\"padding:10px 8px;\">Probability</td>\n                  <td style=\"padding:10px 8px;\">Timeframe</td>\n                </tr>\n                {core_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">H4 Overbought / Oversold</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {h4_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:0 20px 20px;\">\n              <div style=\"font-weight:700;margin-bottom:8px;\">Today's High-Impact News</div>\n              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">\n                {news_html}\n              </table>\n            </td>\n          </tr>\n\n          <tr>\n            <td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;\">\n              FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>.\n            </td>\n          </tr>\n          \n          <!-- Disclaimer -->\n          <tr>\n            <td style=\"display:none;margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px;\">\n              <p style=\"margin: 0; font-size: 11px; color: #856404; line-height: 1.6;\">\n                <strong>Disclaimer:</strong> FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses.\n                Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color: #856404; text-decoration: underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color: #856404; text-decoration: underline;\">Privacy Policy</a>.\n              </p>\n            </td>\n          </tr>\n        </table>\n      </td>\n    </tr>\n  </table>\n</body>\n</html>
         """
+        return html
 
     def _build_daily_text(self, payload: Dict[str, Any]) -> str:
         lines: List[str] = []
@@ -1866,7 +2038,7 @@ class EmailService:
         news_list = payload.get("news", []) or []
         if news_list:
             for n in news_list:
-                lines.append(f"- {n.get('time_local','')} • {n.get('title','')} (Exp {n.get('expected','-')}, Fcast {n.get('forecast','-')}, Bias {n.get('bias','-')})")
+                lines.append(f"- [{n.get('currency','-')}] {n.get('time_local','')} • {n.get('title','')} (Forecast {n.get('forecast','-')}, Bias {n.get('bias','-')})")
         else:
             lines.append("No high-impact news scheduled for today")
         lines.append("")
@@ -1900,9 +2072,25 @@ class EmailService:
                 logger.info(f"✅ Daily brief sent to {user_email}")
                 return True
             logger.error(f"❌ Failed to send daily brief: status={response.status_code}")
+            # Log provider response details and a minimal mail preview
+            try:
+                self._log_sendgrid_response_details(context="daily-brief", response=response, to_email=user_email)
+                self._log_mail_preview(context="daily-brief", subject=subject, to_email=user_email, html_body=html, text_body=text)
+            except Exception:
+                pass
             return False
         except Exception as e:
             logger.error(f"❌ Error sending daily brief: {e}")
+            # Emit structured diagnostics and a minimal mail preview
+            try:
+                self._log_sendgrid_exception(context="daily-brief", error=e, to_email=user_email)
+                self._log_mail_preview(context="daily-brief", subject=subject, to_email=user_email, html_body=html, text_body=text)
+                # Also include configuration diagnostics to aid triage
+                diag_text = self.get_config_diagnostics_text()
+                if diag_text:
+                    logger.warning("   Email config diagnostics: %s", diag_text)
+            except Exception:
+                pass
             return False
 
     def _build_currency_strength_email_body(
@@ -2005,8 +2193,10 @@ class EmailService:
     </table>
   </td></tr></table>
   </body>
-  </html>
+</html>
         """
+
+        
         return body
 
     async def send_currency_strength_alert(
@@ -2030,7 +2220,7 @@ class EmailService:
             return False
 
         try:
-            subject = f"Trading Alert: {alert_name}"
+            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
             html_body = self._build_currency_strength_email_body(alert_name, timeframe, triggered_items, prev_winners, all_values)
             # Build a simple text alternative
             try:

@@ -8,6 +8,7 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Tuple, Any
 import re
 import time
+import random
 
 try:
     import MetaTrader5 as mt5
@@ -19,7 +20,7 @@ except ImportError:
 import orjson
 import logging
 from app.logging_config import configure_logging
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Header, APIRouter
 from starlette.websockets import WebSocketState
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -29,6 +30,7 @@ from app.config import (
     ALLOWED_ORIGINS,
     MT5_TERMINAL_PATH,
     LIVE_RSI_DEBUGGING,
+    DEBUG_API_TOKEN,
 )
 import app.news as news
 from app.alert_cache import alert_cache
@@ -68,6 +70,35 @@ from app.currency_strength import compute_currency_strength_for_timeframe
 from app.currency_strength_cache import currency_strength_cache
 from app.constants import RSI_SUPPORTED_SYMBOLS
 from app.trending_pairs import trending_pairs_cache, trending_pairs_scheduler, refresh_trending_pairs
+
+# Async wrappers for blocking MT5 calls to avoid event-loop stalls (especially on Windows)
+async def _get_ohlc_data_async(symbol: str, timeframe: Timeframe, count: int = 300):
+    return await asyncio.to_thread(get_ohlc_data, symbol, timeframe, count)
+
+async def _update_ohlc_cache_async(symbol: str, timeframe: Timeframe):
+    return await asyncio.to_thread(update_ohlc_cache, symbol, timeframe)
+
+async def _ensure_symbol_selected_async(symbol: str):
+    return await asyncio.to_thread(ensure_symbol_selected, symbol)
+
+async def _symbol_info_tick_async(symbol: str):
+    try:
+        return await asyncio.to_thread(mt5.symbol_info_tick, symbol)
+    except Exception:
+        return None
+
+# Windows event-loop policy: prefer Selector policy for better WebSocket compatibility
+try:
+    if sys.platform.startswith("win"):
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())  # type: ignore[attr-defined]
+except Exception:
+    pass
+
+async def _daily_change_pct_bid_async(symbol: str):
+    try:
+        return await asyncio.to_thread(get_daily_change_pct_bid, symbol)
+    except Exception:
+        return None
 # One-time warmup to backfill indicator cache at startup
 async def _warm_populate_indicator_cache() -> None:
     try:
@@ -83,7 +114,7 @@ async def _warm_populate_indicator_cache() -> None:
         for sym in symbols_for_rollout:
             for tf in baseline_tfs:
                 try:
-                    bars = get_ohlc_data(sym, tf, 300)
+                    bars = await _get_ohlc_data_async(sym, tf, 300)
                     if not bars:
                         continue
                     closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
@@ -415,6 +446,89 @@ def require_api_token_header(x_api_key: Optional[str] = None):
     if API_TOKEN and x_api_key != API_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
+def require_debug_bearer_token(authorization: Optional[str] = Header(default=None)) -> str:
+    """Require Authorization: Bearer <DEBUG_API_TOKEN> for all /api/debug/* endpoints.
+
+    Returns provided token on success; raises 401 with explicit reason otherwise.
+    """
+    expected = (DEBUG_API_TOKEN or "").strip()
+    logger = logging.getLogger("auth.debug")
+
+    def _mask_token(s: str) -> str:
+        try:
+            if not s:
+                return "<empty>"
+            n = len(s)
+            head = s[:10]
+            tail = s[-10:] if n > 20 else s[-(n - 10):] if n > 10 else ""
+            return f"{head}...{tail} (len={n})"
+        except Exception:
+            return "<unprintable>"
+    if not expected:
+        logger.warning(
+            "auth.debug unauthorized | reason=debug_token_not_configured"
+        )
+        raise HTTPException(status_code=401, detail={"error": "debug_token_not_configured"})
+
+    if authorization is None:
+        logger.warning(
+            "auth.debug unauthorized | reason=missing_authorization_header | expected_mask=%s",
+            _mask_token(expected),
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": "missing_authorization_header",
+                "hint": "Provide Authorization: Bearer <DEBUG_API_TOKEN>",
+            },
+        )
+    if not isinstance(authorization, str):
+        logger.warning(
+            "auth.debug unauthorized | reason=invalid_authorization_type | expected_mask=%s",
+            _mask_token(expected),
+        )
+        raise HTTPException(status_code=401, detail={"error": "invalid_authorization_type"})
+
+    parts = authorization.strip().split(" ", 1)
+    if len(parts) != 2:
+        logger.warning(
+            "auth.debug unauthorized | reason=invalid_authorization_format | header_preview=%s | expected_mask=%s",
+            authorization[:24] + ("…" if len(authorization) > 24 else ""),
+            _mask_token(expected),
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": "invalid_authorization_format",
+                "hint": "Expected: 'Authorization: Bearer <token>'",
+            },
+        )
+    scheme, token = parts[0], parts[1].strip()
+    if scheme.lower() != "bearer":
+        logger.warning(
+            "auth.debug unauthorized | reason=invalid_authorization_scheme | scheme=%s | expected=Bearer | expected_mask=%s",
+            scheme,
+            _mask_token(expected),
+        )
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "invalid_authorization_scheme", "expected": "Bearer"},
+        )
+    if not token:
+        logger.warning(
+            "auth.debug unauthorized | reason=missing_token | expected_mask=%s",
+            _mask_token(expected),
+        )
+        raise HTTPException(status_code=401, detail={"error": "missing_token"})
+    if token != expected:
+        logger.warning(
+            "auth.debug unauthorized | reason=invalid_token | expected_mask=%s | received_mask=%s",
+            _mask_token(expected),
+            _mask_token(token),
+        )
+        raise HTTPException(status_code=401, detail={"error": "invalid_token"})
+    return token
+
 """Unsubscribe feature removed per spec: no unsubscribe token validation."""
 
 def check_test_email_rate_limit(api_key: str) -> bool:
@@ -455,7 +569,7 @@ def _ws_is_authorized(websocket: WebSocket) -> bool:
         return False if API_TOKEN else True
 
 def validate_test_email_recipient(email: str) -> bool:
-    """Validate that email recipient is allowed"""
+    """Validate basic email format only; allow all domains."""
     if not email or not isinstance(email, str):
         return False
     
@@ -463,12 +577,9 @@ def validate_test_email_recipient(email: str) -> bool:
     email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     if not re.match(email_pattern, email):
         return False
-    
-    # Extract domain
-    domain = email.split('@')[1].lower()
-    
-    # Check if domain is allowed
-    return domain in ALLOWED_EMAIL_DOMAINS
+
+    # All domains allowed (no allowlist)
+    return True
 
     # (helpers removed; using app.mt5_utils for OHLC conversion, fetch, caching, and scheduling)
 
@@ -611,10 +722,12 @@ async def _indicator_scheduler() -> None:
             tfs_ema_updated: Set[str] = set()
             tfs_macd_updated: Set[str] = set()
             tfs_cs_updated: Set[str] = set()
+            # Ensure quantum is computed once per symbol per cycle
+            quantum_done: Set[str] = set()
             for symbol, tf in pairs:
                 try:
-                    # Fetch recent OHLC and gate on last closed bar
-                    bars = get_ohlc_data(symbol, tf, 300)
+                    # Fetch recent OHLC and gate on last closed bar (offloaded)
+                    bars = await _get_ohlc_data_async(symbol, tf, 300)
                     if not bars:
                         continue
                     closed_bars = [b for b in bars if getattr(b, "is_closed", None) is not False]
@@ -848,26 +961,35 @@ async def _indicator_scheduler() -> None:
                     except Exception:
                         # Strength calculation must never break the indicator scheduler loop
                         pass
-                    # Also compute and broadcast quantum analysis snapshot for this symbol
-                    q = await compute_quantum_for_symbol(symbol)
-                    q_msg = {
-                        "type": "quantum_update",
-                        "symbol": symbol,
-                        "data": q,
-                    }
-                    for c in clients:
-                        try:
-                            if getattr(c, "v2_broadcast", False):
-                                await c._try_send_json(q_msg)
+                    # Also compute and broadcast quantum analysis snapshot once per symbol per cycle
+                    if symbol not in quantum_done:
+                        quantum_done.add(symbol)
+                        q = await compute_quantum_for_symbol(symbol)
+                        q_msg = {
+                            "type": "quantum_update",
+                            "symbol": symbol,
+                            "data": q,
+                        }
+                        for c in clients:
+                            try:
+                                if getattr(c, "v2_broadcast", False):
+                                    await c._try_send_json(q_msg)
+                                    continue
+                            except Exception:
                                 continue
-                        except Exception:
-                            continue
 
                     # Correlation updates removed per product decision
                 except Exception as e:
                     error_count += 1
                     print(f"❌ Indicator scheduler error for {symbol} {tf.value}: {e}")
                     continue
+
+                # Yield occasionally to keep event loop responsive (Windows handshake stability)
+                if (processed % 10) == 0:
+                    try:
+                        await asyncio.sleep(0)
+                    except Exception:
+                        pass
 
             ended_at = datetime.now(timezone.utc)
             cpu_t1 = time.process_time()
@@ -1115,7 +1237,7 @@ async def get_indicator(
         results: List[Dict[str, Any]] = []
         for sym in candidates:
             try:
-                ensure_symbol_selected(sym)
+                await _ensure_symbol_selected_async(sym)
             except Exception:
                 pass
 
@@ -1194,15 +1316,15 @@ async def get_pricing(
             # Prefer cache
             snap = await price_cache.get_latest(sym)
             if not snap:
-                # Fallback to live MT5 tick
-                ensure_symbol_selected(sym)
-                info = mt5.symbol_info_tick(sym)
+                # Fallback to live MT5 tick (offloaded)
+                await _ensure_symbol_selected_async(sym)
+                info = await _symbol_info_tick_async(sym)
                 if info is not None:
                     ts_ms = getattr(info, "time_msc", 0) or int(getattr(info, "time", 0)) * 1000
                     dt_iso = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).isoformat()
                     bid = getattr(info, "bid", None)
                     ask = getattr(info, "ask", None)
-                    dcp = get_daily_change_pct_bid(sym)
+                    dcp = await _daily_change_pct_bid_async(sym)
                     snap = {
                         "symbol": sym,
                         "time": ts_ms,
@@ -1336,6 +1458,219 @@ async def refresh_alerts_manual(x_api_key: Optional[str] = Depends(require_api_t
     await alert_cache._refresh_cache()
     return {"message": "Alert cache refresh triggered", "status": "success"}
 
+# Debug email sender — secured with Authorization: Bearer <API_TOKEN>
+# Router for all debug endpoints (shared bearer token)
+debug_router = APIRouter(prefix="/api/debug", dependencies=[Depends(require_debug_bearer_token)])
+
+@debug_router.post("/email/send")
+async def debug_send_email(
+    mail_type: str = Query(..., alias="type", description="Email type: rsi|heatmap|heatmap_tracker|custom_indicator|rsi_correlation|news_reminder|daily_brief|currency_strength|test"),
+    to: str = Query(..., description="Recipient email address"),
+    bearer_token: str = Depends(require_debug_bearer_token),
+):
+    # Validate recipient domain for safety
+    if not validate_test_email_recipient(to):
+        raise HTTPException(status_code=400, detail="invalid_recipient")
+
+    # Rate limit per bearer token (5/hour) to avoid abuse
+    rate_key = bearer_token or "anon"
+    if not check_test_email_rate_limit(rate_key):
+        raise HTTPException(status_code=429, detail="rate_limited")
+
+    # Normalize mail type and define allowed set
+    t = (mail_type or "").strip().lower()
+    # Map common aliases
+    aliases = {
+        "quantum": "heatmap_tracker",
+        "tracker": "heatmap_tracker",
+        "quantum_tracker": "heatmap_tracker",
+        "correlation": "rsi_correlation",
+        "cs": "currency_strength",
+    }
+    t = aliases.get(t, t)
+    allowed = {
+        "rsi",
+        "heatmap",
+        "heatmap_tracker",
+        "custom_indicator",
+        "rsi_correlation",
+        "news_reminder",
+        "daily_brief",
+        "currency_strength",
+        "test",
+    }
+    if t not in allowed:
+        raise HTTPException(status_code=400, detail={"error": "unknown_type", "allowed": sorted(list(allowed))})
+
+    # Sample data factories
+    def sample_symbols(n: int = 2) -> List[str]:
+        try:
+            pool = list(ALLOWED_WS_SYMBOLS)
+            if not pool:
+                raise Exception()
+        except Exception:
+            pool = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+        random.shuffle(pool)
+        return pool[: max(1, n)]
+
+    def sample_tf() -> str:
+        try:
+            return random.choice([tf.value for tf in _rollout_timeframes()])
+        except Exception:
+            return "5M"
+
+    def sample_indicators(k: int = 3) -> List[str]:
+        base = ["EMA21", "EMA50", "EMA200", "MACD", "RSI", "UTBOT", "ICHIMOKU"]
+        random.shuffle(base)
+        return base[:k]
+
+    # Dispatch per email type with random payloads
+    ok = False
+    detail: Dict[str, Any] = {}
+    try:
+        if t == "test":
+            ok = await email_service.send_test_email(to)
+        elif t == "rsi":
+            pairs = []
+            for sym in sample_symbols(random.randint(1, 2)):
+                pairs.append({
+                    "symbol": sym,
+                    "timeframe": sample_tf(),
+                    "rsi_value": round(random.uniform(10, 90), 1),
+                    "current_price": round(random.uniform(0.5, 30000.0), 5),
+                    "trigger_condition": random.choice(["overbought", "oversold"]),
+                })
+            cfg = {
+                "rsi_overbought_threshold": 70,
+                "rsi_oversold_threshold": 30,
+            }
+            ok = await email_service.send_rsi_alert(to, f"RSI Debug #{random.randint(1000,9999)}", pairs, cfg)
+            detail = {"pairs": len(pairs)}
+        elif t == "heatmap":
+            pairs = []
+            for sym in sample_symbols(random.randint(1, 3)):
+                pairs.append({
+                    "symbol": sym,
+                    "strength": round(random.uniform(0, 100), 1),
+                    "signal": random.choice(["BUY", "SELL", "NEUTRAL"]),
+                    "timeframe": sample_tf(),
+                })
+            cfg = {
+                "trading_style": random.choice(["scalper", "swingtrader"]),
+                "buy_threshold_min": 70,
+                "buy_threshold_max": 100,
+                "sell_threshold_min": 0,
+                "sell_threshold_max": 30,
+                "selected_indicators": sample_indicators(3),
+            }
+            ok = await email_service.send_heatmap_alert(to, f"Heatmap Debug #{random.randint(1000,9999)}", pairs, cfg)
+            detail = {"pairs": len(pairs)}
+        elif t == "heatmap_tracker":
+            pairs = []
+            for sym in sample_symbols(random.randint(1, 3)):
+                cond = random.choice(["BUY", "SELL"])
+                buy_pct = round(random.uniform(60, 95), 2)
+                sell_pct = round(100 - buy_pct + random.uniform(-5, 5), 2)
+                pairs.append({
+                    "symbol": sym,
+                    "trigger_condition": cond,
+                    "buy_percent": buy_pct,
+                    "sell_percent": sell_pct,
+                    "final_score": round(random.uniform(10, 90), 2),
+                    "timeframe": random.choice(["style-weighted", sample_tf()]),
+                })
+            cfg = {
+                "selected_indicators": sample_indicators(4),
+                "buy_threshold": 70,
+                "sell_threshold": 30,
+            }
+            ok = await email_service.send_heatmap_tracker_alert(to, f"Quantum Debug #{random.randint(1000,9999)}", pairs, cfg)
+            detail = {"pairs": len(pairs)}
+        elif t == "custom_indicator":
+            pairs = []
+            for sym in sample_symbols(random.randint(1, 3)):
+                cond = random.choice(["BUY", "SELL"])
+                prob = round(random.uniform(55, 92), 2)
+                pairs.append({
+                    "symbol": sym,
+                    "timeframe": sample_tf(),
+                    "trigger_condition": cond,
+                    "buy_percent": prob if cond == "BUY" else None,
+                    "sell_percent": prob if cond == "SELL" else None,
+                })
+            cfg = {"selected_indicators": sample_indicators(3)}
+            ok = await email_service.send_custom_indicator_alert(to, f"Indicator Debug #{random.randint(1000,9999)}", pairs, cfg)
+            detail = {"pairs": len(pairs)}
+        elif t == "rsi_correlation":
+            pairs = []
+            for _ in range(random.randint(1, 2)):
+                s1, s2 = sample_symbols(2)
+                pairs.append({
+                    "symbol1": s1,
+                    "symbol2": s2,
+                    "timeframe": sample_tf(),
+                    "correlation_value": round(random.uniform(-1, 1), 2),
+                    "trigger_condition": random.choice(["strong_positive", "strong_negative", "weak_correlation", "correlation_break"]),
+                })
+            cfg = {
+                "strong_correlation_threshold": 0.70,
+                "moderate_correlation_threshold": 0.30,
+                "weak_correlation_threshold": 0.15,
+            }
+            ok = await email_service.send_rsi_correlation_alert(to, f"RSI Corr Debug #{random.randint(1000,9999)}", "real_correlation", pairs, cfg)
+            detail = {"pairs": len(pairs)}
+        elif t == "news_reminder":
+            ok = await email_service.send_news_reminder(
+                to,
+                event_title="CPI YoY",
+                event_time_local=f"{datetime.now().strftime('%Y-%m-%d %H:%M')} IST",
+                currency=random.choice(["USD", "EUR", "GBP", "JPY"]),
+                impact=random.choice(["High", "Medium"]),
+                previous=f"{round(random.uniform(1.0, 6.0), 1)}%",
+                forecast=f"{round(random.uniform(1.0, 6.0), 1)}%",
+                expected=f"{round(random.uniform(1.0, 6.0), 1)}%",
+                bias=random.choice(["bullish", "bearish", "neutral"]),
+            )
+        elif t == "daily_brief":
+            payload = {
+                "date_local": datetime.now().strftime("%Y-%m-%d"),
+                "time_label": "IST",
+                "tz_name": "Asia/Kolkata",
+                "core_signals": [
+                    {"pair": s, "signal": random.choice(["BUY", "SELL"]), "probability": round(random.uniform(55, 90), 1), "tf": sample_tf(), "badge_bg": "#19235d"}
+                    for s in sample_symbols(3)
+                ],
+                "rsi_oversold": [{"pair": s, "rsi": round(random.uniform(10, 25), 1)} for s in sample_symbols(2)],
+                "rsi_overbought": [{"pair": s, "rsi": round(random.uniform(75, 90), 1)} for s in sample_symbols(2)],
+                "news": [
+                    {"title": "CPI YoY", "time_local": "09:00 IST", "currency": "USD", "expected": "2.1%", "forecast": "2.2%", "bias": random.choice(["bullish", "bearish"])},
+                ],
+            }
+            ok = await email_service.send_daily_brief(to, payload)
+        elif t == "currency_strength":
+            timeframe = random.choice(["5M", "15M", "30M", "1H", "4H", "1D", "1W"])
+            strong = random.choice(["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"])
+            weak = random.choice([c for c in ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"] if c != strong])
+            ti = [
+                {"signal": "strongest", "symbol": strong, "strength": round(random.uniform(20, 80), 2)},
+                {"signal": "weakest", "symbol": weak, "strength": round(random.uniform(-80, -20), 2)},
+            ]
+            all_vals = {c: round(random.uniform(-100, 100), 2) for c in ["USD", "EUR", "GBP", "JPY", "AUD", "CAD", "CHF", "NZD"]}
+            prev = {"strongest": {"symbol": random.choice(list(all_vals.keys()))}, "weakest": {"symbol": random.choice(list(all_vals.keys()))}}
+            ok = await email_service.send_currency_strength_alert(to, f"Currency Strength Debug #{random.randint(1000,9999)}", timeframe, ti, prev_winners=prev, all_values=all_vals)
+            detail = {"timeframe": timeframe}
+        else:
+            raise HTTPException(status_code=400, detail="unhandled_type")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"type": t, "to": to, "sent": bool(ok), "detail": detail}
+
+# Include the debug router so that all /api/debug/* endpoints share the same bearer protection
+app.include_router(debug_router)
+
 """Heatmap/RSI/Correlation endpoints removed: using single RSI Tracker alert path."""
 
 async def _check_alerts_safely(tick_data: Dict[str, Any]) -> None:
@@ -1453,7 +1788,7 @@ class WSClient:
                 baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
                 for sym in RSI_SUPPORTED_SYMBOLS:
                     try:
-                        ensure_symbol_selected(sym)
+                        await _ensure_symbol_selected_async(sym)
                     except Exception:
                         continue
                     for tf in baseline_tfs:
@@ -1529,10 +1864,11 @@ class WSClient:
             return
             
         updates: List[dict] = []
+        iter_count = 0
         for sym in list(tick_symbols):
             try:
-                ensure_symbol_selected(sym)
-                info = mt5.symbol_info_tick(sym)
+                await _ensure_symbol_selected_async(sym)
+                info = await _symbol_info_tick_async(sym)
                 if info is None:
                     continue
                 ts_ms = getattr(info, "time_msc", 0) or int(getattr(info, "time", 0)) * 1000
@@ -1547,14 +1883,14 @@ class WSClient:
                         cache_key = _d1_ref_cache.get(sym)
                         if not cache_key or cache_key[0] != today_key:
                             # Refresh reference once per day per symbol
-                            ref = get_daily_change_pct_bid(sym)
+                            ref = await _daily_change_pct_bid_async(sym)
                             # get_daily_change_pct_bid computes using current bid; extract ref by reversing would be noisy
                             # For per-tick efficiency, we will compute dcp directly each time with helper, no separate ref exposure
                             dcp_val = ref
                             _d1_ref_cache[sym] = (today_key, ref if ref is not None else float('nan'))
                         else:
                             # Recompute with helper to honor spec with latest bid; fallback to cached ref-derived value
-                            dcp_val = get_daily_change_pct_bid(sym)
+                            dcp_val = await _daily_change_pct_bid_async(sym)
                     except Exception:
                         dcp_val = None
                     tick_dict = tick.model_dump()
@@ -1571,7 +1907,7 @@ class WSClient:
                         try:
                             baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
                             for tf in baseline_tfs:
-                                update_ohlc_cache(sym, tf)
+                                await _update_ohlc_cache_async(sym, tf)
                         except Exception:
                             pass
                     # Update latest price cache for REST pricing endpoint
@@ -1586,12 +1922,20 @@ class WSClient:
                         )
                     except Exception:
                         pass
-                        
+                
             except HTTPException:
                 # symbol disappeared or invalid; drop it
                 # Clean internal scheduling state
                 if sym in self.subscriptions:
                     del self.subscriptions[sym]
+            finally:
+                iter_count += 1
+                if (iter_count % 10) == 0:
+                    # Yield to keep event loop responsive for new connections
+                    try:
+                        await asyncio.sleep(0)
+                    except Exception:
+                        pass
                     
         if updates:
             # Create bid-only tick data for frontend (only send bid prices)

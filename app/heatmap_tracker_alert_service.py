@@ -1,6 +1,6 @@
 import asyncio
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any
 
 import logging
@@ -37,6 +37,11 @@ class HeatmapTrackerAlertService:
     def __init__(self) -> None:
         # Re-arm per (alert, symbol, side) to avoid re-firing while in-zone
         self._armed: Dict[str, Dict[str, bool]] = {}
+        # Per (alert, symbol) cooldown state for Quantum/Heatmap notifications
+        # { key: { 'until': datetime, 'last_trig': 'buy'|'sell', 'start': datetime } }
+        self._pair_cooldowns: Dict[str, Dict[str, Any]] = {}
+        # Fixed cooldown duration per requirement: 4 hours
+        self._cooldown_duration = timedelta(hours=4)
         # Supabase creds for trigger logging (tenant-aware)
         from .config import SUPABASE_URL, SUPABASE_SERVICE_KEY
         self.supabase_url = SUPABASE_URL
@@ -95,11 +100,25 @@ class HeatmapTrackerAlertService:
                         if symbol_canon not in RSI_SUPPORTED_SYMBOLS and (symbol_canon + "m") in RSI_SUPPORTED_SYMBOLS:
                             symbol_canon = symbol_canon + "m"
                         async with pair_locks.acquire(self._key(alert_id, symbol_canon)):
+                            # Cooldown check: skip evaluation entirely if within cooldown
+                            k = self._key(alert_id, symbol_canon)
+                            now = datetime.now(timezone.utc)
+                            cd = self._pair_cooldowns.get(k)
+                            if cd and isinstance(cd.get("until"), datetime) and now < cd["until"]:
+                                log_info(
+                                    logger,
+                                    "heatmap_cd_skip",
+                                    alert_id=alert_id,
+                                    symbol=symbol_canon,
+                                    cooldown_until=cd["until"].isoformat(),
+                                    last_trigger=cd.get("last_trig"),
+                                )
+                                # Do not compute/evaluate anything for this user+pair during cooldown
+                                continue
                             # Compute Buy%/Sell% via real OHLC-derived RSI mapping
                             buy_pct, sell_pct, final_score = await self._compute_buy_sell_percent(symbol_canon, style)
                             rsi_val = buy_pct  # Use Buy% as trigger metric for thresholds
                             # Pair evaluation start (verbose)
-                            k = self._key(alert_id, symbol_canon)
                             prev_state = self._armed.get(k)
                             log_debug(
                                 logger,
@@ -206,11 +225,39 @@ class HeatmapTrackerAlertService:
                             trig_type: Optional[str] = None
                             # Trigger on RSI threshold crossings with per-side arming
                             if st["buy"] and rsi_val >= buy_t:
-                                st["buy"] = False
-                                trig_type = "buy"
+                                # Post-cooldown same-signal suppression: if previous cooldown ended and this
+                                # trigger equals the last sent signal, suppress sending but still disarm.
+                                cd = self._pair_cooldowns.get(k)
+                                if cd and isinstance(cd.get("until"), datetime) and now >= cd["until"] and cd.get("last_trig") == "buy":
+                                    st["buy"] = False
+                                    log_debug(
+                                        logger,
+                                        "heatmap_cd_same_signal_suppress",
+                                        alert_id=alert_id,
+                                        symbol=symbol_canon,
+                                        last_trigger=cd.get("last_trig"),
+                                        reason="same_as_pre_cooldown",
+                                    )
+                                    trig_type = None
+                                else:
+                                    st["buy"] = False
+                                    trig_type = "buy"
                             elif st["sell"] and rsi_val <= sell_t:
-                                st["sell"] = False
-                                trig_type = "sell"
+                                cd = self._pair_cooldowns.get(k)
+                                if cd and isinstance(cd.get("until"), datetime) and now >= cd["until"] and cd.get("last_trig") == "sell":
+                                    st["sell"] = False
+                                    log_debug(
+                                        logger,
+                                        "heatmap_cd_same_signal_suppress",
+                                        alert_id=alert_id,
+                                        symbol=symbol_canon,
+                                        last_trigger=cd.get("last_trig"),
+                                        reason="same_as_pre_cooldown",
+                                    )
+                                    trig_type = None
+                                else:
+                                    st["sell"] = False
+                                    trig_type = "sell"
 
                             if trig_type:
                                 log_debug(
@@ -233,6 +280,20 @@ class HeatmapTrackerAlertService:
                                     "current_price": None,
                                     "timestamp": ts_iso,
                                 })
+                                # Start per user+pair cooldown (4 hours) and record last trigger type
+                                self._pair_cooldowns[k] = {
+                                    "until": now + self._cooldown_duration,
+                                    "last_trig": trig_type,
+                                    "start": now,
+                                }
+                                log_info(
+                                    logger,
+                                    "heatmap_cd_start",
+                                    alert_id=alert_id,
+                                    symbol=symbol_canon,
+                                    trigger=trig_type,
+                                    cooldown_until=(now + self._cooldown_duration).isoformat(),
+                                )
                                 log_info(
                                     logger,
                                     "heatmap_tracker_trigger",
