@@ -174,7 +174,7 @@ This document describes how the frontend should consume market data and indicato
 
 - `POST /api/debug/email/send?type={type}&to={email}`
   - Sends a debug email with random content for the specified template type to the given address.
-  - Auth: `Authorization: Bearer {DEBUG_EMAIL_API_TOKEN}` (debug-email specific token from `.env`, env var name: `DEBUG_EMAIL_API_TOKEN`).
+  - Auth: `Authorization: Bearer {DEBUG_API_TOKEN}` (debug-specific token from `.env`, env var name: `DEBUG_API_TOKEN`; applies to all `/api/debug/*`).
   - Query params:
     - `type` (string, required): one of `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`.
       - Aliases: `quantum`, `tracker`, `quantum_tracker` → `heatmap_tracker`; `correlation` → `rsi_correlation`; `cs` → `currency_strength`.
@@ -182,7 +182,7 @@ This document describes how the frontend should consume market data and indicato
   - Curl example:
     ```bash
     curl -X POST \
-      -H "Authorization: Bearer $DEBUG_EMAIL_API_TOKEN" \
+      -H "Authorization: Bearer $DEBUG_API_TOKEN" \
       "http://localhost:8000/api/debug/email/send?type=rsi&to=user@gmail.com"
     ```
   - Response example:

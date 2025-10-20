@@ -20,7 +20,7 @@ except ImportError:
 import orjson
 import logging
 from app.logging_config import configure_logging
-from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Header
+from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Header, APIRouter
 from starlette.websockets import WebSocketState
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +30,7 @@ from app.config import (
     ALLOWED_ORIGINS,
     MT5_TERMINAL_PATH,
     LIVE_RSI_DEBUGGING,
-    DEBUG_EMAIL_API_TOKEN,
+    DEBUG_API_TOKEN,
 )
 import app.news as news
 from app.alert_cache import alert_cache
@@ -447,8 +447,8 @@ def require_api_token_header(x_api_key: Optional[str] = None):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 def require_debug_bearer_token(authorization: Optional[str] = Header(default=None)) -> str:
-    """Require Authorization: Bearer <DEBUG_EMAIL_API_TOKEN> for debug endpoints."""
-    expected = (DEBUG_EMAIL_API_TOKEN or "").strip()
+    """Require Authorization: Bearer <DEBUG_API_TOKEN> for all /api/debug/* endpoints."""
+    expected = (DEBUG_API_TOKEN or "").strip()
     if not expected:
         raise HTTPException(status_code=401, detail="debug_token_not_configured")
     if not authorization or not isinstance(authorization, str):
@@ -1394,7 +1394,10 @@ async def refresh_alerts_manual(x_api_key: Optional[str] = Depends(require_api_t
     return {"message": "Alert cache refresh triggered", "status": "success"}
 
 # Debug email sender — secured with Authorization: Bearer <API_TOKEN>
-@app.post("/api/debug/email/send")
+# Router for all debug endpoints (shared bearer token)
+debug_router = APIRouter(prefix="/api/debug", dependencies=[Depends(require_debug_bearer_token)])
+
+@debug_router.post("/email/send")
 async def debug_send_email(
     mail_type: str = Query(..., alias="type", description="Email type: rsi|heatmap|heatmap_tracker|custom_indicator|rsi_correlation|news_reminder|daily_brief|currency_strength|test"),
     to: str = Query(..., description="Recipient email address"),
@@ -1598,6 +1601,9 @@ async def debug_send_email(
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"type": t, "to": to, "sent": bool(ok), "detail": detail}
+
+# Include the debug router so that all /api/debug/* endpoints share the same bearer protection
+app.include_router(debug_router)
 
 """Heatmap/RSI/Correlation endpoints removed: using single RSI Tracker alert path."""
 
