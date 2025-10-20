@@ -525,13 +525,13 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 #### Debug Email Endpoint
 
 - Path: `/api/debug/email/send?type={type}&to={email}`
-- Auth: `Authorization: Bearer {API_TOKEN}` (common bearer token from `.env`, env var name: `API_TOKEN`)
+- Auth: `Authorization: Bearer {DEBUG_EMAIL_API_TOKEN}` (debug-email specific bearer token from `.env`, env var name: `DEBUG_EMAIL_API_TOKEN`)
 - Supported `type` values: `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`
   - Aliases: `quantum`, `tracker`, `quantum_tracker` → `heatmap_tracker`; `correlation` → `rsi_correlation`; `cs` → `currency_strength`
   
 Example:
 ```bash
-curl -X POST -H "Authorization: Bearer $API_TOKEN" \
+curl -X POST -H "Authorization: Bearer $DEBUG_EMAIL_API_TOKEN" \
   "http://localhost:8000/api/debug/email/send?type=rsi&to=user@gmail.com"
 ```
 

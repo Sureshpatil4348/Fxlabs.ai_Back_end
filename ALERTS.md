@@ -32,7 +32,7 @@
 
 **Debug Email Testing**
 - Endpoint: `POST /api/debug/email/send?type={type}&to={email}`
-  - Auth: `Authorization: Bearer {API_TOKEN}` (common token from `.env`, env var name: `API_TOKEN`)
+  - Auth: `Authorization: Bearer {DEBUG_EMAIL_API_TOKEN}` (debug-email specific token from `.env`, env var name: `DEBUG_EMAIL_API_TOKEN`)
   - Allowed types: `rsi`, `heatmap`, `heatmap_tracker`, `custom_indicator`, `rsi_correlation`, `news_reminder`, `daily_brief`, `currency_strength`, `test`
   - Sends a template-accurate email populated with random but plausible values for quick verification.
 

@@ -30,6 +30,7 @@ from app.config import (
     ALLOWED_ORIGINS,
     MT5_TERMINAL_PATH,
     LIVE_RSI_DEBUGGING,
+    DEBUG_EMAIL_API_TOKEN,
 )
 import app.news as news
 from app.alert_cache import alert_cache
@@ -445,20 +446,18 @@ def require_api_token_header(x_api_key: Optional[str] = None):
     if API_TOKEN and x_api_key != API_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-def require_bearer_token_header(authorization: Optional[str] = Header(default=None)) -> Optional[str]:
-    """Require Authorization: Bearer <API_TOKEN> when API_TOKEN is configured.
-
-    Returns the token string when present (useful for rate limiting keys).
-    """
-    if not API_TOKEN:
-        return None
+def require_debug_bearer_token(authorization: Optional[str] = Header(default=None)) -> str:
+    """Require Authorization: Bearer <DEBUG_EMAIL_API_TOKEN> for debug endpoints."""
+    expected = (DEBUG_EMAIL_API_TOKEN or "").strip()
+    if not expected:
+        raise HTTPException(status_code=401, detail="debug_token_not_configured")
     if not authorization or not isinstance(authorization, str):
         raise HTTPException(status_code=401, detail="Unauthorized")
     parts = authorization.strip().split(" ", 1)
     if len(parts) != 2 or parts[0].lower() != "bearer":
         raise HTTPException(status_code=401, detail="Unauthorized")
     token = parts[1].strip()
-    if token != API_TOKEN:
+    if token != expected:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return token
 
@@ -1399,7 +1398,7 @@ async def refresh_alerts_manual(x_api_key: Optional[str] = Depends(require_api_t
 async def debug_send_email(
     mail_type: str = Query(..., alias="type", description="Email type: rsi|heatmap|heatmap_tracker|custom_indicator|rsi_correlation|news_reminder|daily_brief|currency_strength|test"),
     to: str = Query(..., description="Recipient email address"),
-    bearer_token: Optional[str] = Depends(require_bearer_token_header),
+    bearer_token: str = Depends(require_debug_bearer_token),
 ):
     # Validate recipient domain for safety
     if not validate_test_email_recipient(to):

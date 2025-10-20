@@ -12,6 +12,8 @@ except Exception:
 
 # Environment-driven configuration (no changes to names/semantics)
 API_TOKEN = os.environ.get("API_TOKEN", "")
+# Dedicated bearer token for debug email endpoint
+DEBUG_EMAIL_API_TOKEN = os.environ.get("DEBUG_EMAIL_API_TOKEN", "")
 ALLOWED_ORIGINS = [o for o in os.environ.get("ALLOWED_ORIGINS", "").split(",") if o]
 MT5_TERMINAL_PATH = os.environ.get("MT5_TERMINAL_PATH", "")
 
