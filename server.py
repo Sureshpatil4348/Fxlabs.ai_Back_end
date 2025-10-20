@@ -447,18 +447,44 @@ def require_api_token_header(x_api_key: Optional[str] = None):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 def require_debug_bearer_token(authorization: Optional[str] = Header(default=None)) -> str:
-    """Require Authorization: Bearer <DEBUG_API_TOKEN> for all /api/debug/* endpoints."""
+    """Require Authorization: Bearer <DEBUG_API_TOKEN> for all /api/debug/* endpoints.
+
+    Returns provided token on success; raises 401 with explicit reason otherwise.
+    """
     expected = (DEBUG_API_TOKEN or "").strip()
     if not expected:
-        raise HTTPException(status_code=401, detail="debug_token_not_configured")
-    if not authorization or not isinstance(authorization, str):
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=401, detail={"error": "debug_token_not_configured"})
+
+    if authorization is None:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": "missing_authorization_header",
+                "hint": "Provide Authorization: Bearer <DEBUG_API_TOKEN>",
+            },
+        )
+    if not isinstance(authorization, str):
+        raise HTTPException(status_code=401, detail={"error": "invalid_authorization_type"})
+
     parts = authorization.strip().split(" ", 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    token = parts[1].strip()
+    if len(parts) != 2:
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error": "invalid_authorization_format",
+                "hint": "Expected: 'Authorization: Bearer <token>'",
+            },
+        )
+    scheme, token = parts[0], parts[1].strip()
+    if scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail={"error": "invalid_authorization_scheme", "expected": "Bearer"},
+        )
+    if not token:
+        raise HTTPException(status_code=401, detail={"error": "missing_token"})
     if token != expected:
-        raise HTTPException(status_code=401, detail="Unauthorized")
+        raise HTTPException(status_code=401, detail={"error": "invalid_token"})
     return token
 
 """Unsubscribe feature removed per spec: no unsubscribe token validation."""
