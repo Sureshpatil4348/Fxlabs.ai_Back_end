@@ -260,6 +260,7 @@ Automatic email 5 minutes before each scheduled high‑impact news item
   - Auth fetch: `news_auth_fetch_start`, `news_auth_fetch_page`, `news_auth_fetch_page_emails` (debug), `news_auth_fetch_done`
   - Fallback: `news_users_fetch_fallback_alert_tables`
   - Send: `news_auth_emails` (full CSV), `news_reminder_recipients`, `news_reminder_completed`
+  - Provider diagnostics: non‑2xx and exceptions (e.g., 400) include structured SendGrid details (status, headers when available, and `errors[]` array with `code`, `field`, `message`, `help`).
 - Requirements: SendGrid configured (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`) and Supabase (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`). If either is missing, the scheduler logs and skips sending.
 
 ## Daily Morning Brief

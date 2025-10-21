@@ -333,7 +333,14 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
   - **Bearish bias**: Displayed in red (`#EF4444`) 
   - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
 - Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
- - Rendering: News reminders are sent as HTML‑only (no `text/plain` part) to ensure clients render the designed template instead of falling back to plain text.
+- Rendering: News reminders are sent as HTML‑only (no `text/plain` part) to ensure clients render the designed template instead of falling back to plain text.
+ - Error diagnostics: If SendGrid returns a non‑2xx or raises an HTTP error (e.g., `400 Bad Request`), the server logs structured details including status, headers (when available), and provider `errors[]` with `code`, `field`, `message`, and `help` to speed up troubleshooting.
+
+Common SendGrid 400 causes and checks
+- Unverified sender/From domain: verify the domain for `FROM_EMAIL` in SendGrid.
+- Empty/whitespace content: HTML body must be non‑empty after trimming.
+- Invalid recipient: ensure emails contain `@` and are well‑formed.
+- Misconfigured API key: tenant‑specific `FXLABS_SENDGRID_API_KEY`/`HEXTECH_SENDGRID_API_KEY` required.
 
 #### Auth Fetch Logging (Verbose)
 - Start: `daily_auth_fetch_start | page: 1 | per_page: 1000`
