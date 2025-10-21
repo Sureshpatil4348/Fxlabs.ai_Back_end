@@ -1773,16 +1773,7 @@ class EmailService:
             expected=_fmt(expected, "-"),
             bias=_fmt(bias, "-"),
         )
-        text = self._build_news_reminder_text(
-            event_title=_fmt(event_title, "News Event"),
-            event_time_local=_fmt(event_time_local, ""),
-            currency=_fmt(currency, "-"),
-            impact=_fmt(impact, "-"),
-            previous=_fmt(previous, "-"),
-            forecast=_fmt(forecast, "-"),
-            expected=_fmt(expected, "-"),
-            bias=_fmt(bias, "-"),
-        )
+        text = None
 
         subject = "FxLabs Prime • News reminder"
         mail = self._build_mail(

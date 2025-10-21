@@ -333,6 +333,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
   - **Bearish bias**: Displayed in red (`#EF4444`) 
   - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
 - Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
+ - Rendering: News reminders are sent as HTML‑only (no `text/plain` part) to ensure clients render the designed template instead of falling back to plain text.
 
 #### Auth Fetch Logging (Verbose)
 - Start: `daily_auth_fetch_start | page: 1 | per_page: 1000`
