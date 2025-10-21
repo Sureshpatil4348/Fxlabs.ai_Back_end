@@ -56,7 +56,8 @@ This document describes how the frontend should consume market data and indicato
           "bid": 1.06871,
           "ask": 1.06885,
           "volume": 120,
-          "daily_change_pct": -0.12
+          "daily_change_pct": -0.12,
+          "daily_change": -0.00129
         }
       ]
     }

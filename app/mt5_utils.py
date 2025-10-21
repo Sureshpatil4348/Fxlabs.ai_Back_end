@@ -272,6 +272,24 @@ def get_daily_change_pct_bid(symbol: str) -> Optional[float]:
     except Exception:
         return None
 
+def get_daily_change_bid(symbol: str) -> Optional[float]:
+    """Compute absolute daily change on Bid basis.
+
+    daily_change = bid_now - D1_reference
+    where D1_reference is today's D1 open (bid) if today; else previous D1 close (bid).
+    """
+    try:
+        symbol = canonicalize_symbol(symbol)
+        ensure_symbol_selected(symbol)
+        tick = get_current_tick(symbol)
+        if tick is None or tick.bid is None:
+            return None
+        ref = _get_d1_reference_bid(symbol)
+        if ref is None:
+            return None
+        return float(tick.bid) - float(ref)
+    except Exception:
+        return None
  
 
 

@@ -448,10 +448,10 @@ V2 greeting example (capabilities + indicators registry):
   }
 }
 ```
-Tick payloads include `daily_change_pct` (Bid vs broker D1 reference) and only contain bid prices:
+Tick payloads include `daily_change` (absolute; Bid vs D1 reference) and `daily_change_pct` (percent; Bid vs D1 reference). Payload is bid-only:
 
 ```json
-{"type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871, "daily_change_pct": -0.12} ] }
+{"type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871, "daily_change_pct": -0.12, "daily_change": -0.00129} ] }
 ```
 
 

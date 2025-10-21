@@ -59,6 +59,7 @@ from app.mt5_utils import (
     update_ohlc_cache,
     get_cached_ohlc,
     get_daily_change_pct_bid,
+    get_daily_change_bid,
     canonicalize_symbol,
 )
 from app.rsi_utils import calculate_rsi_series, closed_closes
@@ -97,6 +98,12 @@ except Exception:
 async def _daily_change_pct_bid_async(symbol: str):
     try:
         return await asyncio.to_thread(get_daily_change_pct_bid, symbol)
+    except Exception:
+        return None
+
+async def _daily_change_bid_async(symbol: str):
+    try:
+        return await asyncio.to_thread(get_daily_change_bid, symbol)
     except Exception:
         return None
 # One-time warmup to backfill indicator cache at startup
@@ -1878,6 +1885,7 @@ class WSClient:
                 if tick:
                     # Inject daily_change_pct using cached D1 reference to avoid heavy calls per tick
                     dcp_val: Optional[float] = None
+                    dc_val: Optional[float] = None
                     try:
                         today_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                         cache_key = _d1_ref_cache.get(sym)
@@ -1887,15 +1895,20 @@ class WSClient:
                             # get_daily_change_pct_bid computes using current bid; extract ref by reversing would be noisy
                             # For per-tick efficiency, we will compute dcp directly each time with helper, no separate ref exposure
                             dcp_val = ref
+                            dc_val = await _daily_change_bid_async(sym)
                             _d1_ref_cache[sym] = (today_key, ref if ref is not None else float('nan'))
                         else:
                             # Recompute with helper to honor spec with latest bid; fallback to cached ref-derived value
                             dcp_val = await _daily_change_pct_bid_async(sym)
+                            dc_val = await _daily_change_bid_async(sym)
                     except Exception:
                         dcp_val = None
+                        dc_val = None
                     tick_dict = tick.model_dump()
                     if dcp_val is not None and dcp_val == dcp_val:  # not NaN
                         tick_dict["daily_change_pct"] = float(dcp_val)
+                    if dc_val is not None and dc_val == dc_val:  # not NaN
+                        tick_dict["daily_change"] = float(dc_val)
 
                     # Store full tick data for alert processing
                     full_tick_data = tick_dict.copy()
@@ -1946,7 +1959,8 @@ class WSClient:
                     "time": full_tick["time"],
                     "time_iso": full_tick["time_iso"],
                     "bid": full_tick["bid"],
-                    "daily_change_pct": full_tick.get("daily_change_pct")
+                    "daily_change_pct": full_tick.get("daily_change_pct"),
+                    "daily_change": full_tick.get("daily_change")
                 }
                 bid_only_updates.append(bid_only_tick)
 
