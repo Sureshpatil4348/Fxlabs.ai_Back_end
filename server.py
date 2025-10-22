@@ -1465,6 +1465,80 @@ async def refresh_alerts_manual(x_api_key: Optional[str] = Depends(require_api_t
     await alert_cache._refresh_cache()
     return {"message": "Alert cache refresh triggered", "status": "success"}
 
+@app.get("/api/ohlc")
+async def get_ohlc(
+    symbol: str = Query(..., description="Symbol, e.g., EURUSDm"),
+    timeframe: str = Query(..., description="One of 1M,5M,15M,30M,1H,4H,1D,1W"),
+    page: int = Query(1, ge=1, description="Page number (1-based)"),
+    per_page: int = Query(100, ge=1, le=1000, description="Bars per page (max 1000)"),
+    x_api_key: Optional[str] = Depends(require_api_token_header),
+):
+    """Return OHLC bars for a single symbol and timeframe with simple pagination.
+
+    Pagination is newest-first by page, but bars are returned in ascending time within the page.
+    Page 1 → most recent `per_page` bars; Page 2 → the previous `per_page`, and so on.
+    """
+    # Normalize and gate symbol to allowed set when available
+    sym = canonicalize_symbol(symbol)
+    try:
+        allowed_ws: Set[str] = set(ALLOWED_WS_SYMBOLS)
+    except Exception:
+        allowed_ws = set()
+    if allowed_ws and sym not in allowed_ws:
+        raise HTTPException(status_code=403, detail="forbidden_symbol")
+
+    # Parse timeframe
+    try:
+        tf = Timeframe(timeframe)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
+
+    # Fetch last (page * per_page) bars, then slice to the requested window
+    total = page * per_page
+    bars = await _get_ohlc_data_async(sym, tf, total)
+    if not bars:
+        return {"symbol": sym, "timeframe": tf.value, "page": page, "per_page": per_page, "count": 0, "bars": []}
+
+    end_idx = len(bars) - (page - 1) * per_page
+    start_idx = max(0, end_idx - per_page)
+    page_bars = bars[start_idx:end_idx]
+
+    # Serialize minimally (pydantic models are JSON serializable, but we return explicit fields for stability)
+    data = [
+        {
+            "symbol": b.symbol,
+            "timeframe": b.timeframe,
+            "time": b.time,
+            "time_iso": b.time_iso,
+            "open": b.open,
+            "high": b.high,
+            "low": b.low,
+            "close": b.close,
+            "volume": b.volume,
+            "tick_volume": b.tick_volume,
+            "spread": b.spread,
+            "openBid": b.openBid,
+            "highBid": b.highBid,
+            "lowBid": b.lowBid,
+            "closeBid": b.closeBid,
+            "openAsk": b.openAsk,
+            "highAsk": b.highAsk,
+            "lowAsk": b.lowAsk,
+            "closeAsk": b.closeAsk,
+            "is_closed": b.is_closed,
+        }
+        for b in page_bars
+    ]
+
+    return {
+        "symbol": sym,
+        "timeframe": tf.value,
+        "page": page,
+        "per_page": per_page,
+        "count": len(data),
+        "bars": data,
+    }
+
 # Debug email sender — secured with Authorization: Bearer <API_TOKEN>
 # Router for all debug endpoints (shared bearer token)
 debug_router = APIRouter(prefix="/api/debug", dependencies=[Depends(require_debug_bearer_token)])

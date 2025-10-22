@@ -34,6 +34,7 @@ Note — FxLabs Prime Domain Update
 - **Real-time Data Streaming**: Live tick and RSI indicator data via WebSocket (broadcast-only)
 - **Cache-first Indicator Access**: REST `/api/indicator` serves latest RSI values from an in-memory cache populated on startup and updated on every closed-candle cycle. Also supports `indicator=quantum` to retrieve per-timeframe and overall Buy/Sell % (signals-only aggregation). Per-indicator entries now include a concise `reason` string explaining the current signal.
 - **Historical Data Access**: REST API for historical market data
+  - Use `GET /api/ohlc` to retrieve OHLC bars for a single symbol and timeframe with simple pagination (`page`, `per_page`). Bars are returned in ascending time within the page; Page 1 is the most recent bars. Each bar includes `is_closed` and Bid/Ask parallel fields.
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap and RSI alerts with email notifications
  - Currency Strength alerts: notifies whenever the strongest/weakest fiat currency changes for a configured timeframe
@@ -525,6 +526,7 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 | `/health` | GET | Health check and MT5 status | No |
 | `/api/indicator` | GET | Latest closed‑bar value(s) for a given indicator across pairs; Currency Strength snapshot | Yes |
 | `/api/pricing` | GET | Latest cached price snapshot(s) with daily_change_pct | Yes |
+| `/api/ohlc` | GET | Historical OHLC bars with simple pagination | Yes |
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
 | `/api/news/refresh` | POST | Manual news refresh | Yes |
@@ -1590,3 +1592,9 @@ Why Outlook flagged it:
 Code defaults updated:
 - No code defaults for email sender. Set tenant-specific sender (`FXLABS_FROM_EMAIL` or `HEXTECH_FROM_EMAIL`) and configure your domain in SendGrid.
 - Daily Brief footer unified to a single gray disclaimer block; removed duplicate footer and yellow disclaimer styling. Headings avoid black; use #19235d where applicable.
+#### OHLC Endpoint
+
+- Path: `/api/ohlc?symbol=EURUSDm&timeframe=5M&page=1&per_page=100`
+- Auth: `X-API-Key: {API_TOKEN}` when configured.
+- Params: `symbol` (required), `timeframe` (required: `1M,5M,15M,30M,1H,4H,1D,1W`), `page` (default 1), `per_page` (default 100, max 1000)
+- Returns: `{ symbol, timeframe, page, per_page, count, bars: [...] }` where each bar includes OHLC, optional bid/ask parallels, and `is_closed`.

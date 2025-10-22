@@ -173,6 +173,34 @@ This document describes how the frontend should consume market data and indicato
     }
     ```
 
+- `GET /api/ohlc?symbol=EURUSDm&timeframe=5M&page=1&per_page=100`
+  - Returns OHLC bars for a single symbol and timeframe with simple pagination.
+  - Auth: `X-API-Key: {API_TOKEN}` when `API_TOKEN` is configured.
+  - Query params:
+    - `symbol` (string, required): e.g., `EURUSDm`.
+    - `timeframe` (string, required): one of `1M,5M,15M,30M,1H,4H,1D,1W`.
+    - `page` (int, optional, default `1`): 1-based page (Page 1 = most recent bars).
+    - `per_page` (int, optional, default `100`, max `1000`): bars per page.
+  - Notes:
+    - Bars are returned in ascending time within the page. `Page 1` returns the most recent `per_page` bars; `Page 2` returns the previous `per_page`, etc.
+    - Each bar includes `is_closed` indicating whether the candle is closed at response time.
+    - Symbols may be filtered to an allowlist when configured.
+  - Response example:
+    ```json
+    {
+      "symbol": "EURUSDm",
+      "timeframe": "5M",
+      "page": 1,
+      "per_page": 3,
+      "count": 3,
+      "bars": [
+        {"symbol":"EURUSDm","timeframe":"5M","time":1696229820000,"time_iso":"2025-10-02T14:17:00+00:00","open":1.06870,"high":1.06890,"low":1.06860,"close":1.06880,"volume":120,"tick_volume":120,"spread":12,"openBid":1.06864,"highBid":1.06884,"lowBid":1.06854,"closeBid":1.06874,"openAsk":1.06876,"highAsk":1.06896,"lowAsk":1.06866,"closeAsk":1.06886,"is_closed":true},
+        {"symbol":"EURUSDm","timeframe":"5M","time":1696229940000,"time_iso":"2025-10-02T14:19:00+00:00","open":1.06880,"high":1.06900,"low":1.06870,"close":1.06895,"volume":98,"tick_volume":98,"spread":12,"openBid":1.06874,"highBid":1.06894,"lowBid":1.06864,"closeBid":1.06889,"openAsk":1.06886,"highAsk":1.06906,"lowAsk":1.06876,"closeAsk":1.06901,"is_closed":true},
+        {"symbol":"EURUSDm","timeframe":"5M","time":1696230060000,"time_iso":"2025-10-02T14:21:00+00:00","open":1.06895,"high":1.06905,"low":1.06880,"close":1.06892,"volume":45,"tick_volume":45,"spread":12,"openBid":1.06889,"highBid":1.06899,"lowBid":1.06874,"closeBid":1.06886,"openAsk":1.06901,"highAsk":1.06911,"lowAsk":1.06886,"closeAsk":1.06898,"is_closed":false}
+      ]
+    }
+    ```
+
 - `POST /api/debug/email/send?type={type}&to={email}`
   - Sends a debug email with random content for the specified template type to the given address.
   - Auth: `Authorization: Bearer {DEBUG_API_TOKEN}` (debug-specific token from `.env`, env var name: `DEBUG_API_TOKEN`; applies to all `/api/debug/*`).
