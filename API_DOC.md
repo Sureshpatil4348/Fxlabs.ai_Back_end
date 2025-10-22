@@ -185,6 +185,8 @@ This document describes how the frontend should consume market data and indicato
     - Bars are returned in ascending time within the page. `Page 1` returns the most recent `per_page` bars; `Page 2` returns the previous `per_page`, etc.
     - Each bar includes `is_closed` indicating whether the candle is closed at response time.
     - Symbols may be filtered to an allowlist when configured.
+    - Meaning of "count": 3: It represents the number of OHLC records returned in this response page (i.e., the length of the data array for this page), not the total across all pages.
+    - Last page: count < per_page
   - Response example:
     ```json
     {
