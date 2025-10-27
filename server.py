@@ -1988,7 +1988,7 @@ class WSClient:
                     full_tick_data = tick_dict.copy()
                     updates.append(full_tick_data)
                     self._last_sent_ts[sym] = ts_ms
-                    
+
                     # Update OHLC caches for baseline timeframes in v2 broadcast mode only (no live OHLC streaming in v2)
                     if self.v2_broadcast and ("ohlc" in self.supported_data_types):
                         try:
@@ -2009,7 +2009,32 @@ class WSClient:
                         )
                     except Exception:
                         pass
-                
+                    # Immediately send this tick to clients (per-tick emission)
+                    try:
+                        bid_only_tick = {
+                            "symbol": full_tick_data["symbol"],
+                            "time": full_tick_data["time"],
+                            "time_iso": full_tick_data.get("time_iso"),
+                            "bid": full_tick_data.get("bid"),
+                            "daily_change_pct": full_tick_data.get("daily_change_pct"),
+                            "daily_change": full_tick_data.get("daily_change"),
+                        }
+                        sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": [bid_only_tick]}))
+                        # Metrics: per-endpoint counters for tick messages and items
+                        try:
+                            label = getattr(self, "conn_label", "v2")
+                            _metrics_inc(label, "ticks_items", by=1)
+                            if sent:
+                                _metrics_inc(label, "ok_ticks", 1)
+                            else:
+                                _metrics_inc(label, "fail_ticks", 1)
+                        except Exception:
+                            pass
+                        if not sent:
+                            return
+                    except Exception:
+                        # Do not crash the loop on send issues; treat as disconnect
+                        return
             except HTTPException:
                 # symbol disappeared or invalid; drop it
                 # Clean internal scheduling state
@@ -2023,42 +2048,13 @@ class WSClient:
                         await asyncio.sleep(0)
                     except Exception:
                         pass
-                    
         if updates:
-            # Create bid-only tick data for frontend (only send bid prices)
-            bid_only_updates = []
-            for full_tick in updates:
-                bid_only_tick = {
-                    "symbol": full_tick["symbol"],
-                    "time": full_tick["time"],
-                    "time_iso": full_tick["time_iso"],
-                    "bid": full_tick["bid"],
-                    "daily_change_pct": full_tick.get("daily_change_pct"),
-                    "daily_change": full_tick.get("daily_change")
-                }
-                bid_only_updates.append(bid_only_tick)
-
-            sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": bid_only_updates}))
-            # Metrics: per-endpoint counters for tick messages and items
-            try:
-                label = getattr(self, "conn_label", "v2")
-                _metrics_inc(label, "ticks_items", by=len(bid_only_updates))
-                if sent:
-                    _metrics_inc(label, "ok_ticks", 1)
-                else:
-                    _metrics_inc(label, "fail_ticks", 1)
-            except Exception:
-                pass
-            if not sent:
-                # Stop trying if client is gone
-                return
-            
             # Check for alerts on tick updates (non-blocking background task)
             # Only check alerts if there are active alerts to avoid unnecessary processing
             try:
                 all_alerts = await alert_cache.get_all_alerts()
                 total_alerts = sum(len(alerts) for alerts in all_alerts.values())
-                
+
                 if ENABLE_TICK_TRIGGERED_ALERTS and total_alerts > 0:
                     # Provide tick_data in a dict keyed by symbol as expected by alert services
                     # Use full tick data for alert processing (includes bid, ask, volume, etc.)
@@ -2080,20 +2076,20 @@ class WSClient:
                     }
                     # Create background task to check alerts without blocking the tick loop
                     asyncio.create_task(_check_alerts_safely(tick_data))
-            except Exception as e:
+            except Exception:
                 # If alert cache check fails, still try to check alerts to be safe
-                tick_data_map = {}
-                for td in updates:
-                    sym = td.get("symbol")
-                    if not sym:
-                        continue
-                    tick_data_map[sym] = {
-                        "bid": td.get("bid"),
-                        "ask": td.get("ask"),
-                        "time": td.get("time"),
-                        "volume": td.get("volume"),
-                    }
                 if ENABLE_TICK_TRIGGERED_ALERTS:
+                    tick_data_map = {}
+                    for td in updates:
+                        sym = td.get("symbol")
+                        if not sym:
+                            continue
+                        tick_data_map[sym] = {
+                            "bid": td.get("bid"),
+                            "ask": td.get("ask"),
+                            "time": td.get("time"),
+                            "volume": td.get("volume"),
+                        }
                     tick_data = {
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "symbols": list(tick_symbols),

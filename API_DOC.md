@@ -44,7 +44,7 @@ This document describes how the frontend should consume market data and indicato
   - Unknown action: `{ "type": "error", "error": "unknown_action" }`
 
 - **Server pushes**:
-  - Ticks (about once per second, coalesced):
+  - Ticks (about once per second per scan; one tick per message, bid-only):
     ```json
     {
       "type": "ticks",
@@ -54,8 +54,6 @@ This document describes how the frontend should consume market data and indicato
           "time": 1696229945123,
           "time_iso": "2025-10-02T14:19:05.123Z",
           "bid": 1.06871,
-          "ask": 1.06885,
-          "volume": 120,
           "daily_change_pct": -0.12,
           "daily_change": -0.00129
         }
@@ -250,7 +248,7 @@ Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` ser
 
 1) On app load, fetch initial data via REST (`/api/indicator`) for selected indicator, symbols, and timeframe.
 2) Open WebSocket v2 for live updates. Expect:
-   - `ticks` approximately every second (coalesced).
+   - `ticks` approximately every second per scan (each message carries a single tick; bid-only).
    - `indicator_update` only when a new bar closes (≈ timeframe boundary; detection runs every ~10 seconds).
  
 3) Merge live updates into your store. Keep RSI as a closed-bar value; show live price from `ticks`.
