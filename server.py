@@ -399,7 +399,7 @@ def _metrics_inc(label: str, key: str, by: int = 1) -> None:
         _ws_metrics[label][key] = _ws_metrics[label].get(key, 0) + int(by)
     except Exception:
         # Observability must never break runtime
-    pass
+        pass
 
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
