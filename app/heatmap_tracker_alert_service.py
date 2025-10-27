@@ -105,7 +105,8 @@ class HeatmapTrackerAlertService:
                             now = datetime.now(timezone.utc)
                             cd = self._pair_cooldowns.get(k)
                             if cd and isinstance(cd.get("until"), datetime) and now < cd["until"]:
-                                log_info(
+                                # Emit cooldown skip only at DEBUG level to avoid INFO noise
+                                log_debug(
                                     logger,
                                     "heatmap_cd_skip",
                                     alert_id=alert_id,

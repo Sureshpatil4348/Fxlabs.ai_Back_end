@@ -1187,6 +1187,9 @@ All logs include timestamps with timezone offset using the format:
 
 You can control verbosity via `LOG_LEVEL` (default `INFO`).
 
+- Note: Heatmap cooldown-skip logs (`heatmap_cd_skip`) are DEBUG-only to avoid INFO spam. Set `LOG_LEVEL=DEBUG` to see lines like:
+  `🔔 heatmap_cd_skip | alert_id: ... | cooldown_until: ... | last_trigger: ... | symbol: ...`.
+
 #### Verbosity Flags (non-critical logs)
 - `LIVE_RSI_DEBUGGING` — emits periodic closed‑bar RSI for BTC/USD 5M (default `false`).
 - `LOG_ENV_DUMP` — prints full environment snapshot at startup (default `false`; may include secrets).
