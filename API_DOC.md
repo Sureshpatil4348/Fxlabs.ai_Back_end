@@ -31,7 +31,7 @@ This document describes how the frontend should consume market data and indicato
   "message": "WebSocket connected successfully",
   "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
   "notes": ["currency_strength requires timeframe >= 5M"],
-  "supported_data_types": ["ticks","indicators"],
+  "supported_data_types": ["ticks","indicators","ohlc"],
   "supported_price_bases": ["last","bid","ask"],
   "indicators": {
     "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]}
@@ -91,6 +91,34 @@ This document describes how the frontend should consume market data and indicato
       "data": [
         { "symbol": "EURUSDm", "bar_time": 1696229940000, "indicators": { "rsi": {"14": 51.23} } },
         { "symbol": "BTCUSDm",  "bar_time": 1696229940000, "indicators": { "rsi": {"14": 48.10} } }
+      ]
+    }
+    ```
+  - OHLC updates (10s poller; consolidated by timeframe; on candle close for all symbols):
+    ```json
+    {
+      "type": "ohlc_updates",
+      "timeframe": "5M",
+      "data": [
+        {
+          "symbol": "EURUSDm",
+          "bar_time": 1696229940000,
+          "ohlc": {
+            "time_iso": "2025-10-02T14:19:00Z",
+            "open": 1.06791,
+            "high": 1.06871,
+            "low": 1.06750,
+            "close": 1.06810,
+            "volume": 1234,
+            "tick_volume": 5678,
+            "spread": 12
+          }
+        },
+        {
+          "symbol": "BTCUSDm",
+          "bar_time": 1696229940000,
+          "ohlc": { "open": 27050.0, "high": 27150.0, "low": 27000.0, "close": 27123.5 }
+        }
       ]
     }
     ```

@@ -772,6 +772,8 @@ async def _indicator_scheduler() -> None:
             quantum_done: Set[str] = set()
             # Accumulate indicator snapshots per timeframe to consolidate WS messages
             indicator_batches: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            # Accumulate OHLC snapshots (latest closed bar) per timeframe for consolidated WS pushes
+            ohlc_batches: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
             for symbol, tf in pairs:
                 try:
                     # Fetch recent OHLC and gate on last closed bar (offloaded)
@@ -910,7 +912,7 @@ async def _indicator_scheduler() -> None:
                         # Debug-only logging must never break the scheduler
                         pass
 
-                    # Queue into timeframe batch for consolidated WS push (v2 broadcast only)
+                    # Queue into timeframe batches for consolidated WS push (v2 broadcast only)
                     item = {
                         "symbol": symbol,
                         "bar_time": last_closed.time,
@@ -919,6 +921,36 @@ async def _indicator_scheduler() -> None:
                         },
                     }
                     indicator_batches[tf.value].append(item)
+
+                    # OHLC batch item using the last closed bar
+                    try:
+                        # Basic OHLC fields; include optional fields if present
+                        ohlc_obj: Dict[str, Any] = {
+                            "open": float(getattr(last_closed, "open", None)) if getattr(last_closed, "open", None) is not None else None,
+                            "high": float(getattr(last_closed, "high", None)) if getattr(last_closed, "high", None) is not None else None,
+                            "low": float(getattr(last_closed, "low", None)) if getattr(last_closed, "low", None) is not None else None,
+                            "close": float(getattr(last_closed, "close", None)) if getattr(last_closed, "close", None) is not None else None,
+                        }
+                        # Optional extras
+                        for opt_key in ("volume", "tick_volume", "spread", "time_iso",
+                                        "openBid", "highBid", "lowBid", "closeBid",
+                                        "openAsk", "highAsk", "lowAsk", "closeAsk"):
+                            val = getattr(last_closed, opt_key, None)
+                            if val is not None:
+                                try:
+                                    ohlc_obj[opt_key] = float(val) if isinstance(val, (int, float)) else val
+                                except Exception:
+                                    ohlc_obj[opt_key] = val
+
+                        ohlc_item = {
+                            "symbol": symbol,
+                            "bar_time": last_closed.time,
+                            "ohlc": ohlc_obj,
+                        }
+                        ohlc_batches[tf.value].append(ohlc_item)
+                    except Exception:
+                        # Never allow OHLC batching to break scheduling
+                        pass
 
                     # Compute and cache currency strength for this timeframe once per poll cycle per timeframe (closed-bar only)
                     try:
@@ -990,7 +1022,7 @@ async def _indicator_scheduler() -> None:
                     except Exception:
                         pass
 
-            # After processing all pairs, broadcast consolidated indicator updates per timeframe
+            # After processing all pairs, broadcast consolidated indicator and OHLC updates per timeframe
             if clients and indicator_batches:
                 for tf_str, items in indicator_batches.items():
                     await _broadcast_json_v2({
@@ -998,6 +1030,14 @@ async def _indicator_scheduler() -> None:
                         "timeframe": tf_str,
                         "data": items,
                     }, metric="indicator")
+
+            if clients and ohlc_batches:
+                for tf_str, items in ohlc_batches.items():
+                    await _broadcast_json_v2({
+                        "type": "ohlc_updates",
+                        "timeframe": tf_str,
+                        "data": items,
+                    })
 
             ended_at = datetime.now(timezone.utc)
             cpu_t1 = time.process_time()
@@ -2343,8 +2383,8 @@ async def ws_market_v2(websocket: WebSocket):
                 "type": "connected",
                 "message": "WebSocket connected successfully",
                 "supported_timeframes": [tf.value for tf in Timeframe],
-                # v2: ticks + indicators only; OHLC is not streamed to frontend
-                "supported_data_types": ["ticks", "indicators"],
+                # v2: ticks + indicators + consolidated ohlc_updates (on candle close)
+                "supported_data_types": ["ticks", "indicators", "ohlc"],
                 "supported_price_bases": ["last", "bid", "ask"],
                 "indicators": {
                     "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]}

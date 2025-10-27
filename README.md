@@ -1,8 +1,8 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-WebSocket v2: Use `/market-v2` for live ticks, indicator updates, quantum analysis updates, and trending pairs updates (hourly broadcast). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no OHLC or indicator snapshots in v2. Ping/pong is supported for keepalive.
+WebSocket v2: Use `/market-v2` for live ticks, consolidated OHLC updates on candle close, indicator updates, quantum analysis updates, and trending pairs updates (hourly broadcast). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no initial OHLC or indicator snapshots in v2; use REST for initial state. Ping/pong is supported for keepalive.
 
-Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, coalesced per scan across all pairs; OHLC is not streamed to clients in v2). No EA or external bridge required.
+Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick, consolidated OHLC (on candle close), and indicator updates over `/market-v2` (coalesced per scan across all pairs). No EA or external bridge required.
 
 A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, AI-powered news analysis, and comprehensive alert systems for trading applications.
 
@@ -362,7 +362,7 @@ Common SendGrid 400 causes and checks
 
 #### Market Data WebSocket v2 (`/market-v2`) — preferred
 - **URL**: `ws://localhost:8000/market-v2`
-- **Purpose**: Real-time tick and indicator streaming (no OHLC streaming to clients)
+- **Purpose**: Real-time ticks, consolidated OHLC (on candle close), and indicator streaming
 - **Behavior**: Broadcast-only baseline (symbols/timeframes). `subscribe`/`unsubscribe` are ignored (server replies with `{type:"info", message:"v2 broadcast-only: subscribe/unsubscribe ignored"}`).
   - As of v2.0.0+, tick updates include all allowed symbols every 1000 ms on a delta basis (only symbols with a new tick since the last send appear in each message).
 
@@ -373,7 +373,7 @@ Tick push payloads to clients remain a list of ticks. Internally, for alert chec
   "type": "connected",
   "message": "WebSocket connected successfully",
   "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W"],
-  "supported_data_types": ["ticks", "indicators"],
+  "supported_data_types": ["ticks", "indicators", "ohlc"],
   "supported_price_bases": ["last", "bid", "ask"]
 }
 ```
@@ -413,9 +413,9 @@ Internal alert tick_data shape:
   - Reconnect with backoff on close codes 1001/1006.
 
 #### Market Data WebSocket v2 (`/market-v2`) — preferred
-- Use `/market-v2` for new clients. It exposes tick and indicator payloads only (no OHLC streaming), and advertises capabilities via `supported_data_types` in the greeting.
-- Current capabilities: `supported_data_types = ["ticks","indicators"]`.
-- Broadcast-All mode: v2 pushes ticks and indicators (closed‑bar) to all connected clients without explicit subscriptions. OHLC is computed server‑side only for indicators/alerts.
+- Use `/market-v2` for new clients. It exposes ticks, indicators, and consolidated `ohlc_updates` on candle close, and advertises capabilities via `supported_data_types` in the greeting.
+- Current capabilities: `supported_data_types = ["ticks","indicators","ohlc"]`.
+- Broadcast-All mode: v2 pushes ticks and closed‑bar updates (indicators and OHLC) to all connected clients without explicit subscriptions.
   - Symbols: all symbols in `ALLOWED_WS_SYMBOLS` (defaults to all `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`, broker‑suffixed)
 - Timeframes: M1, M5, M15, M30, H1, H4, D1, W1
   - Note: `currency_strength` enforces a minimum timeframe of `5M` (no `1M`).
@@ -465,7 +465,7 @@ Tick push details (how it’s computed and sent):
 - Daily change math (Bid basis):
   - D1 reference = today’s D1 open (Bid) when today’s bar exists; otherwise previous D1 close (Bid).
   - `daily_change = bid_now − D1_reference`; `daily_change_pct = 100 * (bid_now − D1_reference) / D1_reference`.
-- Side effects: latest price snapshot is written to `price_cache` for `/api/pricing`; OHLC caches are refreshed internally for baseline timeframes, but v2 does not stream OHLC.
+- Side effects: latest price snapshot is written to `price_cache` for `/api/pricing`; OHLC caches are refreshed internally for baseline timeframes. v2 streams consolidated `ohlc_updates` on candle close per timeframe.
 
 Tick scalability and latency
 - Architecture: Implemented a single-producer TickHub. The server polls MT5 about every 500ms, builds one pre‑serialized `ticks` payload, and broadcasts it to all connected v2 clients.
@@ -489,6 +489,19 @@ Live push when a new bar is detected by the 10s poller. One message per timefram
 ```
 
 Currency Strength updates are also pushed over WebSocket on closed bars only and only for WS-allowed timeframes (minimum `5M`).
+
+OHLC payloads (broadcast-only, consolidated)
+- On each candle close detected by the 10s poller, one message per timeframe contains the latest closed bar for all updated symbols:
+```
+{
+  "type": "ohlc_updates",
+  "timeframe": "5M",
+  "data": [
+    { "symbol": "EURUSDm", "bar_time": 1696229940000, "ohlc": { "open": 1.06791, "high": 1.06871, "low": 1.06750, "close": 1.06810 } },
+    { "symbol": "BTCUSDm",  "bar_time": 1696229940000, "ohlc": { "open": 27050.0, "high": 27150.0, "low": 27000.0, "close": 27123.5 } }
+  ]
+}
+```
 
 Server logs: On each new closed-bar currency strength broadcast, the server logs an INFO line on logger `obs.curstr` with the timeframe, bar_time, and the JSON map of strengths, for example:
 
