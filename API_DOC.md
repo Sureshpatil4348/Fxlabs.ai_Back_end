@@ -45,7 +45,7 @@ This document describes how the frontend should consume market data and indicato
   - Unknown action: `{ "type": "error", "error": "unknown_action" }`
 
 - **Server pushes**:
-  - Ticks (about once per second; one message per scan with latest for all pairs, bid-only):
+  - Ticks (about every 500ms; one message per scan with latest for all pairs, bid-only):
     ```json
     {
       "type": "ticks",
@@ -70,12 +70,12 @@ This document describes how the frontend should consume market data and indicato
     }
     ```
   - Latency and scalability notes:
-    - Behavior: a single global TickHub polls MT5 ~1 Hz, coalesces latest ticks for all allowed symbols, pre‑serializes one payload, and broadcasts it to all connected v2 clients. Clients do not perform MT5 calls.
+    - Behavior: a single global TickHub polls MT5 ~2 Hz (≈500ms), coalesces latest ticks for all allowed symbols, pre‑serializes one payload, and broadcasts it to all connected v2 clients. Clients do not perform MT5 calls.
     - Results: eliminates per‑client duplication, reduces thread pool contention, and lowers jitter under fan‑out. Metrics still record per‑client send success/failure and item counts.
     - Higher scale: if needed in the future, TickHub can be moved to a dedicated process with IPC/pub‑sub to support multiple web workers.
   - Tick calculation and push pipeline (implementation summary):
     - Source: MT5 `symbol_info_tick` per allowed symbol; converted to `Tick` via `app.mt5_utils._to_tick`.
-    - Frequency and batching: a single loop sends coalesced updates ~1 Hz. Within each scan, only symbols with a new tick timestamp are included. One `{"type":"ticks","data":[...]}` message per scan.
+    - Frequency and batching: a single loop sends coalesced updates about every 500ms (~2 Hz). Within each scan, only symbols with a new tick timestamp are included. One `{"type":"ticks","data":[...]}` message per scan.
     - Timestamp semantics: `time` is the broker-provided epoch milliseconds (`time_msc` fallback to `time*1000`), and `time_iso` is derived from it in UTC. Timestamps are per-item; there is no outer batch-level timestamp in v2.
     - Fields: payload is bid-only for UI (`symbol, time, time_iso, bid`). Server may compute and include `daily_change` and `daily_change_pct`.
     - Daily change math (Bid basis):

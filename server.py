@@ -1783,7 +1783,7 @@ class WSClient:
         self.next_ohlc_updates: Dict[str, Dict[Timeframe, datetime]] = {}
         self._task: Optional[asyncio.Task] = None
         self._ohlc_task: Optional[asyncio.Task] = None
-        self._send_interval_s: float = 1.0  # 1 Hz for ticks (1000ms)
+        self._send_interval_s: float = 0.5  # Global TickHub handles ticks (~500ms); this per-client loop is unused in v2
         # Supported data types for this connection (endpoint specific)
         self.supported_data_types: Set[str] = set(supported_data_types or {"ticks", "ohlc"})
         # v2 broadcast mode: server pushes all symbols/timeframes without explicit subscribe
@@ -2155,9 +2155,9 @@ class TickHub:
     def __init__(self) -> None:
         self._task: Optional[asyncio.Task] = None
         try:
-            self._interval_s: float = float(os.environ.get("WS_TICK_INTERVAL_S", "1.0"))
+            self._interval_s: float = float(os.environ.get("WS_TICK_INTERVAL_S", "0.5"))
         except Exception:
-            self._interval_s = 1.0
+            self._interval_s = 0.5
         # Deduplicate per symbol by MT5 tick timestamp
         self._last_sent_ts: Dict[str, int] = {}
         # Optional: refresh OHLC caches alongside ticks (default on)

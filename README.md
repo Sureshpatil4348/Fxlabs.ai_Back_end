@@ -459,7 +459,7 @@ Tick payloads include `daily_change` (absolute; Bid vs D1 reference) and `daily_
 ```
 
 Tick push details (how it’s computed and sent):
-- Loop cadence ~1 Hz: the server scans all allowed symbols and coalesces updates into a single message per scan.
+- Loop cadence ~2 Hz (≈500ms): the server scans all allowed symbols and coalesces updates into a single message per scan.
 - Per-item timestamps: `time` uses MT5 `time_msc` (ms) or `time*1000`; `time_iso` is derived UTC. There is no outer batch timestamp.
 - Duplicate suppression: a symbol is included only if its tick timestamp differs from the last sent value for that symbol.
 - Daily change math (Bid basis):
@@ -468,7 +468,7 @@ Tick push details (how it’s computed and sent):
 - Side effects: latest price snapshot is written to `price_cache` for `/api/pricing`; OHLC caches are refreshed internally for baseline timeframes, but v2 does not stream OHLC.
 
 Tick scalability and latency
-- Architecture: Implemented a single-producer TickHub. The server polls MT5 once per second, builds one pre‑serialized `ticks` payload, and broadcasts it to all connected v2 clients.
+- Architecture: Implemented a single-producer TickHub. The server polls MT5 about every 500ms, builds one pre‑serialized `ticks` payload, and broadcasts it to all connected v2 clients.
 - Benefits: Removes per‑client MT5 duplication, reduces thread pool contention, and smooths jitter at higher fan‑out.
 - Higher-scale or multi‑worker: For future growth, move TickHub into a dedicated process ("tickd") and deliver over IPC/pub‑sub to multiple web workers.
 
@@ -918,7 +918,7 @@ Concurrency:
 ### High-Concurrency Architecture & Scaling
 
 - **ASGI + FastAPI**: Single-process, event-loop concurrency handles many simultaneous REST and WebSocket clients without blocking. Background tasks (news, daily emails, minute alerts, indicator poller) are started via the app lifespan and run concurrently.
-- **Broadcast WebSockets (v2)**: A single producer pipeline computes closed-bar indicators every ~10s and broadcasts snapshots to all connected clients. Each client has a paced tick loop (~1 Hz), avoiding per-client heavy work.
+- **Broadcast WebSockets (v2)**: A single producer pipeline computes closed-bar indicators every ~10s and broadcasts snapshots to all connected clients. The tick cadence is ~2 Hz (≈500ms), avoiding per-client heavy work.
 - **In-memory caches**: `app/price_cache.py` and `app/indicator_cache.py` serve reads in O(1) with keyed asyncio locks to keep updates consistent under load. REST endpoints read from these caches instead of recomputing.
 - **Shaping caps and allowlists**: Environment-driven caps limit work per connection and per request.
   - `ALLOWED_WS_SYMBOLS`, `ALLOWED_WS_TIMEFRAMES`
