@@ -467,6 +467,11 @@ Tick push details (how it’s computed and sent):
   - `daily_change = bid_now − D1_reference`; `daily_change_pct = 100 * (bid_now − D1_reference) / D1_reference`.
 - Side effects: latest price snapshot is written to `price_cache` for `/api/pricing`; OHLC caches are refreshed internally for baseline timeframes, but v2 does not stream OHLC.
 
+Tick scalability and latency
+- Architecture: Implemented a single-producer TickHub. The server polls MT5 once per second, builds one pre‑serialized `ticks` payload, and broadcasts it to all connected v2 clients.
+- Benefits: Removes per‑client MT5 duplication, reduces thread pool contention, and smooths jitter at higher fan‑out.
+- Higher-scale or multi‑worker: For future growth, move TickHub into a dedicated process ("tickd") and deliver over IPC/pub‑sub to multiple web workers.
+
 
 ##### Indicator payloads (broadcast-only, consolidated)
 

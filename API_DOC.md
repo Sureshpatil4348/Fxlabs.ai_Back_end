@@ -69,6 +69,10 @@ This document describes how the frontend should consume market data and indicato
       ]
     }
     ```
+  - Latency and scalability notes:
+    - Behavior: a single global TickHub polls MT5 ~1 Hz, coalesces latest ticks for all allowed symbols, pre‑serializes one payload, and broadcasts it to all connected v2 clients. Clients do not perform MT5 calls.
+    - Results: eliminates per‑client duplication, reduces thread pool contention, and lowers jitter under fan‑out. Metrics still record per‑client send success/failure and item counts.
+    - Higher scale: if needed in the future, TickHub can be moved to a dedicated process with IPC/pub‑sub to support multiple web workers.
   - Tick calculation and push pipeline (implementation summary):
     - Source: MT5 `symbol_info_tick` per allowed symbol; converted to `Tick` via `app.mt5_utils._to_tick`.
     - Frequency and batching: a single loop sends coalesced updates ~1 Hz. Within each scan, only symbols with a new tick timestamp are included. One `{"type":"ticks","data":[...]}` message per scan.

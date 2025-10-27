@@ -246,6 +246,14 @@ async def lifespan(app: FastAPI):
     global _ws_metrics_task
     _ws_metrics_task = asyncio.create_task(_ws_metrics_reporter())
 
+    # Start global TickHub (single-producer tick broadcaster)
+    global _tick_hub, _tick_hub_task
+    try:
+        _tick_hub = TickHub()
+        _tick_hub.start()
+    except Exception:
+        _tick_hub = None
+
     # Start Trending Pairs scheduler (startup + hourly)
     async def _broadcast_trending(snapshot: Dict[str, Any]) -> None:
         # Push to all connected clients as a concise event
@@ -317,6 +325,12 @@ async def lifespan(app: FastAPI):
             await _ws_metrics_task
         except asyncio.CancelledError:
             pass
+    # Stop TickHub
+    if _tick_hub:
+        try:
+            await _tick_hub.stop()
+        except Exception:
+            pass
     mt5.shutdown()
 
 app = FastAPI(title="MT5 Market Data Stream", version="2.0.0", lifespan=lifespan)
@@ -374,6 +388,9 @@ _ws_metrics: Dict[str, Dict[str, int]] = {
 }
 _ws_metrics_task: Optional[asyncio.Task] = None
 _trending_task: Optional[asyncio.Task] = None
+_tick_hub_task: Optional[asyncio.Task] = None
+_tick_hub: Optional["TickHub"] = None
+
 
 def _metrics_inc(label: str, key: str, by: int = 1) -> None:
     try:
@@ -382,7 +399,7 @@ def _metrics_inc(label: str, key: str, by: int = 1) -> None:
         _ws_metrics[label][key] = _ws_metrics[label].get(key, 0) + int(by)
     except Exception:
         # Observability must never break runtime
-        pass
+    pass
 
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
@@ -1850,8 +1867,7 @@ class WSClient:
 
     async def start(self):
         # WebSocket is already accepted in the main handler
-        # Start both tick and OHLC background tasks
-        self._task = asyncio.create_task(self._tick_loop())
+        # Tick streaming is handled by the global TickHub (single producer)
         # Only start OHLC loop when this connection supports OHLC streaming
         if "ohlc" in self.supported_data_types:
             self._ohlc_task = asyncio.create_task(self._ohlc_loop())
@@ -1872,15 +1888,6 @@ class WSClient:
                 pass
 
     async def stop(self):
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                # Task may already have ended due to disconnect
-                pass
         if self._ohlc_task:
             self._ohlc_task.cancel()
             try:
@@ -2141,10 +2148,188 @@ class WSClient:
             await self._try_send_json({"type": "pong"})
         elif action in ("subscribe", "unsubscribe"):
             await self._try_send_json({"type": "info", "message": "v2 broadcast-only: subscribe/unsubscribe ignored"})
-        else:
-            await self._try_send_json({"type": "error", "error": "unknown_action"})
+    else:
+        await self._try_send_json({"type": "error", "error": "unknown_action"})
 
 """Legacy (/ws/ticks) and v1 (/ws/market) WebSocket endpoints have been removed after cutover. Use /market-v2."""
+
+class TickHub:
+    """Single-producer tick broadcaster.
+
+    Polls MT5 once per interval, coalesces latest ticks for all allowed symbols,
+    injects daily_change values, and broadcasts one pre-serialized payload to all
+    connected v2 clients.
+    """
+
+    def __init__(self) -> None:
+        self._task: Optional[asyncio.Task] = None
+        try:
+            self._interval_s: float = float(os.environ.get("WS_TICK_INTERVAL_S", "1.0"))
+        except Exception:
+            self._interval_s = 1.0
+        # Deduplicate per symbol by MT5 tick timestamp
+        self._last_sent_ts: Dict[str, int] = {}
+        # Optional: refresh OHLC caches alongside ticks (default on)
+        self._refresh_ohlc: bool = str(os.environ.get("WS_REFRESH_OHLC", "1")).strip() not in ("0", "false", "False")
+
+    def start(self) -> None:
+        if self._task and not self._task.done():
+            return
+        self._task = asyncio.create_task(self._loop())
+
+    async def stop(self) -> None:
+        if not self._task:
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+
+    async def _loop(self) -> None:
+        while True:
+            try:
+                items = await self._collect_tick_items()
+                if items:
+                    await self._broadcast(items)
+                await asyncio.sleep(self._interval_s)
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                # Never crash the loop; small backoff
+                try:
+                    await asyncio.sleep(self._interval_s)
+                except Exception:
+                    pass
+
+    async def _collect_tick_items(self) -> List[Dict[str, Any]]:
+        tick_symbols: Set[str] = set()
+        try:
+            tick_symbols.update(ALLOWED_WS_SYMBOLS)
+        except Exception:
+            tick_symbols.update([s.upper() for s in RSI_SUPPORTED_SYMBOLS])
+        if not tick_symbols:
+            return []
+        updates: List[Dict[str, Any]] = []
+        iter_count = 0
+        baseline_tfs: List[Timeframe] = [
+            Timeframe.M1,
+            Timeframe.M5,
+            Timeframe.M15,
+            Timeframe.M30,
+            Timeframe.H1,
+            Timeframe.H4,
+            Timeframe.D1,
+            Timeframe.W1,
+        ]
+        for sym in list(tick_symbols):
+            try:
+                await _ensure_symbol_selected_async(sym)
+                info = await _symbol_info_tick_async(sym)
+                if info is None:
+                    continue
+                ts_ms = getattr(info, "time_msc", 0) or int(getattr(info, "time", 0)) * 1000
+                if self._last_sent_ts.get(sym) == ts_ms:
+                    continue
+                tick = _to_tick(sym, info)
+                if not tick:
+                    continue
+                # Inject daily change values (Bid basis)
+                dcp_val: Optional[float] = None
+                dc_val: Optional[float] = None
+                try:
+                    today_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    cache_key = _d1_ref_cache.get(sym)
+                    if not cache_key or cache_key[0] != today_key:
+                        dcp_val = await _daily_change_pct_bid_async(sym)
+                        dc_val = await _daily_change_bid_async(sym)
+                        _d1_ref_cache[sym] = (today_key, dcp_val if dcp_val is not None else float("nan"))
+                    else:
+                        dcp_val = await _daily_change_pct_bid_async(sym)
+                        dc_val = await _daily_change_bid_async(sym)
+                except Exception:
+                    dcp_val = None
+                    dc_val = None
+
+                tick_dict = tick.model_dump()
+                if dcp_val is not None and dcp_val == dcp_val:  # not NaN
+                    tick_dict["daily_change_pct"] = float(dcp_val)
+                if dc_val is not None and dc_val == dc_val:  # not NaN
+                    tick_dict["daily_change"] = float(dc_val)
+
+                # Record and update last sent ts
+                self._last_sent_ts[sym] = ts_ms
+
+                # Update OHLC caches once per tick (optional) and the REST price cache
+                if self._refresh_ohlc:
+                    try:
+                        for tf in baseline_tfs:
+                            await _update_ohlc_cache_async(sym, tf)
+                    except Exception:
+                        pass
+                try:
+                    await price_cache.update(
+                        sym,
+                        time_ms=ts_ms,
+                        time_iso=tick_dict.get("time_iso"),
+                        bid=tick_dict.get("bid"),
+                        ask=tick_dict.get("ask"),
+                        daily_change_pct=tick_dict.get("daily_change_pct"),
+                    )
+                except Exception:
+                    pass
+
+                # Append bid-only shape for frontend
+                updates.append({
+                    "symbol": tick_dict.get("symbol"),
+                    "time": tick_dict.get("time"),
+                    "time_iso": tick_dict.get("time_iso"),
+                    "bid": tick_dict.get("bid"),
+                    "daily_change_pct": tick_dict.get("daily_change_pct"),
+                    "daily_change": tick_dict.get("daily_change"),
+                })
+            except HTTPException:
+                # Symbol disappeared or invalid; skip
+                pass
+            except Exception:
+                pass
+            finally:
+                iter_count += 1
+                if (iter_count % 10) == 0:
+                    try:
+                        await asyncio.sleep(0)
+                    except Exception:
+                        pass
+        return updates
+
+    async def _broadcast(self, items: List[Dict[str, Any]]) -> None:
+        try:
+            payload = orjson.dumps({"type": "ticks", "data": items})
+        except Exception:
+            return
+        # Snapshot clients
+        async with _connected_clients_lock:
+            clients = list(_connected_clients)
+        if not clients:
+            return
+        for c in clients:
+            try:
+                if not getattr(c, "v2_broadcast", False):
+                    continue
+                ok = await c._try_send_bytes(payload)
+                try:
+                    label = getattr(c, "conn_label", "v2")
+                    _metrics_inc(label, "ticks_items", by=len(items))
+                    if ok:
+                        _metrics_inc(label, "ok_ticks", 1)
+                    else:
+                        _metrics_inc(label, "fail_ticks", 1)
+                except Exception:
+                    pass
+            except Exception:
+                continue
 
 @app.websocket("/market-v2")
 async def ws_market_v2(websocket: WebSocket):
