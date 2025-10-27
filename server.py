@@ -2009,32 +2009,7 @@ class WSClient:
                         )
                     except Exception:
                         pass
-                    # Immediately send this tick to clients (per-tick emission)
-                    try:
-                        bid_only_tick = {
-                            "symbol": full_tick_data["symbol"],
-                            "time": full_tick_data["time"],
-                            "time_iso": full_tick_data.get("time_iso"),
-                            "bid": full_tick_data.get("bid"),
-                            "daily_change_pct": full_tick_data.get("daily_change_pct"),
-                            "daily_change": full_tick_data.get("daily_change"),
-                        }
-                        sent = await self._try_send_bytes(orjson.dumps({"type": "tick", "data": bid_only_tick}))
-                        # Metrics: per-endpoint counters for tick messages and items
-                        try:
-                            label = getattr(self, "conn_label", "v2")
-                            _metrics_inc(label, "ticks_items", by=1)
-                            if sent:
-                                _metrics_inc(label, "ok_ticks", 1)
-                            else:
-                                _metrics_inc(label, "fail_ticks", 1)
-                        except Exception:
-                            pass
-                        if not sent:
-                            return
-                    except Exception:
-                        # Do not crash the loop on send issues; treat as disconnect
-                        return
+                    # Defer send until all symbols scanned (coalesced per-scan)
             except HTTPException:
                 # symbol disappeared or invalid; drop it
                 # Clean internal scheduling state
@@ -2049,6 +2024,33 @@ class WSClient:
                     except Exception:
                         pass
         if updates:
+            # Create bid-only tick data for frontend (only send bid prices), one per symbol
+            bid_only_updates = []
+            for full_tick in updates:
+                bid_only_updates.append({
+                    "symbol": full_tick.get("symbol"),
+                    "time": full_tick.get("time"),
+                    "time_iso": full_tick.get("time_iso"),
+                    "bid": full_tick.get("bid"),
+                    "daily_change_pct": full_tick.get("daily_change_pct"),
+                    "daily_change": full_tick.get("daily_change"),
+                })
+
+            # Send a single coalesced message containing all pairs' latest ticks for this scan
+            sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": bid_only_updates}))
+            try:
+                label = getattr(self, "conn_label", "v2")
+                _metrics_inc(label, "ticks_items", by=len(bid_only_updates))
+                if sent:
+                    _metrics_inc(label, "ok_ticks", 1)
+                else:
+                    _metrics_inc(label, "fail_ticks", 1)
+            except Exception:
+                pass
+            if not sent:
+                # Stop trying if client is gone
+                return
+
             # Check for alerts on tick updates (non-blocking background task)
             # Only check alerts if there are active alerts to avoid unnecessary processing
             try:

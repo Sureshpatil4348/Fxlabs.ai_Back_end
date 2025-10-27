@@ -52,8 +52,8 @@ async def test_websocket_connection():
                     message = await asyncio.wait_for(websocket.recv(), timeout=5.0)
                     data = json.loads(message)
                     
-                    if data.get('type') == 'tick':
-                        print(f"📈 Received tick: {data.get('data', {}).get('symbol')} bid={data.get('data', {}).get('bid')} time={data.get('data', {}).get('time')} ")
+                    if data.get('type') == 'ticks':
+                        print(f"📈 Received {len(data.get('data', []))} tick updates")
                     elif data.get('type') == 'indicator_update':
                         print(f"📊 Indicator Update: {data.get('symbol')} {data.get('timeframe')} bar_time={data.get('data',{}).get('bar_time')}")
                     else:

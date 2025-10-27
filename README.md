@@ -2,7 +2,7 @@
 
 WebSocket v2: Use `/market-v2` for live ticks, indicator updates, quantum analysis updates, and trending pairs updates (hourly broadcast). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no OHLC or indicator snapshots in v2. Ping/pong is supported for keepalive.
 
-Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, per‑tick messages; OHLC is not streamed to clients in v2). No EA or external bridge required.
+Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, coalesced per scan across all pairs; OHLC is not streamed to clients in v2). No EA or external bridge required.
 
 A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, AI-powered news analysis, and comprehensive alert systems for trading applications.
 
@@ -452,7 +452,10 @@ V2 greeting example (capabilities + indicators registry):
 Tick payloads include `daily_change` (absolute; Bid vs D1 reference) and `daily_change_pct` (percent; Bid vs D1 reference). Payload is bid-only:
 
 ```json
-{"type": "tick", "data": {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871, "daily_change_pct": -0.12, "daily_change": -0.00129} }
+{"type": "ticks", "data": [
+  {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871, "daily_change_pct": -0.12, "daily_change": -0.00129},
+  {"symbol":"BTCUSDm","time":1696229946123,"time_iso":"2025-10-02T14:19:06.123Z","bid":27123.5, "daily_change_pct": 0.35, "daily_change": 95.2}
+] }
 ```
 
 

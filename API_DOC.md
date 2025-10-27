@@ -44,18 +44,28 @@ This document describes how the frontend should consume market data and indicato
   - Unknown action: `{ "type": "error", "error": "unknown_action" }`
 
 - **Server pushes**:
-  - Tick (about once per second per scan; one tick per message, bid-only):
+  - Ticks (about once per second; one message per scan with latest for all pairs, bid-only):
     ```json
     {
-      "type": "tick",
-      "data": {
-        "symbol": "EURUSDm",
-        "time": 1696229945123,
-        "time_iso": "2025-10-02T14:19:05.123Z",
-        "bid": 1.06871,
-        "daily_change_pct": -0.12,
-        "daily_change": -0.00129
-      }
+      "type": "ticks",
+      "data": [
+        {
+          "symbol": "EURUSDm",
+          "time": 1696229945123,
+          "time_iso": "2025-10-02T14:19:05.123Z",
+          "bid": 1.06871,
+          "daily_change_pct": -0.12,
+          "daily_change": -0.00129
+        },
+        {
+          "symbol": "BTCUSDm",
+          "time": 1696229946123,
+          "time_iso": "2025-10-02T14:19:06.123Z",
+          "bid": 27123.5,
+          "daily_change_pct": 0.35,
+          "daily_change": 95.2
+        }
+      ]
     }
     ```
   - Indicator update (10s poller; only on new closed bar):
@@ -246,7 +256,7 @@ Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` ser
 
 1) On app load, fetch initial data via REST (`/api/indicator`) for selected indicator, symbols, and timeframe.
 2) Open WebSocket v2 for live updates. Expect:
-   - `tick` approximately every second per scan (each message carries a single tick; bid-only).
+   - `ticks` approximately every second per scan (one message containing latest ticks for all allowed pairs; bid-only).
    - `indicator_update` only when a new bar closes (≈ timeframe boundary; detection runs every ~10 seconds).
  
 3) Merge live updates into your store. Keep RSI as a closed-bar value; show live price from `ticks`.
