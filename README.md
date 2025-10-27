@@ -458,6 +458,15 @@ Tick payloads include `daily_change` (absolute; Bid vs D1 reference) and `daily_
 ] }
 ```
 
+Tick push details (how it’s computed and sent):
+- Loop cadence ~1 Hz: the server scans all allowed symbols and coalesces updates into a single message per scan.
+- Per-item timestamps: `time` uses MT5 `time_msc` (ms) or `time*1000`; `time_iso` is derived UTC. There is no outer batch timestamp.
+- Duplicate suppression: a symbol is included only if its tick timestamp differs from the last sent value for that symbol.
+- Daily change math (Bid basis):
+  - D1 reference = today’s D1 open (Bid) when today’s bar exists; otherwise previous D1 close (Bid).
+  - `daily_change = bid_now − D1_reference`; `daily_change_pct = 100 * (bid_now − D1_reference) / D1_reference`.
+- Side effects: latest price snapshot is written to `price_cache` for `/api/pricing`; OHLC caches are refreshed internally for baseline timeframes, but v2 does not stream OHLC.
+
 
 ##### Indicator payloads (broadcast-only, consolidated)
 

@@ -69,6 +69,16 @@ This document describes how the frontend should consume market data and indicato
       ]
     }
     ```
+  - Tick calculation and push pipeline (implementation summary):
+    - Source: MT5 `symbol_info_tick` per allowed symbol; converted to `Tick` via `app.mt5_utils._to_tick`.
+    - Frequency and batching: a single loop sends coalesced updates ~1 Hz. Within each scan, only symbols with a new tick timestamp are included. One `{"type":"ticks","data":[...]}` message per scan.
+    - Timestamp semantics: `time` is the broker-provided epoch milliseconds (`time_msc` fallback to `time*1000`), and `time_iso` is derived from it in UTC. Timestamps are per-item; there is no outer batch-level timestamp in v2.
+    - Fields: payload is bid-only for UI (`symbol, time, time_iso, bid`). Server may compute and include `daily_change` and `daily_change_pct`.
+    - Daily change math (Bid basis):
+      - Reference: if the latest D1 bar is for today (UTC), use that bar's open (Bid); else use the previous D1 bar's close (Bid). See `app.mt5_utils._get_d1_reference_bid`.
+      - Values: `daily_change = bid_now − D1_reference`, `daily_change_pct = 100 * (bid_now − D1_reference) / D1_reference`.
+    - Caching/side-effects: latest per-symbol snapshot is stored in `app.price_cache` for REST `/api/pricing` reads; OHLC caches are refreshed internally for baseline timeframes but OHLC is not streamed in v2.
+    - Backpressure/robustness: send uses best-effort non-blocking writes; metrics counters track `ok_ticks`, `fail_ticks`, and total items.
   - Indicator updates (10s poller; consolidated by timeframe; only on new closed bars):
     ```json
     {
