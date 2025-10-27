@@ -2148,8 +2148,8 @@ class WSClient:
             await self._try_send_json({"type": "pong"})
         elif action in ("subscribe", "unsubscribe"):
             await self._try_send_json({"type": "info", "message": "v2 broadcast-only: subscribe/unsubscribe ignored"})
-    else:
-        await self._try_send_json({"type": "error", "error": "unknown_action"})
+        else:
+            await self._try_send_json({"type": "error", "error": "unknown_action"})
 
 """Legacy (/ws/ticks) and v1 (/ws/market) WebSocket endpoints have been removed after cutover. Use /market-v2."""
 
