@@ -94,6 +94,8 @@ This document describes how the frontend should consume market data and indicato
       ]
     }
     ```
+  - Other broadcasts
+    - All server push types (ticks, indicator_updates, currency_strength_update, quantum_update, trending_pairs) are produced by single producers and broadcast using a pre‑serialized payload for low latency and scalability. Clients do not perform MT5 calls.
   - Quantum update (computed alongside indicator updates):
   - Currency Strength update (per timeframe; pushed on closed bars only; WS-allowed timeframes ≥ 5M):
     ```json

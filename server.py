@@ -256,18 +256,8 @@ async def lifespan(app: FastAPI):
 
     # Start Trending Pairs scheduler (startup + hourly)
     async def _broadcast_trending(snapshot: Dict[str, Any]) -> None:
-        # Push to all connected clients as a concise event
-        async with _connected_clients_lock:
-            clients = list(_connected_clients)
-        if not clients:
-            return
-        msg = {"type": "trending_pairs", "data": snapshot}
-        for c in clients:
-            try:
-                if getattr(c, "v2_broadcast", False):
-                    await c._try_send_json(msg)
-            except Exception:
-                continue
+        # Push to all connected clients as a concise event (pre-serialized)
+        await _broadcast_json_v2({"type": "trending_pairs", "data": snapshot})
 
     try:
         try:
@@ -400,6 +390,38 @@ def _metrics_inc(label: str, key: str, by: int = 1) -> None:
     except Exception:
         # Observability must never break runtime
         pass
+
+
+async def _broadcast_json_v2(obj: Dict[str, Any], *, metric: Optional[str] = None, items_count: Optional[int] = None) -> None:
+    """Broadcast a JSON message to all connected v2 clients.
+
+    Pre-serializes once to bytes and uses _try_send_bytes for efficiency.
+    Optionally updates metrics for indicator messages.
+    """
+    try:
+        payload = orjson.dumps(obj)
+    except Exception:
+        return
+    async with _connected_clients_lock:
+        clients = list(_connected_clients)
+    if not clients:
+        return
+    for c in clients:
+        try:
+            if not getattr(c, "v2_broadcast", False):
+                continue
+            ok = await c._try_send_bytes(payload)
+            if metric == "indicator":
+                try:
+                    label = getattr(c, "conn_label", "v2")
+                    if ok:
+                        _metrics_inc(label, "ok_indicator_update", 1)
+                    else:
+                        _metrics_inc(label, "fail_indicator_update", 1)
+                except Exception:
+                    pass
+        except Exception:
+            continue
 
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
@@ -921,23 +943,13 @@ async def _indicator_scheduler() -> None:
                                     prev_ts = None
                                 await currency_strength_cache.update(tf.value, cs_values, ts_ms=cs_ts)
                                 tfs_cs_updated.add(tf.value)
-                                # Broadcast currency strength snapshot
+                                # Broadcast currency strength snapshot (pre-serialized)
                                 if clients:
-                                    cs_msg = {
+                                    await _broadcast_json_v2({
                                         "type": "currency_strength_update",
                                         "timeframe": tf.value,
-                                        "data": {
-                                            "bar_time": cs_ts,
-                                            "strength": cs_values,
-                                        },
-                                    }
-                                    for c in clients:
-                                        try:
-                                            if getattr(c, "v2_broadcast", False):
-                                                await c._try_send_json(cs_msg)
-                                                continue
-                                        except Exception:
-                                            continue
+                                        "data": {"bar_time": cs_ts, "strength": cs_values},
+                                    })
                                 # Log values on server when pushing for closed candles (new bar only)
                                 try:
                                     if prev_ts is None or (isinstance(cs_ts, int) and cs_ts > int(prev_ts)):
@@ -959,18 +971,11 @@ async def _indicator_scheduler() -> None:
                     if symbol not in quantum_done:
                         quantum_done.add(symbol)
                         q = await compute_quantum_for_symbol(symbol)
-                        q_msg = {
+                        await _broadcast_json_v2({
                             "type": "quantum_update",
                             "symbol": symbol,
                             "data": q,
-                        }
-                        for c in clients:
-                            try:
-                                if getattr(c, "v2_broadcast", False):
-                                    await c._try_send_json(q_msg)
-                                    continue
-                            except Exception:
-                                continue
+                        })
 
                     # Correlation updates removed per product decision
                 except Exception as e:
@@ -988,25 +993,11 @@ async def _indicator_scheduler() -> None:
             # After processing all pairs, broadcast consolidated indicator updates per timeframe
             if clients and indicator_batches:
                 for tf_str, items in indicator_batches.items():
-                    msg = {
+                    await _broadcast_json_v2({
                         "type": "indicator_updates",
                         "timeframe": tf_str,
                         "data": items,
-                    }
-                    for c in clients:
-                        try:
-                            if getattr(c, "v2_broadcast", False):
-                                ok = await c._try_send_json(msg)
-                                try:
-                                    label = getattr(c, "conn_label", "v2")
-                                    if ok:
-                                        _metrics_inc(label, "ok_indicator_update", 1)
-                                    else:
-                                        _metrics_inc(label, "fail_indicator_update", 1)
-                                except Exception:
-                                    pass
-                        except Exception:
-                            continue
+                    }, metric="indicator")
 
             ended_at = datetime.now(timezone.utc)
             cpu_t1 = time.process_time()

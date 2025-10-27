@@ -511,6 +511,9 @@ Note: `bar_time` is epoch milliseconds (ms) using broker server time.
   - `ok_ticks`, `fail_ticks`, `ticks_items` (sum of items sent in tick lists)
 - `ok_indicator_update`, `fail_indicator_update`
 
+Broadcast architecture
+- All server push types (ticks, indicator_updates, currency_strength_update, quantum_update, trending_pairs) now use single‑producer tasks with pre‑serialized payloads broadcast to clients. This removes per‑client JSON serialization and duplicated MT5 calls, improving latency and scalability.
+
 #### Indicator Coverage
 
 - Indicators now process for all allowed symbols (defaults to full `RSI_SUPPORTED_SYMBOLS`).
