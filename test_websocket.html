@@ -250,7 +250,7 @@
                     }
                     break;
                     
-                case 'ticks':
+                case 'tick':
                     displayTickData(data.data);
                     break;
                     
@@ -277,13 +277,10 @@
             }
         }
 
-        function displayTickData(ticks) {
+        function displayTickData(tick) {
             const tickDiv = document.getElementById('tickData');
             let html = '';
-            
-            ticks.forEach(tick => {
-                html += `${tick.symbol}: Bid=${tick.bid} Ask=${tick.ask} Time=${new Date(tick.time).toLocaleTimeString()}\n`;
-            });
+            html += `${tick.symbol}: Bid=${tick.bid} Time=${new Date(tick.time).toLocaleTimeString()}\n`;
             
             tickDiv.textContent = html + tickDiv.textContent;
             

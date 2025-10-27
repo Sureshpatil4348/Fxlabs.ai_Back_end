@@ -2019,7 +2019,7 @@ class WSClient:
                             "daily_change_pct": full_tick_data.get("daily_change_pct"),
                             "daily_change": full_tick_data.get("daily_change"),
                         }
-                        sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": [bid_only_tick]}))
+                        sent = await self._try_send_bytes(orjson.dumps({"type": "tick", "data": bid_only_tick}))
                         # Metrics: per-endpoint counters for tick messages and items
                         try:
                             label = getattr(self, "conn_label", "v2")
