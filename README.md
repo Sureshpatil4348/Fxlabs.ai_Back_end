@@ -459,19 +459,18 @@ Tick payloads include `daily_change` (absolute; Bid vs D1 reference) and `daily_
 ```
 
 
-##### Indicator payloads (broadcast-only)
+##### Indicator payloads (broadcast-only, consolidated)
 
-Live push when a new bar is detected by the 10s poller:
+Live push when a new bar is detected by the 10s poller. One message per timeframe with all updated symbols:
 
 ```json
 {
-  "type": "indicator_update",
-  "symbol": "EURUSDm",
+  "type": "indicator_updates",
   "timeframe": "5M",
-  "data": {
-    "bar_time": 1696229940000,
-    "indicators": { "rsi": {"14": 51.23} }
-  }
+  "data": [
+    { "symbol": "EURUSDm", "bar_time": 1696229940000, "indicators": { "rsi": {"14": 51.23} } },
+    { "symbol": "BTCUSDm",  "bar_time": 1696229940000, "indicators": { "rsi": {"14": 48.10} } }
+  ]
 }
 ```
 
@@ -785,8 +784,8 @@ ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   if (data.type === 'ticks') {
     console.log('Ticks:', data.data);
-  } else if (data.type === 'indicator_update' || data.type === 'initial_indicators') {
-    console.log('Indicators:', data);
+  } else if (data.type === 'indicator_updates') {
+    console.log('Indicators (batch):', data);
   } else if (data.type === 'quantum_update') {
     console.log('Quantum:', data);
   } else if (data.type === 'trending_pairs') {

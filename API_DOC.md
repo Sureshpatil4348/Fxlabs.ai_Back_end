@@ -6,11 +6,12 @@ This document describes how the frontend should consume market data and indicato
 
 - **Mechanism to fetch indicators for different timeframes via WebSocket?**
   - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. It also broadcasts `currency_strength_update` snapshots over WebSocket only on closed bars and only for supported (WS-allowed) timeframes, using closed-candle ROC aggregation for the 8 fiat currencies and normalizing to a −100..100 scale (0 = neutral). Note: Currency Strength enforces a minimum timeframe of `5M` (no `1M`).
+  - Update: Indicator WS pushes are consolidated by timeframe. Each cycle emits one `indicator_updates` message per timeframe with an array of all symbols updated in that cycle.
   - There is no per-client subscription filtering in v2. Clients receive broadcast updates when a new closed bar is detected.
 
 - **Should the frontend use REST instead?**
   - Use both:
-    - WebSocket v2 for live ticks, closed-bar `indicator_update`, and closed-bar `currency_strength_update` pushes (only for WS-allowed timeframes).
+    - WebSocket v2 for live ticks, closed-bar `indicator_updates`, and closed-bar `currency_strength_update` pushes (only for WS-allowed timeframes).
     - REST for initial state via `/api/indicator`.
   - v2 does not send initial OHLC or indicator snapshots on connect; fetch initial state via REST, then merge live pushes.
 
@@ -68,18 +69,15 @@ This document describes how the frontend should consume market data and indicato
       ]
     }
     ```
-  - Indicator update (10s poller; only on new closed bar):
+  - Indicator updates (10s poller; consolidated by timeframe; only on new closed bars):
     ```json
     {
-      "type": "indicator_update",
-      "symbol": "EURUSDm",
+      "type": "indicator_updates",
       "timeframe": "5M",
-      "data": {
-        "bar_time": 1696229940000,
-        "indicators": {
-          "rsi": {"14": 51.23}
-        }
-      }
+      "data": [
+        { "symbol": "EURUSDm", "bar_time": 1696229940000, "indicators": { "rsi": {"14": 51.23} } },
+        { "symbol": "BTCUSDm",  "bar_time": 1696229940000, "indicators": { "rsi": {"14": 48.10} } }
+      ]
     }
     ```
   - Quantum update (computed alongside indicator updates):
@@ -257,7 +255,7 @@ Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` ser
 1) On app load, fetch initial data via REST (`/api/indicator`) for selected indicator, symbols, and timeframe.
 2) Open WebSocket v2 for live updates. Expect:
    - `ticks` approximately every second per scan (one message containing latest ticks for all allowed pairs; bid-only).
-   - `indicator_update` only when a new bar closes (≈ timeframe boundary; detection runs every ~10 seconds).
+   - `indicator_updates` only when a new bar closes (≈ timeframe boundary; detection runs every ~10 seconds); one message per timeframe with an array of symbols.
  
 3) Merge live updates into your store. Keep RSI as a closed-bar value; show live price from `ticks`.
 
@@ -281,8 +279,8 @@ ws.onmessage = (e) => {
   const msg = JSON.parse(e.data);
   if (msg.type === 'ticks') {
     // update live price
-  } else if (msg.type === 'indicator_update') {
-    // update closed-bar indicators
+  } else if (msg.type === 'indicator_updates') {
+    // update closed-bar indicators (batch for this timeframe)
   }
 };
 ```

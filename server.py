@@ -731,6 +731,8 @@ async def _indicator_scheduler() -> None:
             tfs_cs_updated: Set[str] = set()
             # Ensure quantum is computed once per symbol per cycle
             quantum_done: Set[str] = set()
+            # Accumulate indicator snapshots per timeframe to consolidate WS messages
+            indicator_batches: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
             for symbol, tf in pairs:
                 try:
                     # Fetch recent OHLC and gate on last closed bar (offloaded)
@@ -869,47 +871,15 @@ async def _indicator_scheduler() -> None:
                         # Debug-only logging must never break the scheduler
                         pass
 
-                    # Broadcast to interested clients (best-effort)
-                    if clients:
-                        snapshot = {
-                            "bar_time": last_closed.time,
-                            "indicators": {
-                                "rsi": {14: rsi_val} if rsi_val is not None else {},
-                            },
-                        }
-                        msg = {
-                            "type": "indicator_update",
-                            "symbol": symbol,
-                            "timeframe": tf.value,
-                            "data": snapshot,
-                        }
-                        for c in clients:
-                            try:
-                                if getattr(c, "v2_broadcast", False):
-                                    ok = await c._try_send_json(msg)
-                                    try:
-                                        label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
-                                        if ok:
-                                            _metrics_inc(label, "ok_indicator_update", 1)
-                                        else:
-                                            _metrics_inc(label, "fail_indicator_update", 1)
-                                    except Exception:
-                                        pass
-                                    continue
-                                sub = getattr(c, "subscriptions", {}).get(symbol, {}).get(tf)
-                                if sub and "indicators" in getattr(sub, "data_types", []):
-                                    ok = await c._try_send_json(msg)
-                                    try:
-                                        label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
-                                        if ok:
-                                            _metrics_inc(label, "ok_indicator_update", 1)
-                                        else:
-                                            _metrics_inc(label, "fail_indicator_update", 1)
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                # Never let a single client block the scheduler
-                                continue
+                    # Queue into timeframe batch for consolidated WS push (v2 broadcast only)
+                    item = {
+                        "symbol": symbol,
+                        "bar_time": last_closed.time,
+                        "indicators": {
+                            "rsi": {14: rsi_val} if rsi_val is not None else {},
+                        },
+                    }
+                    indicator_batches[tf.value].append(item)
 
                     # Compute and cache currency strength for this timeframe once per poll cycle per timeframe (closed-bar only)
                     try:
@@ -997,6 +967,29 @@ async def _indicator_scheduler() -> None:
                         await asyncio.sleep(0)
                     except Exception:
                         pass
+
+            # After processing all pairs, broadcast consolidated indicator updates per timeframe
+            if clients and indicator_batches:
+                for tf_str, items in indicator_batches.items():
+                    msg = {
+                        "type": "indicator_updates",
+                        "timeframe": tf_str,
+                        "data": items,
+                    }
+                    for c in clients:
+                        try:
+                            if getattr(c, "v2_broadcast", False):
+                                ok = await c._try_send_json(msg)
+                                try:
+                                    label = getattr(c, "conn_label", "v2")
+                                    if ok:
+                                        _metrics_inc(label, "ok_indicator_update", 1)
+                                    else:
+                                        _metrics_inc(label, "fail_indicator_update", 1)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            continue
 
             ended_at = datetime.now(timezone.utc)
             cpu_t1 = time.process_time()

@@ -255,13 +255,12 @@
                     break;
                     
                 case 'initial_indicators':
-                    log(`📊 Initial Indicators for ${data.symbol} (${data.timeframe})`);
-                    displayIndicatorData(data);
+                    log(`📊 Initial Indicators (deprecated in v2)`);
                     break;
 
-                case 'indicator_update':
-                    log(`📈 Indicator Update for ${data.symbol} (${data.timeframe})`);
-                    displayIndicatorData(data);
+                case 'indicator_updates':
+                    log(`📈 Indicator Updates for TF ${data.timeframe} — count=${(data.data||[]).length}`);
+                    displayIndicatorBatch(data);
                     break;
                     
                 case 'pong':
@@ -293,22 +292,18 @@
             }
         }
 
-        function displayIndicatorData(indMsg) {
+        function displayIndicatorBatch(indMsg) {
             const indDiv = document.getElementById('indicatorData');
-            const time = new Date(indMsg.data.bar_time).toLocaleString();
-            const rsi = indMsg.data.indicators?.rsi || {};
-            const ema = indMsg.data.indicators?.ema || {};
-            const macd = indMsg.data.indicators?.macd || {};
-            const header = `${indMsg.symbol} (${indMsg.timeframe}) @ ${time}`;
-            const rsiStr = Object.entries(rsi).map(([p,v]) => `RSI(${p})=${v}`).join(' ');
-            const emaStr = Object.entries(ema).map(([p,v]) => `EMA${p}=${v}`).join(' ');
-            const macdStr = macd.macd !== undefined ? `MACD=${macd.macd} SIG=${macd.signal} HIST=${macd.hist}` : '';
-            const utbot = indMsg.data.indicators?.utbot || {};
-            const ich = indMsg.data.indicators?.ichimoku || {};
-            const utStr = (utbot.baseline !== undefined) ? `UTBOT base=${utbot.baseline} stop=${utbot.stop} dir=${utbot.direction} flip=${utbot.flip}` : '';
-            const ichStr = (ich.tenkan !== undefined) ? `ICH Tenk=${ich.tenkan} Kij=${ich.kijun} SA=${ich.senkou_a} SB=${ich.senkou_b} Chik=${ich.chikou}` : '';
-            const line = `${header} | ${rsiStr} ${emaStr} ${macdStr} ${utStr} ${ichStr}\n`;
-            indDiv.textContent = line + indDiv.textContent;
+            const tf = indMsg.timeframe;
+            const items = indMsg.data || [];
+            let html = '';
+            items.forEach(it => {
+                const time = new Date(it.bar_time).toLocaleTimeString();
+                const rsi = it.indicators?.rsi || {};
+                const rsiStr = Object.entries(rsi).map(([p,v]) => `RSI(${p})=${v}`).join(' ');
+                html += `${it.symbol} (${tf}) @ ${time} | ${rsiStr}\n`;
+            });
+            indDiv.textContent = html + indDiv.textContent;
             const lines = indDiv.textContent.split('\n');
             if (lines.length > 10) {
                 indDiv.textContent = lines.slice(0, 10).join('\n');
