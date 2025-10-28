@@ -527,6 +527,7 @@ Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
 Broadcast architecture
 - All server push types (ticks, indicator_updates, currency_strength_update, quantum_update, trending_pairs) now use single‑producer tasks with pre‑serialized payloads broadcast to clients. This removes per‑client JSON serialization and duplicated MT5 calls, improving latency and scalability.
+ - Broadcast writes are parallelized across clients for all message types to reduce backpressure from slow receivers.
  
 Troubleshooting: Tick lag after extended runtime
 - Symptom: Tick messages start at ~500ms cadence but drift/lag after ~20 minutes.

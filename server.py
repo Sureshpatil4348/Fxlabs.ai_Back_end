@@ -437,22 +437,30 @@ async def _broadcast_json_v2(obj: Dict[str, Any], *, metric: Optional[str] = Non
         clients = list(_connected_clients)
     if not clients:
         return
+    # Send in parallel to minimize per-client backpressure
+    tasks: List[asyncio.Task] = []
+    labels: List[str] = []
     for c in clients:
         try:
             if not getattr(c, "v2_broadcast", False):
                 continue
-            ok = await c._try_send_bytes(payload)
-            if metric == "indicator":
-                try:
-                    label = getattr(c, "conn_label", "v2")
-                    if ok:
-                        _metrics_inc(label, "ok_indicator_update", 1)
-                    else:
-                        _metrics_inc(label, "fail_indicator_update", 1)
-                except Exception:
-                    pass
+            tasks.append(asyncio.create_task(c._try_send_bytes(payload)))
+            labels.append(getattr(c, "conn_label", "v2"))
         except Exception:
             continue
+    if not tasks:
+        return
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    if metric == "indicator":
+        for res, label in zip(results, labels):
+            try:
+                ok = (res is True)
+                if ok:
+                    _metrics_inc(label, "ok_indicator_update", 1)
+                else:
+                    _metrics_inc(label, "fail_indicator_update", 1)
+            except Exception:
+                pass
 
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
