@@ -471,7 +471,16 @@ Tick scalability and latency
 - Architecture: Implemented a single-producer TickHub. The server polls MT5 about every 500ms, builds one pre‑serialized `ticks` payload, and broadcasts it to all connected v2 clients.
 - Benefits: Removes per‑client MT5 duplication, reduces thread pool contention, and smooths jitter at higher fan‑out.
 - Higher-scale or multi‑worker: For future growth, move TickHub into a dedicated process ("tickd") and deliver over IPC/pub‑sub to multiple web workers.
- - Optimizations: TickHub throttles OHLC cache refreshes and avoids redundant MT5 tick queries for daily-change calculations by caching the D1 reference per symbol. Broadcast writes are parallelized across clients to minimize backpressure.
+- Optimizations: TickHub throttles OHLC cache refreshes and avoids redundant MT5 tick queries for daily-change calculations by caching the D1 reference per symbol. Broadcast writes are parallelized across clients to minimize backpressure.
+
+TickHub configuration (env vars)
+- `WS_TICK_INTERVAL_S` (default `0.5`): target tick cadence in seconds.
+- `WS_TICK_EXECUTOR_WORKERS` (default `12`): dedicated MT5 threadpool size for tick calls.
+- `WS_TICK_MAX_CONCURRENCY` (default `16`): max concurrent per-scan tick fetches.
+- `WS_TICK_CALL_TIMEOUT_S` (default `0.4`): timeout per MT5 `symbol_info_tick` call; late responses ignored for the current scan.
+- `WS_SELECT_CALL_TIMEOUT_S` (default `1.0`): timeout for `ensure_symbol_selected` when refreshing symbol visibility.
+- `WS_REFRESH_OHLC` (default `1`): whether to refresh OHLC caches in the tick loop.
+- `WS_OHLC_REFRESH_MIN_S` (default `10`): minimum seconds between OHLC cache refreshes per symbol×timeframe (tick loop refreshes only M1/M5 to reduce load).
 
 
 ##### Indicator payloads (broadcast-only, consolidated)

@@ -18,6 +18,7 @@ except ImportError:
     mt5 = None
     MT5_AVAILABLE = False
 import orjson
+from concurrent.futures import ThreadPoolExecutor
 import logging
 from app.logging_config import configure_logging
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Header, APIRouter
@@ -2247,6 +2248,36 @@ class TickHub:
         except Exception:
             self._ohlc_refresh_min_s = 10.0
         self._last_ohlc_refresh: Dict[str, Dict[Timeframe, float]] = {}
+        # Dedicated executor for MT5 tick calls to avoid contention with other threadpool users
+        try:
+            self._tick_workers: int = int(os.environ.get("WS_TICK_EXECUTOR_WORKERS", "12"))
+        except Exception:
+            self._tick_workers = 12
+        # Cap lower bound at 2 workers
+        self._tick_workers = max(2, self._tick_workers)
+        self._executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=self._tick_workers, thread_name_prefix="tickhub")
+        # Concurrency cap for per-scan fetches
+        try:
+            self._max_concurrency: int = int(os.environ.get("WS_TICK_MAX_CONCURRENCY", "16"))
+        except Exception:
+            self._max_concurrency = 16
+        self._max_concurrency = max(2, self._max_concurrency)
+        # MT5 call timeouts (seconds)
+        try:
+            self._mt5_call_timeout_s: float = float(os.environ.get("WS_TICK_CALL_TIMEOUT_S", "0.4"))
+        except Exception:
+            self._mt5_call_timeout_s = 0.4
+        try:
+            self._select_call_timeout_s: float = float(os.environ.get("WS_SELECT_CALL_TIMEOUT_S", "1.0"))
+        except Exception:
+            self._select_call_timeout_s = 1.0
+        # Cache for symbol selection to avoid calling ensure_symbol_selected every scan
+        self._selected_symbols: Set[str] = set()
+        self._selected_at: Dict[str, float] = {}
+        try:
+            self._select_refresh_min_s: float = float(os.environ.get("WS_SELECT_REFRESH_MIN_S", "1800"))  # 30 minutes
+        except Exception:
+            self._select_refresh_min_s = 1800.0
 
     def start(self) -> None:
         if self._task and not self._task.done():
@@ -2263,22 +2294,34 @@ class TickHub:
             pass
         except Exception:
             pass
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)  # type: ignore[arg-type]
+        except Exception:
+            pass
 
     async def _loop(self) -> None:
         while True:
+            started = time.monotonic()
             try:
                 items = await self._collect_tick_items()
                 if items:
                     await self._broadcast(items)
-                await asyncio.sleep(self._interval_s)
             except asyncio.CancelledError:
                 return
             except Exception:
-                # Never crash the loop; small backoff
-                try:
-                    await asyncio.sleep(self._interval_s)
-                except Exception:
-                    pass
+                # Never crash the loop
+                pass
+            # Maintain a steady cadence by accounting for work time
+            try:
+                elapsed = time.monotonic() - started
+                delay = self._interval_s - elapsed
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                else:
+                    # If over budget, yield once to keep loop responsive
+                    await asyncio.sleep(0)
+            except Exception:
+                pass
 
     async def _collect_tick_items(self) -> List[Dict[str, Any]]:
         tick_symbols: Set[str] = set()
@@ -2288,30 +2331,49 @@ class TickHub:
             tick_symbols.update([s.upper() for s in RSI_SUPPORTED_SYMBOLS])
         if not tick_symbols:
             return []
+
+        loop = asyncio.get_running_loop()
+        sem = asyncio.Semaphore(self._max_concurrency)
         updates: List[Dict[str, Any]] = []
-        iter_count = 0
-        baseline_tfs: List[Timeframe] = [
-            Timeframe.M1,
-            Timeframe.M5,
-            Timeframe.M15,
-            Timeframe.M30,
-            Timeframe.H1,
-            Timeframe.H4,
-            Timeframe.D1,
-            Timeframe.W1,
-        ]
-        for sym in list(tick_symbols):
+
+        # Restrict OHLC cache refresh during tick loop to faster timeframes only to reduce load
+        fast_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5]
+
+        async def ensure_selected_cached(sym: str) -> None:
+            now = time.monotonic()
+            needs = (sym not in self._selected_symbols) or ((now - self._selected_at.get(sym, 0.0)) >= self._select_refresh_min_s)
+            if needs:
+                try:
+                    await asyncio.wait_for(
+                        loop.run_in_executor(self._executor, ensure_symbol_selected, sym),
+                        timeout=self._select_call_timeout_s,
+                    )
+                    self._selected_symbols.add(sym)
+                    self._selected_at[sym] = now
+                except Exception:
+                    # Leave symbol unselected; fetch may still work if already visible
+                    self._selected_at[sym] = now
+
+        async def fetch_one(sym: str) -> Optional[Dict[str, Any]]:
+            await sem.acquire()
             try:
-                await _ensure_symbol_selected_async(sym)
-                info = await _symbol_info_tick_async(sym)
+                await ensure_selected_cached(sym)
+                try:
+                    info = await asyncio.wait_for(
+                        loop.run_in_executor(self._executor, mt5.symbol_info_tick, sym),
+                        timeout=self._mt5_call_timeout_s,
+                    )
+                except Exception:
+                    info = None
                 if info is None:
-                    continue
+                    return None
                 ts_ms = getattr(info, "time_msc", 0) or int(getattr(info, "time", 0)) * 1000
                 if self._last_sent_ts.get(sym) == ts_ms:
-                    continue
+                    return None
                 tick = _to_tick(sym, info)
                 if not tick:
-                    continue
+                    return None
+
                 # Inject daily change values using cached D1 reference (Bid basis)
                 dcp_val: Optional[float] = None
                 dc_val: Optional[float] = None
@@ -2334,26 +2396,27 @@ class TickHub:
                     dc_val = None
 
                 tick_dict = tick.model_dump()
-                if dcp_val is not None and dcp_val == dcp_val:  # not NaN
+                if dcp_val is not None and dcp_val == dcp_val:
                     tick_dict["daily_change_pct"] = float(dcp_val)
-                if dc_val is not None and dc_val == dc_val:  # not NaN
+                if dc_val is not None and dc_val == dc_val:
                     tick_dict["daily_change"] = float(dc_val)
 
                 # Record and update last sent ts
                 self._last_sent_ts[sym] = ts_ms
 
-                # Update OHLC caches (throttled) and the REST price cache
+                # Throttled OHLC cache refresh for fast timeframes only
                 if self._refresh_ohlc:
                     try:
                         now_mono = time.monotonic()
                         per_sym = self._last_ohlc_refresh.setdefault(sym, {})
-                        for tf in baseline_tfs:
+                        for tf in fast_tfs:
                             last = float(per_sym.get(tf, 0.0))
                             if (now_mono - last) >= self._ohlc_refresh_min_s:
                                 await _update_ohlc_cache_async(sym, tf)
                                 per_sym[tf] = now_mono
                     except Exception:
                         pass
+
                 try:
                     await price_cache.update(
                         sym,
@@ -2366,27 +2429,31 @@ class TickHub:
                 except Exception:
                     pass
 
-                # Append bid-only shape for frontend
-                updates.append({
+                return {
                     "symbol": tick_dict.get("symbol"),
                     "time": tick_dict.get("time"),
                     "time_iso": tick_dict.get("time_iso"),
                     "bid": tick_dict.get("bid"),
                     "daily_change_pct": tick_dict.get("daily_change_pct"),
                     "daily_change": tick_dict.get("daily_change"),
-                })
+                }
             except HTTPException:
-                # Symbol disappeared or invalid; skip
-                pass
+                return None
             except Exception:
-                pass
+                return None
             finally:
-                iter_count += 1
-                if (iter_count % 10) == 0:
-                    try:
-                        await asyncio.sleep(0)
-                    except Exception:
-                        pass
+                try:
+                    sem.release()
+                except Exception:
+                    pass
+
+        tasks = [asyncio.create_task(fetch_one(sym)) for sym in list(tick_symbols)]
+        if not tasks:
+            return []
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, dict) and r.get("time") is not None:
+                updates.append(r)
         return updates
 
     async def _broadcast(self, items: List[Dict[str, Any]]) -> None:
