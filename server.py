@@ -106,6 +106,37 @@ async def _daily_change_bid_async(symbol: str):
         return await asyncio.to_thread(get_daily_change_bid, symbol)
     except Exception:
         return None
+
+# Efficient D1 reference fetch for ticks: used to compute daily change without duplicate MT5 tick calls
+async def _get_d1_reference_bid_async(symbol: str) -> Optional[float]:
+    try:
+        bars = await _get_ohlc_data_async(symbol, Timeframe.D1, 2)
+        if not bars:
+            return None
+        latest = bars[-1]
+        prev = bars[-2] if len(bars) > 1 else None
+        now_date = datetime.now(timezone.utc).date()
+        try:
+            latest_dt = datetime.fromisoformat(getattr(latest, "time_iso", ""))
+        except Exception:
+            latest_dt = datetime.fromtimestamp(float(getattr(latest, "time", 0)) / 1000.0, tz=timezone.utc)
+        latest_date = latest_dt.date()
+        if latest_date == now_date:
+            ref = getattr(latest, "openBid", None)
+            if ref is None:
+                ref = getattr(latest, "open", None)
+            return float(ref) if ref is not None else None
+        if prev is not None:
+            ref = getattr(prev, "closeBid", None)
+            if ref is None:
+                ref = getattr(prev, "close", None)
+            return float(ref) if ref is not None else None
+        ref = getattr(latest, "openBid", None)
+        if ref is None:
+            ref = getattr(latest, "open", None)
+        return float(ref) if ref is not None else None
+    except Exception:
+        return None
 # One-time warmup to backfill indicator cache at startup
 async def _warm_populate_indicator_cache() -> None:
     try:
@@ -2202,6 +2233,12 @@ class TickHub:
         self._last_sent_ts: Dict[str, int] = {}
         # Optional: refresh OHLC caches alongside ticks (default on)
         self._refresh_ohlc: bool = str(os.environ.get("WS_REFRESH_OHLC", "1")).strip() not in ("0", "false", "False")
+        # Throttle OHLC cache refreshes per symbol×timeframe (seconds)
+        try:
+            self._ohlc_refresh_min_s: float = float(os.environ.get("WS_OHLC_REFRESH_MIN_S", "10"))
+        except Exception:
+            self._ohlc_refresh_min_s = 10.0
+        self._last_ohlc_refresh: Dict[str, Dict[Timeframe, float]] = {}
 
     def start(self) -> None:
         if self._task and not self._task.done():
@@ -2267,19 +2304,23 @@ class TickHub:
                 tick = _to_tick(sym, info)
                 if not tick:
                     continue
-                # Inject daily change values (Bid basis)
+                # Inject daily change values using cached D1 reference (Bid basis)
                 dcp_val: Optional[float] = None
                 dc_val: Optional[float] = None
                 try:
                     today_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                     cache_key = _d1_ref_cache.get(sym)
-                    if not cache_key or cache_key[0] != today_key:
-                        dcp_val = await _daily_change_pct_bid_async(sym)
-                        dc_val = await _daily_change_bid_async(sym)
-                        _d1_ref_cache[sym] = (today_key, dcp_val if dcp_val is not None else float("nan"))
+                    ref: Optional[float]
+                    if not cache_key or cache_key[0] != today_key or not isinstance(cache_key[1], float) or cache_key[1] != cache_key[1]:
+                        ref = await _get_d1_reference_bid_async(sym)
+                        _d1_ref_cache[sym] = (today_key, ref if ref is not None else float("nan"))
                     else:
-                        dcp_val = await _daily_change_pct_bid_async(sym)
-                        dc_val = await _daily_change_bid_async(sym)
+                        ref = cache_key[1]
+                    bid_val = getattr(tick, "bid", None)
+                    if ref is not None and bid_val is not None:
+                        dc_val = float(bid_val) - float(ref)
+                        if ref != 0.0:
+                            dcp_val = 100.0 * dc_val / float(ref)
                 except Exception:
                     dcp_val = None
                     dc_val = None
@@ -2293,11 +2334,16 @@ class TickHub:
                 # Record and update last sent ts
                 self._last_sent_ts[sym] = ts_ms
 
-                # Update OHLC caches once per tick (optional) and the REST price cache
+                # Update OHLC caches (throttled) and the REST price cache
                 if self._refresh_ohlc:
                     try:
+                        now_mono = time.monotonic()
+                        per_sym = self._last_ohlc_refresh.setdefault(sym, {})
                         for tf in baseline_tfs:
-                            await _update_ohlc_cache_async(sym, tf)
+                            last = float(per_sym.get(tf, 0.0))
+                            if (now_mono - last) >= self._ohlc_refresh_min_s:
+                                await _update_ohlc_cache_async(sym, tf)
+                                per_sym[tf] = now_mono
                     except Exception:
                         pass
                 try:
@@ -2345,22 +2391,29 @@ class TickHub:
             clients = list(_connected_clients)
         if not clients:
             return
+        tasks: List[asyncio.Task] = []
+        labels: List[str] = []
         for c in clients:
             try:
                 if not getattr(c, "v2_broadcast", False):
                     continue
-                ok = await c._try_send_bytes(payload)
-                try:
-                    label = getattr(c, "conn_label", "v2")
-                    _metrics_inc(label, "ticks_items", by=len(items))
-                    if ok:
-                        _metrics_inc(label, "ok_ticks", 1)
-                    else:
-                        _metrics_inc(label, "fail_ticks", 1)
-                except Exception:
-                    pass
+                tasks.append(asyncio.create_task(c._try_send_bytes(payload)))
+                labels.append(getattr(c, "conn_label", "v2"))
             except Exception:
                 continue
+        if not tasks:
+            return
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res, label in zip(results, labels):
+            try:
+                _metrics_inc(label, "ticks_items", by=len(items))
+                ok = (res is True)
+                if ok:
+                    _metrics_inc(label, "ok_ticks", 1)
+                else:
+                    _metrics_inc(label, "fail_ticks", 1)
+            except Exception:
+                pass
 
 @app.websocket("/market-v2")
 async def ws_market_v2(websocket: WebSocket):

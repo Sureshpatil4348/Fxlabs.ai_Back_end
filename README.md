@@ -471,6 +471,7 @@ Tick scalability and latency
 - Architecture: Implemented a single-producer TickHub. The server polls MT5 about every 500ms, builds one pre‑serialized `ticks` payload, and broadcasts it to all connected v2 clients.
 - Benefits: Removes per‑client MT5 duplication, reduces thread pool contention, and smooths jitter at higher fan‑out.
 - Higher-scale or multi‑worker: For future growth, move TickHub into a dedicated process ("tickd") and deliver over IPC/pub‑sub to multiple web workers.
+ - Optimizations: TickHub throttles OHLC cache refreshes and avoids redundant MT5 tick queries for daily-change calculations by caching the D1 reference per symbol. Broadcast writes are parallelized across clients to minimize backpressure.
 
 
 ##### Indicator payloads (broadcast-only, consolidated)
@@ -526,6 +527,11 @@ Note: `bar_time` is epoch milliseconds (ms) using broker server time.
 
 Broadcast architecture
 - All server push types (ticks, indicator_updates, currency_strength_update, quantum_update, trending_pairs) now use single‑producer tasks with pre‑serialized payloads broadcast to clients. This removes per‑client JSON serialization and duplicated MT5 calls, improving latency and scalability.
+ 
+Troubleshooting: Tick lag after extended runtime
+- Symptom: Tick messages start at ~500ms cadence but drift/lag after ~20 minutes.
+- Cause: Excessive per‑tick MT5 work (OHLC cache refresh for multiple timeframes, duplicate daily‑change queries) and sequential client sends can build backpressure.
+- Resolution: TickHub throttles per‑symbol×timeframe OHLC updates, reuses a cached D1 reference to compute daily‑change from the already‑fetched tick, and broadcasts to clients in parallel.
 
 #### Indicator Coverage
 
