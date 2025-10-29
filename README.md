@@ -34,7 +34,7 @@ Note — FxLabs Prime Domain Update
 - **Real-time Data Streaming**: Live tick and RSI indicator data via WebSocket (broadcast-only)
 - **Cache-first Indicator Access**: REST `/api/indicator` serves latest RSI values from an in-memory cache populated on startup and updated on every closed-candle cycle. Also supports `indicator=quantum` to retrieve per-timeframe and overall Buy/Sell % (signals-only aggregation). Per-indicator entries now include a concise `reason` string explaining the current signal.
 - **Historical Data Access**: REST API for historical market data
-  - Use `GET /api/ohlc` to retrieve OHLC bars for a single symbol and timeframe with simple pagination (`page`, `per_page`). Bars are returned in ascending time within the page; Page 1 is the most recent bars. Each bar includes `is_closed` and Bid/Ask parallel fields.
+  - Use `GET /api/ohlc` to retrieve OHLC bars for a single symbol/timeframe with cursor (keyset) pagination using `limit` plus either `before` (older) or `after` (newer). If neither is provided, the most recent `limit` bars are returned. Bars are returned in ascending time; each includes `is_closed` and Bid/Ask parallel fields.
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap and RSI alerts with email notifications
  - Currency Strength alerts: notifies whenever the strongest/weakest fiat currency changes for a configured timeframe
@@ -1645,7 +1645,16 @@ Code defaults updated:
 - Daily Brief footer unified to a single gray disclaimer block; removed duplicate footer and yellow disclaimer styling. Headings avoid black; use #19235d where applicable.
 #### OHLC Endpoint
 
-- Path: `/api/ohlc?symbol=EURUSDm&timeframe=5M&page=1&per_page=100`
+- Path examples:
+  - Most recent slice: `/api/ohlc?symbol=EURUSDm&timeframe=5M&limit=100`
+  - Page older: `/api/ohlc?symbol=EURUSDm&timeframe=5M&limit=100&before=<timestamp_ms>`
+  - Page newer: `/api/ohlc?symbol=EURUSDm&timeframe=5M&limit=100&after=<timestamp_ms>`
 - Auth: `X-API-Key: {API_TOKEN}` when configured.
-- Params: `symbol` (required), `timeframe` (required: `1M,5M,15M,30M,1H,4H,1D,1W`), `page` (default 1), `per_page` (default 100, max 1000)
-- Returns: `{ symbol, timeframe, page, per_page, count, bars: [...] }` where each bar includes OHLC, optional bid/ask parallels, and `is_closed`.
+- Params:
+  - `symbol` (required)
+  - `timeframe` (required: `1M,5M,15M,30M,1H,4H,1D,1W`)
+  - `limit` (default 100, max 1000)
+  - `before` (optional): return bars strictly older than this bar time (ms)
+  - `after` (optional): return bars strictly newer than this bar time (ms)
+  - Provide either `before` or `after`, not both
+- Returns: `{ symbol, timeframe, limit, count, before, after, next_before, prev_after, bars: [...] }` where bars are ascending by time and include `is_closed` and optional bid/ask parallels.

@@ -1550,14 +1550,18 @@ async def refresh_alerts_manual(x_api_key: Optional[str] = Depends(require_api_t
 async def get_ohlc(
     symbol: str = Query(..., description="Symbol, e.g., EURUSDm"),
     timeframe: str = Query(..., description="One of 1M,5M,15M,30M,1H,4H,1D,1W"),
-    page: int = Query(1, ge=1, description="Page number (1-based)"),
-    per_page: int = Query(100, ge=1, le=1000, description="Bars per page (max 1000)"),
+    limit: int = Query(100, ge=1, le=1000, description="Number of bars to return (max 1000)"),
+    before: Optional[int] = Query(None, description="Return bars strictly older than this bar time (ms since epoch)"),
+    after: Optional[int] = Query(None, description="Return bars strictly newer than this bar time (ms since epoch)"),
     x_api_key: Optional[str] = Depends(require_api_token_header),
 ):
-    """Return OHLC bars for a single symbol and timeframe with simple pagination.
+    """Return OHLC bars for a single symbol/timeframe using cursor (keyset) pagination.
 
-    Pagination is newest-first by page, but bars are returned in ascending time within the page.
-    Page 1 → most recent `per_page` bars; Page 2 → the previous `per_page`, and so on.
+    Rules:
+    - Provide either `before` (to page older) or `after` (to page newer), not both.
+    - If neither is provided, returns the most recent `limit` bars.
+    - Bars are returned in ascending time order.
+    - Response includes raw cursors for convenient next requests.
     """
     # Normalize and gate symbol to allowed set when available
     sym = canonicalize_symbol(symbol)
@@ -1574,15 +1578,44 @@ async def get_ohlc(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
 
-    # Fetch last (page * per_page) bars, then slice to the requested window
-    total = page * per_page
-    bars = await _get_ohlc_data_async(sym, tf, total)
-    if not bars:
-        return {"symbol": sym, "timeframe": tf.value, "page": page, "per_page": per_page, "count": 0, "bars": []}
+    # Validate cursor usage
+    if before is not None and after is not None:
+        raise HTTPException(status_code=400, detail="provide_either_before_or_after_not_both")
 
-    end_idx = len(bars) - (page - 1) * per_page
-    start_idx = max(0, end_idx - per_page)
-    page_bars = bars[start_idx:end_idx]
+    # Fetch a generous window and slice in-memory for keyset pagination
+    # Note: MT5 API bindings do not expose an efficient 'before'/'after' server-side filter here.
+    # We therefore request up to a capped max and keyset-slice locally for stability.
+    MAX_FETCH = max(1000, min(5000, limit * 5))
+    try:
+        bars = await _get_ohlc_data_async(sym, tf, MAX_FETCH)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"ohlc_fetch_error: {e}")
+
+    if not bars:
+        return {
+            "symbol": sym,
+            "timeframe": tf.value,
+            "limit": limit,
+            "count": 0,
+            "before": before,
+            "after": after,
+            "bars": [],
+        }
+
+    # Ensure ascending by time for predictable slicing
+    bars_sorted = sorted(bars, key=lambda b: getattr(b, "time", 0))
+
+    filtered = bars_sorted
+    if before is not None:
+        filtered = [b for b in bars_sorted if getattr(b, "time", 0) < int(before)]
+    elif after is not None:
+        filtered = [b for b in bars_sorted if getattr(b, "time", 0) > int(after)]
+
+    # Select items according to cursor semantics while preserving ascending order
+    if after is not None:
+        items = filtered[:limit]
+    else:
+        items = filtered[-limit:]
 
     # Serialize minimally (pydantic models are JSON serializable, but we return explicit fields for stability)
     data = [
@@ -1608,15 +1641,22 @@ async def get_ohlc(
             "closeAsk": b.closeAsk,
             "is_closed": b.is_closed,
         }
-        for b in page_bars
+        for b in items
     ]
+
+    # Prepare simple raw cursors for clients
+    next_before = data[0]["time"] if data else None  # page older using before=next_before
+    prev_after = data[-1]["time"] if data else None  # page newer using after=prev_after
 
     return {
         "symbol": sym,
         "timeframe": tf.value,
-        "page": page,
-        "per_page": per_page,
+        "limit": limit,
         "count": len(data),
+        "before": before,
+        "after": after,
+        "next_before": next_before,
+        "prev_after": prev_after,
         "bars": data,
     }
 
