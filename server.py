@@ -55,6 +55,7 @@ from app.mt5_utils import (
     ensure_symbol_selected,
     _to_tick,
     get_ohlc_data,
+    get_ohlc_data_range,
     get_current_ohlc,
     calculate_next_update_time,
     update_ohlc_cache,
@@ -88,6 +89,9 @@ async def _symbol_info_tick_async(symbol: str):
         return await asyncio.to_thread(mt5.symbol_info_tick, symbol)
     except Exception:
         return None
+
+async def _get_ohlc_range_async(symbol: str, timeframe: Timeframe, start: datetime, end: datetime):
+    return await asyncio.to_thread(get_ohlc_data_range, symbol, timeframe, start, end)
 
 # Windows event-loop policy: prefer Selector policy for better WebSocket compatibility
 try:
@@ -1582,40 +1586,72 @@ async def get_ohlc(
     if before is not None and after is not None:
         raise HTTPException(status_code=400, detail="provide_either_before_or_after_not_both")
 
-    # Fetch a generous window and slice in-memory for keyset pagination
-    # Note: MT5 API bindings do not expose an efficient 'before'/'after' server-side filter here.
-    # We therefore request up to a capped max and keyset-slice locally for stability.
-    MAX_FETCH = max(1000, min(5000, limit * 5))
-    try:
-        bars = await _get_ohlc_data_async(sym, tf, MAX_FETCH)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"ohlc_fetch_error: {e}")
+    # Resolve timeframe seconds mapping
+    tf_seconds_map = {
+        "1M": 60,
+        "5M": 5 * 60,
+        "15M": 15 * 60,
+        "30M": 30 * 60,
+        "1H": 60 * 60,
+        "4H": 4 * 60 * 60,
+        "1D": 24 * 60 * 60,
+        "1W": 7 * 24 * 60 * 60,
+    }
+    tf_secs = tf_seconds_map.get(tf.value, 60)
 
-    if not bars:
-        return {
-            "symbol": sym,
-            "timeframe": tf.value,
-            "limit": limit,
-            "count": 0,
-            "before": before,
-            "after": after,
-            "bars": [],
-        }
+    # If a cursor is provided, use MT5 range fetch anchored to it for deep paging
+    if before is not None or after is not None:
+        window_bars = min(20000, max(5 * limit, 2000))
+        half_pad = max(0, int(0.05 * window_bars))  # small extra margin
+        try:
+            if before is not None:
+                end_dt = datetime.fromtimestamp(int(before) / 1000.0, tz=timezone.utc)
+                start_dt = end_dt - timedelta(seconds=(window_bars + half_pad) * tf_secs)
+                bars = await _get_ohlc_range_async(sym, tf, start_dt, end_dt)
+            else:
+                start_dt = datetime.fromtimestamp(int(after) / 1000.0, tz=timezone.utc)
+                end_dt = start_dt + timedelta(seconds=(window_bars + half_pad) * tf_secs)
+                bars = await _get_ohlc_range_async(sym, tf, start_dt, end_dt)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"ohlc_range_fetch_error: {e}")
 
-    # Ensure ascending by time for predictable slicing
-    bars_sorted = sorted(bars, key=lambda b: getattr(b, "time", 0))
+        if not bars:
+            return {
+                "symbol": sym,
+                "timeframe": tf.value,
+                "limit": limit,
+                "count": 0,
+                "before": before,
+                "after": after,
+                "bars": [],
+            }
 
-    filtered = bars_sorted
-    if before is not None:
-        filtered = [b for b in bars_sorted if getattr(b, "time", 0) < int(before)]
-    elif after is not None:
-        filtered = [b for b in bars_sorted if getattr(b, "time", 0) > int(after)]
-
-    # Select items according to cursor semantics while preserving ascending order
-    if after is not None:
-        items = filtered[:limit]
+        bars_sorted = sorted(bars, key=lambda b: getattr(b, "time", 0))
+        if before is not None:
+            filtered = [b for b in bars_sorted if getattr(b, "time", 0) < int(before)]
+            items = filtered[-limit:]
+        else:
+            filtered = [b for b in bars_sorted if getattr(b, "time", 0) > int(after)]
+            items = filtered[:limit]
     else:
-        items = filtered[-limit:]
+        # No cursor: fetch recent window and slice to most recent `limit` ascending
+        MAX_FETCH = max(1000, min(5000, limit * 5))
+        try:
+            bars = await _get_ohlc_data_async(sym, tf, MAX_FETCH)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"ohlc_fetch_error: {e}")
+        if not bars:
+            return {
+                "symbol": sym,
+                "timeframe": tf.value,
+                "limit": limit,
+                "count": 0,
+                "before": before,
+                "after": after,
+                "bars": [],
+            }
+        bars_sorted = sorted(bars, key=lambda b: getattr(b, "time", 0))
+        items = bars_sorted[-limit:]
 
     # Serialize minimally (pydantic models are JSON serializable, but we return explicit fields for stability)
     data = [

@@ -265,8 +265,10 @@ This document describes how the frontend should consume market data and indicato
     ```
 
 #### How OHLC data is fetched (backend)
-- Source: MetaTrader 5 via Python bindings. The server calls `mt5.copy_rates_from_pos(symbol, timeframe, 0, N)` to obtain the latest N bars for the requested timeframe.
-- Async wrapper: `server.py` uses `_get_ohlc_data_async(...)` to run the blocking MT5 call off the event loop (`asyncio.to_thread`) to keep FastAPI responsive.
+- Source: MetaTrader 5 via Python bindings.
+- Recent slice (no cursor): server calls `mt5.copy_rates_from_pos(symbol, timeframe, 0, N)` for a recent window, sorts ascending, and returns the most recent `limit` bars.
+- Deep paging (with cursor): when `before`/`after` is provided, server uses `mt5.copy_rates_range(symbol, timeframe, start, end)` to fetch a time-window anchored to the cursor (up to ~20k bars per call), then applies strict keyset filtering and returns `limit` bars.
+- Async wrapper: `server.py` runs blocking MT5 calls off the event loop via `asyncio.to_thread` to keep FastAPI responsive.
 - Conversion: Each MT5 rate is converted to an internal OHLC model in `app/mt5_utils._to_ohlc(...)`, which sets:
   - `time` (ms) and `time_iso` (UTC) from the broker’s timestamp
   - `is_closed` by comparing the bar start time plus timeframe length against current time
@@ -278,13 +280,12 @@ This document describes how the frontend should consume market data and indicato
   - Without a cursor → most recent `limit` bars
 - Response cursors: `next_before` is the oldest bar’s time in the returned slice (use to page older). `prev_after` is the newest bar’s time (use to page newer).
 
-#### Limitations & notes
-- MT5-bound window: There is no server-side historical cursor in MT5 for arbitrary deep history in this endpoint. The server fetches a recent window (up to 5000 bars per call) and keyset-slices in-memory. Very old data may require multiple requests stepping with `before`.
+- Deep history depends on MT5: Broker history availability and the MT5 terminal’s settings (Tools → Options → Charts → “Max bars in history” / “Max bars in chart”) cap how far back you can go. Increase these on the server’s MT5 to reliably request more.
 - Live/forming candle: The final element from MT5 can be a forming candle; its `is_closed` will be `false`. Consumers should treat indicators as closed-bar only (already enforced in indicator paths).
 - Time semantics: `time` is broker server time; `time_iso` is UTC. `is_closed` is computed relative to the server’s current clock and timeframe. Significant system clock drift could affect close detection.
 - Field availability: Bid/Ask-parallel fields depend on broker data. When not present, values fall back to OHLC or may be `null`.
 - Throughput: Each call performs an MT5 fetch. There is a separate in-memory OHLC cache used by WebSocket close-boundary updates, but `/api/ohlc` fetches directly to ensure freshness.
-- Limits: `limit` ≤ 1000. Internal fetch cap ≤ 5000 per request. Use cursors to iterate.
+- Limits: `limit` ≤ 1000 per response. Range fetch window is up to ~20k bars per call; iterate with cursors for more.
 
 - `POST /api/debug/email/send?type={type}&to={email}`
   - Sends a debug email with random content for the specified template type to the given address.

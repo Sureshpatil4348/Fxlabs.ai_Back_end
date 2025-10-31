@@ -1658,3 +1658,4 @@ Code defaults updated:
   - `after` (optional): return bars strictly newer than this bar time (ms)
   - Provide either `before` or `after`, not both
 - Returns: `{ symbol, timeframe, limit, count, before, after, next_before, prev_after, bars: [...] }` where bars are ascending by time and include `is_closed` and optional bid/ask parallels.
+- Deep history: With cursors, the server uses a time-range fetch (up to ~20k bars per call) anchored to your cursor. Iterate with `before` until fewer than `limit` bars are returned. Depth depends on broker history and the MT5 terminal settings (Tools → Options → Charts → Max bars in history/chart).
