@@ -264,6 +264,28 @@ This document describes how the frontend should consume market data and indicato
     GET /api/ohlc?symbol=EURUSDm&timeframe=5M&limit=100&after=<prev_after>
     ```
 
+#### How OHLC data is fetched (backend)
+- Source: MetaTrader 5 via Python bindings. The server calls `mt5.copy_rates_from_pos(symbol, timeframe, 0, N)` to obtain the latest N bars for the requested timeframe.
+- Async wrapper: `server.py` uses `_get_ohlc_data_async(...)` to run the blocking MT5 call off the event loop (`asyncio.to_thread`) to keep FastAPI responsive.
+- Conversion: Each MT5 rate is converted to an internal OHLC model in `app/mt5_utils._to_ohlc(...)`, which sets:
+  - `time` (ms) and `time_iso` (UTC) from the broker’s timestamp
+  - `is_closed` by comparing the bar start time plus timeframe length against current time
+  - Optional Bid/Ask-parallel fields (`openBid`/`openAsk`, etc.) when available, else falls back to OHLC
+- Symbol handling: Symbols are normalized with `canonicalize_symbol(...)` and validated via `ensure_symbol_selected(...)`. An allowlist may be enforced; unknown/blocked symbols return an error.
+- Cursor selection: The endpoint fetches a bounded window (`limit*5` clamped to `[1000, 5000]`), sorts ascending by time, and then applies keyset filters:
+  - `before=<t>` → return bars with `time < t` (older)
+  - `after=<t>` → return bars with `time > t` (newer)
+  - Without a cursor → most recent `limit` bars
+- Response cursors: `next_before` is the oldest bar’s time in the returned slice (use to page older). `prev_after` is the newest bar’s time (use to page newer).
+
+#### Limitations & notes
+- MT5-bound window: There is no server-side historical cursor in MT5 for arbitrary deep history in this endpoint. The server fetches a recent window (up to 5000 bars per call) and keyset-slices in-memory. Very old data may require multiple requests stepping with `before`.
+- Live/forming candle: The final element from MT5 can be a forming candle; its `is_closed` will be `false`. Consumers should treat indicators as closed-bar only (already enforced in indicator paths).
+- Time semantics: `time` is broker server time; `time_iso` is UTC. `is_closed` is computed relative to the server’s current clock and timeframe. Significant system clock drift could affect close detection.
+- Field availability: Bid/Ask-parallel fields depend on broker data. When not present, values fall back to OHLC or may be `null`.
+- Throughput: Each call performs an MT5 fetch. There is a separate in-memory OHLC cache used by WebSocket close-boundary updates, but `/api/ohlc` fetches directly to ensure freshness.
+- Limits: `limit` ≤ 1000. Internal fetch cap ≤ 5000 per request. Use cursors to iterate.
+
 - `POST /api/debug/email/send?type={type}&to={email}`
   - Sends a debug email with random content for the specified template type to the given address.
   - Auth: `Authorization: Bearer {DEBUG_API_TOKEN}` (debug-specific token from `.env`, env var name: `DEBUG_API_TOKEN`; applies to all `/api/debug/*`).
