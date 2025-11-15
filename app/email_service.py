@@ -766,6 +766,66 @@ class EmailService:
                 pass
         except Exception:
             pass
+
+    def _log_sendgrid_exception_details(self, context: str, error: Exception, to_email: Optional[str] = None) -> None:
+        """Extract and log details from SendGrid/HTTP client exceptions (e.g., 400 Bad Request).
+
+        Tries multiple attributes across different client versions: status_code, body, to_dict(), and .read().
+        """
+        try:
+            status = getattr(error, "status_code", None)
+            body = getattr(error, "body", None)
+            masked_key = self._mask(self.sendgrid_api_key)
+            logger.error(
+                "   SG exception → status=%s, from=%s, to=%s, key=%s, err=%s",
+                status, self.from_email, (to_email or ""), masked_key, str(error)
+            )
+            text = None
+            try:
+                if isinstance(body, (bytes, bytearray)):
+                    text = body.decode(errors="ignore")
+                elif isinstance(body, str):
+                    text = body
+            except Exception:
+                text = None
+
+            # python_http_client.HTTPError exposes .to_dict() for structured errors
+            if not text:
+                try:
+                    to_dict = getattr(error, "to_dict", None)
+                    if callable(to_dict):
+                        d = to_dict()
+                        text = json.dumps(d)[:2048]
+                except Exception:
+                    pass
+
+            # urllib-style HTTPError may support .read()
+            if not text:
+                try:
+                    read = getattr(error, "read", None)
+                    if callable(read):
+                        raw = read()
+                        text = (raw.decode(errors="ignore") if isinstance(raw, (bytes, bytearray)) else str(raw))
+                except Exception:
+                    pass
+
+            if text:
+                preview = text[:1024]
+                logger.error("   SG error body (trimmed): %s", preview)
+                try:
+                    j = json.loads(text)
+                    errs = j.get("errors") if isinstance(j, dict) else None
+                    if isinstance(errs, list) and errs:
+                        for idx, er in enumerate(errs, 1):
+                            msg = (er or {}).get("message")
+                            field = (er or {}).get("field")
+                            help_url = (er or {}).get("help")
+                            code = (er or {}).get("code")
+                            logger.error("   [%d] SG error | code=%s field=%s msg=%s help=%s", idx, code or "-", field or "-", msg or "-", help_url or "-")
+                except Exception:
+                    pass
+        except Exception:
+            pass
     
     def _update_alert_cooldown(self, alert_hash: str, triggered_pairs: List[Dict[str, Any]] = None):
         """Update the last sent timestamp and values for an alert"""
@@ -1091,6 +1151,7 @@ class EmailService:
 <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('Probability Signal', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;\">FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>.</td></tr>\n</table>\n</td></tr></table>
 </body></html>
         """
+        return html
 
         # Normalize Daily disclaimer styling to match other emails (neutral gray)
         html = (
@@ -1709,6 +1770,7 @@ class EmailService:
 </td></tr></table>\n
 </body></html>
         """
+        return html
 
     def _build_news_reminder_text(
         self,
@@ -1773,16 +1835,7 @@ class EmailService:
             expected=_fmt(expected, "-"),
             bias=_fmt(bias, "-"),
         )
-        text = self._build_news_reminder_text(
-            event_title=_fmt(event_title, "News Event"),
-            event_time_local=_fmt(event_time_local, ""),
-            currency=_fmt(currency, "-"),
-            impact=_fmt(impact, "-"),
-            previous=_fmt(previous, "-"),
-            forecast=_fmt(forecast, "-"),
-            expected=_fmt(expected, "-"),
-            bias=_fmt(bias, "-"),
-        )
+        text = None
 
         subject = "FxLabs Prime • News reminder"
         mail = self._build_mail(
@@ -1802,9 +1855,17 @@ class EmailService:
                 return True
             else:
                 logger.error(f"❌ Failed to send news reminder: status={response.status_code}")
+                try:
+                    self._log_sendgrid_response_details("news_reminder", response, to_email=user_email)
+                except Exception:
+                    pass
                 return False
         except Exception as e:
             logger.error(f"❌ Error sending news reminder: {e}")
+            try:
+                self._log_sendgrid_exception_details("news_reminder", e, to_email=user_email)
+            except Exception:
+                pass
             return False
 
         # RSI threshold mode: use provided compact RSI correlation mismatch template with RSI correlation

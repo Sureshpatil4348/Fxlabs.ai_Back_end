@@ -33,8 +33,9 @@ Notes:
   2) Send `{ action: "subscribe", symbol, timeframe, data_types, price_basis, ohlc_schema }`.
   3) Server responds with `subscribed` and an `initial_ohlc` snapshot (if requested).
   4) Live updates:
-     - Ticks: compact binary JSON `{ type: "ticks", data: [...] }` up to ~1 Hz (≈1000 ms cadence).
+     - Ticks: compact binary JSON `{ type: "ticks", data: [...] }` about ~2 Hz (≈500 ms cadence).
      - Scheduled OHLC boundary: `{ type: "ohlc_update", data: { ... } }` once per timeframe close.
+       Note: In WebSocket v2 (`/market-v2`), the server also broadcasts consolidated `{ type: "ohlc_updates", timeframe, data: [...] }` on candle close, one message per timeframe containing all updated symbols.
 - Scheduling: Next OHLC boundary is computed with `calculate_next_update_time`, and at boundary the cache is refreshed and a closed bar is pushed.
   - Code: `server.py:879` (send loop), `app/mt5_utils.py:116` (boundary calc).
 - Data shaping:

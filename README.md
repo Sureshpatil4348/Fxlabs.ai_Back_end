@@ -1,8 +1,8 @@
 # Fxlabs.ai Backend - Real-time Market Data Streaming Service
 
-WebSocket v2: Use `/market-v2` for live ticks, indicator updates, quantum analysis updates, and trending pairs updates (hourly broadcast). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no OHLC or indicator snapshots in v2. Ping/pong is supported for keepalive.
+WebSocket v2: Use `/market-v2` for live ticks, consolidated OHLC updates on candle close, indicator updates, quantum analysis updates, and trending pairs updates (hourly broadcast). Legacy endpoints have been removed. Note: As of WS-V2-7, v2 is broadcast-only; `subscribe`/`unsubscribe` are ignored (server replies with an informational message). There are no initial OHLC or indicator snapshots in v2; use REST for initial state. Ping/pong is supported for keepalive.
 
-Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick and indicator updates over `/market-v2` (tick-driven, coalesced; OHLC is not streamed to clients in v2). No EA or external bridge required.
+Re-architecture: See `REARCHITECTING.md` for the polling-only MT5 design. Today, the server streams tick, consolidated OHLC (on candle close), and indicator updates over `/market-v2` (coalesced per scan across all pairs). No EA or external bridge required.
 
 A high-performance, real-time financial market data streaming service built with Python, FastAPI, and MetaTrader 5 integration. Provides live forex data, OHLC candlestick streaming, AI-powered news analysis, and comprehensive alert systems for trading applications.
 
@@ -34,6 +34,7 @@ Note — FxLabs Prime Domain Update
 - **Real-time Data Streaming**: Live tick and RSI indicator data via WebSocket (broadcast-only)
 - **Cache-first Indicator Access**: REST `/api/indicator` serves latest RSI values from an in-memory cache populated on startup and updated on every closed-candle cycle. Also supports `indicator=quantum` to retrieve per-timeframe and overall Buy/Sell % (signals-only aggregation). Per-indicator entries now include a concise `reason` string explaining the current signal.
 - **Historical Data Access**: REST API for historical market data
+  - Use `GET /api/ohlc` to retrieve OHLC bars for a single symbol/timeframe with cursor (keyset) pagination using `limit` plus either `before` (older) or `after` (newer). If neither is provided, the most recent `limit` bars are returned. Bars are returned in ascending time; each includes `is_closed` and Bid/Ask parallel fields.
 - **AI-Powered News Analysis**: Automated economic news impact analysis (with live internet search)
 - **Comprehensive Alert Systems**: Heatmap and RSI alerts with email notifications
  - Currency Strength alerts: notifies whenever the strongest/weakest fiat currency changes for a configured timeframe
@@ -333,6 +334,14 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
   - **Bearish bias**: Displayed in red (`#EF4444`) 
   - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
 - Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
+- Rendering: News reminders are sent as HTML‑only (no `text/plain` part) to ensure clients render the designed template instead of falling back to plain text.
+ - Error diagnostics: If SendGrid returns a non‑2xx or raises an HTTP error (e.g., `400 Bad Request`), the server logs structured details including status, headers (when available), and provider `errors[]` with `code`, `field`, `message`, and `help` to speed up troubleshooting.
+
+Common SendGrid 400 causes and checks
+- Unverified sender/From domain: verify the domain for `FROM_EMAIL` in SendGrid.
+- Empty/whitespace content: HTML body must be non‑empty after trimming.
+- Invalid recipient: ensure emails contain `@` and are well‑formed.
+- Misconfigured API key: tenant‑specific `FXLABS_SENDGRID_API_KEY`/`HEXTECH_SENDGRID_API_KEY` required.
 
 #### Auth Fetch Logging (Verbose)
 - Start: `daily_auth_fetch_start | page: 1 | per_page: 1000`
@@ -353,7 +362,7 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 
 #### Market Data WebSocket v2 (`/market-v2`) — preferred
 - **URL**: `ws://localhost:8000/market-v2`
-- **Purpose**: Real-time tick and indicator streaming (no OHLC streaming to clients)
+- **Purpose**: Real-time ticks, consolidated OHLC (on candle close), and indicator streaming
 - **Behavior**: Broadcast-only baseline (symbols/timeframes). `subscribe`/`unsubscribe` are ignored (server replies with `{type:"info", message:"v2 broadcast-only: subscribe/unsubscribe ignored"}`).
   - As of v2.0.0+, tick updates include all allowed symbols every 1000 ms on a delta basis (only symbols with a new tick since the last send appear in each message).
 
@@ -364,7 +373,7 @@ Tick push payloads to clients remain a list of ticks. Internally, for alert chec
   "type": "connected",
   "message": "WebSocket connected successfully",
   "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W"],
-  "supported_data_types": ["ticks", "indicators"],
+  "supported_data_types": ["ticks", "indicators", "ohlc"],
   "supported_price_bases": ["last", "bid", "ask"]
 }
 ```
@@ -404,9 +413,9 @@ Internal alert tick_data shape:
   - Reconnect with backoff on close codes 1001/1006.
 
 #### Market Data WebSocket v2 (`/market-v2`) — preferred
-- Use `/market-v2` for new clients. It exposes tick and indicator payloads only (no OHLC streaming), and advertises capabilities via `supported_data_types` in the greeting.
-- Current capabilities: `supported_data_types = ["ticks","indicators"]`.
-- Broadcast-All mode: v2 pushes ticks and indicators (closed‑bar) to all connected clients without explicit subscriptions. OHLC is computed server‑side only for indicators/alerts.
+- Use `/market-v2` for new clients. It exposes ticks, indicators, and consolidated `ohlc_updates` on candle close, and advertises capabilities via `supported_data_types` in the greeting.
+- Current capabilities: `supported_data_types = ["ticks","indicators","ohlc"]`.
+- Broadcast-All mode: v2 pushes ticks and closed‑bar updates (indicators and OHLC) to all connected clients without explicit subscriptions.
   - Symbols: all symbols in `ALLOWED_WS_SYMBOLS` (defaults to all `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`, broker‑suffixed)
 - Timeframes: M1, M5, M15, M30, H1, H4, D1, W1
   - Note: `currency_strength` enforces a minimum timeframe of `5M` (no `1M`).
@@ -440,30 +449,69 @@ V2 greeting example (capabilities + indicators registry):
   }
 }
 ```
-Tick payloads include `daily_change_pct` (Bid vs broker D1 reference) and only contain bid prices:
+Tick payloads include `daily_change` (absolute; Bid vs D1 reference) and `daily_change_pct` (percent; Bid vs D1 reference). Payload is bid-only:
 
 ```json
-{"type": "ticks", "data": [ {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871, "daily_change_pct": -0.12} ] }
+{"type": "ticks", "data": [
+  {"symbol":"EURUSDm","time":1696229945123,"time_iso":"2025-10-02T14:19:05.123Z","bid":1.06871, "daily_change_pct": -0.12, "daily_change": -0.00129},
+  {"symbol":"BTCUSDm","time":1696229946123,"time_iso":"2025-10-02T14:19:06.123Z","bid":27123.5, "daily_change_pct": 0.35, "daily_change": 95.2}
+] }
 ```
 
+Tick push details (how it’s computed and sent):
+- Loop cadence ~2 Hz (≈500ms): the server scans all allowed symbols and coalesces updates into a single message per scan.
+- Per-item timestamps: `time` uses MT5 `time_msc` (ms) or `time*1000`; `time_iso` is derived UTC. There is no outer batch timestamp.
+- Duplicate suppression: a symbol is included only if its tick timestamp differs from the last sent value for that symbol.
+- Daily change math (Bid basis):
+  - D1 reference = today’s D1 open (Bid) when today’s bar exists; otherwise previous D1 close (Bid).
+  - `daily_change = bid_now − D1_reference`; `daily_change_pct = 100 * (bid_now − D1_reference) / D1_reference`.
+- Side effects: latest price snapshot is written to `price_cache` for `/api/pricing`; OHLC caches are refreshed internally for baseline timeframes. v2 streams consolidated `ohlc_updates` on candle close per timeframe.
 
-##### Indicator payloads (broadcast-only)
+Tick scalability and latency
+- Architecture: Implemented a single-producer TickHub. The server polls MT5 about every 500ms, builds one pre‑serialized `ticks` payload, and broadcasts it to all connected v2 clients.
+- Benefits: Removes per‑client MT5 duplication, reduces thread pool contention, and smooths jitter at higher fan‑out.
+- Higher-scale or multi‑worker: For future growth, move TickHub into a dedicated process ("tickd") and deliver over IPC/pub‑sub to multiple web workers.
+- Optimizations: TickHub throttles OHLC cache refreshes and avoids redundant MT5 tick queries for daily-change calculations by caching the D1 reference per symbol. Broadcast writes are parallelized across clients to minimize backpressure.
 
-Live push when a new bar is detected by the 10s poller:
+TickHub configuration (env vars)
+- `WS_TICK_INTERVAL_S` (default `0.5`): target tick cadence in seconds.
+- `WS_TICK_EXECUTOR_WORKERS` (default `12`): dedicated MT5 threadpool size for tick calls.
+- `WS_TICK_MAX_CONCURRENCY` (default `16`): max concurrent per-scan tick fetches.
+- `WS_TICK_CALL_TIMEOUT_S` (default `0.4`): timeout per MT5 `symbol_info_tick` call; late responses ignored for the current scan.
+- `WS_SELECT_CALL_TIMEOUT_S` (default `1.0`): timeout for `ensure_symbol_selected` when refreshing symbol visibility.
+- `WS_REFRESH_OHLC` (default `1`): whether to refresh OHLC caches in the tick loop.
+- `WS_OHLC_REFRESH_MIN_S` (default `10`): minimum seconds between OHLC cache refreshes per symbol×timeframe (tick loop refreshes only M1/M5 to reduce load).
+
+
+##### Indicator payloads (broadcast-only, consolidated)
+
+Live push when a new bar is detected by the 10s poller. One message per timeframe with all updated symbols:
 
 ```json
 {
-  "type": "indicator_update",
-  "symbol": "EURUSDm",
+  "type": "indicator_updates",
   "timeframe": "5M",
-  "data": {
-    "bar_time": 1696229940000,
-    "indicators": { "rsi": {"14": 51.23} }
-  }
+  "data": [
+    { "symbol": "EURUSDm", "bar_time": 1696229940000, "indicators": { "rsi": {"14": 51.23} } },
+    { "symbol": "BTCUSDm",  "bar_time": 1696229940000, "indicators": { "rsi": {"14": 48.10} } }
+  ]
 }
 ```
 
 Currency Strength updates are also pushed over WebSocket on closed bars only and only for WS-allowed timeframes (minimum `5M`).
+
+OHLC payloads (broadcast-only, consolidated)
+- On each candle close detected by the 10s poller, one message per timeframe contains the latest closed bar for all updated symbols:
+```
+{
+  "type": "ohlc_updates",
+  "timeframe": "5M",
+  "data": [
+    { "symbol": "EURUSDm", "bar_time": 1696229940000, "ohlc": { "open": 1.06791, "high": 1.06871, "low": 1.06750, "close": 1.06810 } },
+    { "symbol": "BTCUSDm",  "bar_time": 1696229940000, "ohlc": { "open": 27050.0, "high": 27150.0, "low": 27000.0, "close": 27123.5 } }
+  ]
+}
+```
 
 Server logs: On each new closed-bar currency strength broadcast, the server logs an INFO line on logger `obs.curstr` with the timeframe, bar_time, and the JSON map of strengths, for example:
 
@@ -485,6 +533,15 @@ Note: `bar_time` is epoch milliseconds (ms) using broker server time.
   - `connections_opened`, `connections_closed`
   - `ok_ticks`, `fail_ticks`, `ticks_items` (sum of items sent in tick lists)
 - `ok_indicator_update`, `fail_indicator_update`
+
+Broadcast architecture
+- All server push types (ticks, indicator_updates, currency_strength_update, quantum_update, trending_pairs) now use single‑producer tasks with pre‑serialized payloads broadcast to clients. This removes per‑client JSON serialization and duplicated MT5 calls, improving latency and scalability.
+ - Broadcast writes are parallelized across clients for all message types to reduce backpressure from slow receivers.
+ 
+Troubleshooting: Tick lag after extended runtime
+- Symptom: Tick messages start at ~500ms cadence but drift/lag after ~20 minutes.
+- Cause: Excessive per‑tick MT5 work (OHLC cache refresh for multiple timeframes, duplicate daily‑change queries) and sequential client sends can build backpressure.
+- Resolution: TickHub throttles per‑symbol×timeframe OHLC updates, reuses a cached D1 reference to compute daily‑change from the already‑fetched tick, and broadcasts to clients in parallel.
 
 #### Indicator Coverage
 
@@ -517,6 +574,7 @@ See `API_DOC.md` for the consolidated WebSocket v2 and REST contracts, examples,
 | `/health` | GET | Health check and MT5 status | No |
 | `/api/indicator` | GET | Latest closed‑bar value(s) for a given indicator across pairs; Currency Strength snapshot | Yes |
 | `/api/pricing` | GET | Latest cached price snapshot(s) with daily_change_pct | Yes |
+| `/api/ohlc` | GET | Historical OHLC bars with simple pagination | Yes |
 | `/api/symbols` | GET | Symbol search | Yes |
 | `/api/news/analysis` | GET | AI-analyzed news data | Yes |
 | `/api/news/refresh` | POST | Manual news refresh | Yes |
@@ -772,8 +830,8 @@ ws.onmessage = (event) => {
   const data = JSON.parse(event.data);
   if (data.type === 'ticks') {
     console.log('Ticks:', data.data);
-  } else if (data.type === 'indicator_update' || data.type === 'initial_indicators') {
-    console.log('Indicators:', data);
+  } else if (data.type === 'indicator_updates') {
+    console.log('Indicators (batch):', data);
   } else if (data.type === 'quantum_update') {
     console.log('Quantum:', data);
   } else if (data.type === 'trending_pairs') {
@@ -889,7 +947,7 @@ Concurrency:
 ### High-Concurrency Architecture & Scaling
 
 - **ASGI + FastAPI**: Single-process, event-loop concurrency handles many simultaneous REST and WebSocket clients without blocking. Background tasks (news, daily emails, minute alerts, indicator poller) are started via the app lifespan and run concurrently.
-- **Broadcast WebSockets (v2)**: A single producer pipeline computes closed-bar indicators every ~10s and broadcasts snapshots to all connected clients. Each client has a paced tick loop (~1 Hz), avoiding per-client heavy work.
+- **Broadcast WebSockets (v2)**: A single producer pipeline computes closed-bar indicators every ~10s and broadcasts snapshots to all connected clients. The tick cadence is ~2 Hz (≈500ms), avoiding per-client heavy work.
 - **In-memory caches**: `app/price_cache.py` and `app/indicator_cache.py` serve reads in O(1) with keyed asyncio locks to keep updates consistent under load. REST endpoints read from these caches instead of recomputing.
 - **Shaping caps and allowlists**: Environment-driven caps limit work per connection and per request.
   - `ALLOWED_WS_SYMBOLS`, `ALLOWED_WS_TIMEFRAMES`
@@ -1176,6 +1234,9 @@ All logs include timestamps with timezone offset using the format:
 `YYYY-MM-DD HH:MM:SS±ZZZZ | LEVEL | module | message`.
 
 You can control verbosity via `LOG_LEVEL` (default `INFO`).
+
+- Note: Heatmap cooldown-skip logs (`heatmap_cd_skip`) are DEBUG-only to avoid INFO spam. Set `LOG_LEVEL=DEBUG` to see lines like:
+  `🔔 heatmap_cd_skip | alert_id: ... | cooldown_until: ... | last_trigger: ... | symbol: ...`.
 
 #### Verbosity Flags (non-critical logs)
 - `LIVE_RSI_DEBUGGING` — emits periodic closed‑bar RSI for BTC/USD 5M (default `false`).
@@ -1582,3 +1643,19 @@ Why Outlook flagged it:
 Code defaults updated:
 - No code defaults for email sender. Set tenant-specific sender (`FXLABS_FROM_EMAIL` or `HEXTECH_FROM_EMAIL`) and configure your domain in SendGrid.
 - Daily Brief footer unified to a single gray disclaimer block; removed duplicate footer and yellow disclaimer styling. Headings avoid black; use #19235d where applicable.
+#### OHLC Endpoint
+
+- Path examples:
+  - Most recent slice: `/api/ohlc?symbol=EURUSDm&timeframe=5M&limit=100`
+  - Page older: `/api/ohlc?symbol=EURUSDm&timeframe=5M&limit=100&before=<timestamp_ms>`
+  - Page newer: `/api/ohlc?symbol=EURUSDm&timeframe=5M&limit=100&after=<timestamp_ms>`
+- Auth: `X-API-Key: {API_TOKEN}` when configured.
+- Params:
+  - `symbol` (required)
+  - `timeframe` (required: `1M,5M,15M,30M,1H,4H,1D,1W`)
+  - `limit` (default 100, max 1000)
+  - `before` (optional): return bars strictly older than this bar time (ms)
+  - `after` (optional): return bars strictly newer than this bar time (ms)
+  - Provide either `before` or `after`, not both
+- Returns: `{ symbol, timeframe, limit, count, before, after, next_before, prev_after, bars: [...] }` where bars are ascending by time and include `is_closed` and optional bid/ask parallels.
+- Deep history: With cursors, the server uses a time-range fetch (up to ~20k bars per call) anchored to your cursor. Iterate with `before` until fewer than `limit` bars are returned. Depth depends on broker history and the MT5 terminal settings (Tools → Options → Charts → Max bars in history/chart).

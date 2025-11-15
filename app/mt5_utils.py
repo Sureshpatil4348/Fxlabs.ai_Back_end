@@ -272,6 +272,24 @@ def get_daily_change_pct_bid(symbol: str) -> Optional[float]:
     except Exception:
         return None
 
+def get_daily_change_bid(symbol: str) -> Optional[float]:
+    """Compute absolute daily change on Bid basis.
+
+    daily_change = bid_now - D1_reference
+    where D1_reference is today's D1 open (bid) if today; else previous D1 close (bid).
+    """
+    try:
+        symbol = canonicalize_symbol(symbol)
+        ensure_symbol_selected(symbol)
+        tick = get_current_tick(symbol)
+        if tick is None or tick.bid is None:
+            return None
+        ref = _get_d1_reference_bid(symbol)
+        if ref is None:
+            return None
+        return float(tick.bid) - float(ref)
+    except Exception:
+        return None
  
 
 
@@ -356,3 +374,33 @@ def get_cached_ohlc(symbol: str, timeframe: Timeframe, count: int = 250) -> List
         global_ohlc_cache[symbol][timeframe.value] = deque(ohlc_data, maxlen=count)
         return ohlc_data
     return list(global_ohlc_cache[symbol][timeframe.value])
+
+
+def get_ohlc_data_range(symbol: str, timeframe: Timeframe, start: datetime, end: datetime) -> List[OHLC]:
+    """Fetch OHLC bars within a time range using MT5 copy_rates_range.
+
+    - Returns bars whose open time lies within [start, end].
+    - Depth is constrained by broker history and MT5 terminal settings (Max bars in history).
+    - Results are converted to internal OHLC models.
+    """
+    symbol = canonicalize_symbol(symbol)
+    ensure_symbol_selected(symbol)
+    mt5_timeframe = MT5_TIMEFRAMES.get(timeframe)
+    if mt5_timeframe is None:
+        raise HTTPException(status_code=400, detail=f"Unsupported timeframe: {timeframe}")
+    try:
+        rates = mt5.copy_rates_range(symbol, mt5_timeframe, start, end)
+    except Exception as e:
+        logger.debug(f"⚠️ copy_rates_range error for {symbol} {timeframe.value}: {e}")
+        rates = None
+    if rates is None or len(rates) == 0:
+        logger.debug(
+            f"⚠️ No rates from MT5 for range {symbol} {timeframe.value} {start.isoformat()} .. {end.isoformat()}"
+        )
+        return []
+    ohlc_data: List[OHLC] = []
+    for rate in rates:
+        ohlc = _to_ohlc(symbol, timeframe.value, rate)
+        if ohlc:
+            ohlc_data.append(ohlc)
+    return ohlc_data

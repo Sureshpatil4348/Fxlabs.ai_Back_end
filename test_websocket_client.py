@@ -54,8 +54,8 @@ async def test_websocket_connection():
                     
                     if data.get('type') == 'ticks':
                         print(f"📈 Received {len(data.get('data', []))} tick updates")
-                    elif data.get('type') == 'indicator_update':
-                        print(f"📊 Indicator Update: {data.get('symbol')} {data.get('timeframe')} bar_time={data.get('data',{}).get('bar_time')}")
+                    elif data.get('type') == 'indicator_updates':
+                        print(f"📊 Indicator Updates: tf={data.get('timeframe')} count={len(data.get('data', []))}")
                     else:
                         print(f"📨 Other message: {data}")
                         

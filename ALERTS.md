@@ -133,7 +133,7 @@ Single per-user alert for the All-in-One/Quantum Analysis heatmap. Users select 
 
 Cooldown and post-cooldown behavior (per user × per pair)
 - Cooldown window: 4 hours from the moment an email is sent for that user+pair.
-- During cooldown: we do not evaluate that user+pair at all; a concise `heatmap_cd_skip` log is emitted with the cooldown-until timestamp and last trigger side.
+- During cooldown: we do not evaluate that user+pair at all; a concise `heatmap_cd_skip` log is emitted only at DEBUG level (set `LOG_LEVEL=DEBUG`) with the cooldown‑until timestamp and last trigger side.
 - After cooldown expires: if the next trigger would be the same side as the one that started the cooldown, we suppress it and only re-arm internally (log: `heatmap_cd_same_signal_suppress`). No email is sent. We resume sending once the first different-side trigger occurs (log: `heatmap_cd_start` when it fires and a new cooldown starts). This avoids repeat notifications for the same signal immediately after cooldown.
 - Scope: Cooldown is strictly per user × per pair and does not affect other pairs or other alert types.
 
@@ -181,7 +181,7 @@ Verbose evaluation logs
   - `pair_rearm`: side re‑armed after leaving zone (no margin)
   - `pair_eval_decision`: final decision for the pair — `baseline_skip` or `trigger`
   - `heatmap_no_trigger`: includes Buy%/Sell%, thresholds, armed flags, and a `reason` field (`within_neutral_band` | `below_buy_threshold` | `above_sell_threshold` | `buy_disarmed` | `sell_disarmed`)
-  - `heatmap_cd_skip`: evaluation skipped due to active per user+pair 4h cooldown (includes `cooldown_until`, `last_trigger`)
+  - `heatmap_cd_skip` (DEBUG only): evaluation skipped due to active per user+pair 4h cooldown (includes `cooldown_until`, `last_trigger`). This message appears only when `LOG_LEVEL=DEBUG`.
   - `heatmap_cd_start`: cooldown started for (user, pair) after an email is queued (includes `trigger`, `cooldown_until`)
   - `heatmap_cd_same_signal_suppress`: post‑cooldown same‑signal suppression (disarm without sending)
 
@@ -255,10 +255,12 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 - Template: Minimal, mobile-friendly HTML wrapped with the unified green header (`FxLabs Prime • News • <date/time>`) and a single common disclaimer footer.
   - Branding: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` are kept for readability and visual hierarchy.
   - Fields: `event_title`, `event_time_local` (IST by default), `currency`, `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
+  - Rendering: Sent as HTML‑only content to avoid clients displaying the plain‑text part.
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `news_auth_fetch_start`, `news_auth_fetch_page`, `news_auth_fetch_page_emails` (debug), `news_auth_fetch_done`
   - Fallback: `news_users_fetch_fallback_alert_tables`
   - Send: `news_auth_emails` (full CSV), `news_reminder_recipients`, `news_reminder_completed`
+  - Provider diagnostics: non‑2xx and exceptions (e.g., 400) include structured SendGrid details (status, headers when available, and `errors[]` array with `code`, `field`, `message`, `help`).
 - Requirements: SendGrid configured (`SENDGRID_API_KEY`, `FROM_EMAIL`, `FROM_NAME`) and Supabase (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`). If either is missing, the scheduler logs and skips sending.
 
 ## Daily Morning Brief

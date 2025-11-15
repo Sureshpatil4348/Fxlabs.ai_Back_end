@@ -18,6 +18,7 @@ except ImportError:
     mt5 = None
     MT5_AVAILABLE = False
 import orjson
+from concurrent.futures import ThreadPoolExecutor
 import logging
 from app.logging_config import configure_logging
 from fastapi import Depends, FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, Header, APIRouter
@@ -54,11 +55,13 @@ from app.mt5_utils import (
     ensure_symbol_selected,
     _to_tick,
     get_ohlc_data,
+    get_ohlc_data_range,
     get_current_ohlc,
     calculate_next_update_time,
     update_ohlc_cache,
     get_cached_ohlc,
     get_daily_change_pct_bid,
+    get_daily_change_bid,
     canonicalize_symbol,
 )
 from app.rsi_utils import calculate_rsi_series, closed_closes
@@ -87,6 +90,9 @@ async def _symbol_info_tick_async(symbol: str):
     except Exception:
         return None
 
+async def _get_ohlc_range_async(symbol: str, timeframe: Timeframe, start: datetime, end: datetime):
+    return await asyncio.to_thread(get_ohlc_data_range, symbol, timeframe, start, end)
+
 # Windows event-loop policy: prefer Selector policy for better WebSocket compatibility
 try:
     if sys.platform.startswith("win"):
@@ -97,6 +103,43 @@ except Exception:
 async def _daily_change_pct_bid_async(symbol: str):
     try:
         return await asyncio.to_thread(get_daily_change_pct_bid, symbol)
+    except Exception:
+        return None
+
+async def _daily_change_bid_async(symbol: str):
+    try:
+        return await asyncio.to_thread(get_daily_change_bid, symbol)
+    except Exception:
+        return None
+
+# Efficient D1 reference fetch for ticks: used to compute daily change without duplicate MT5 tick calls
+async def _get_d1_reference_bid_async(symbol: str) -> Optional[float]:
+    try:
+        bars = await _get_ohlc_data_async(symbol, Timeframe.D1, 2)
+        if not bars:
+            return None
+        latest = bars[-1]
+        prev = bars[-2] if len(bars) > 1 else None
+        now_date = datetime.now(timezone.utc).date()
+        try:
+            latest_dt = datetime.fromisoformat(getattr(latest, "time_iso", ""))
+        except Exception:
+            latest_dt = datetime.fromtimestamp(float(getattr(latest, "time", 0)) / 1000.0, tz=timezone.utc)
+        latest_date = latest_dt.date()
+        if latest_date == now_date:
+            ref = getattr(latest, "openBid", None)
+            if ref is None:
+                ref = getattr(latest, "open", None)
+            return float(ref) if ref is not None else None
+        if prev is not None:
+            ref = getattr(prev, "closeBid", None)
+            if ref is None:
+                ref = getattr(prev, "close", None)
+            return float(ref) if ref is not None else None
+        ref = getattr(latest, "openBid", None)
+        if ref is None:
+            ref = getattr(latest, "open", None)
+        return float(ref) if ref is not None else None
     except Exception:
         return None
 # One-time warmup to backfill indicator cache at startup
@@ -239,20 +282,18 @@ async def lifespan(app: FastAPI):
     global _ws_metrics_task
     _ws_metrics_task = asyncio.create_task(_ws_metrics_reporter())
 
+    # Start global TickHub (single-producer tick broadcaster)
+    global _tick_hub, _tick_hub_task
+    try:
+        _tick_hub = TickHub()
+        _tick_hub.start()
+    except Exception:
+        _tick_hub = None
+
     # Start Trending Pairs scheduler (startup + hourly)
     async def _broadcast_trending(snapshot: Dict[str, Any]) -> None:
-        # Push to all connected clients as a concise event
-        async with _connected_clients_lock:
-            clients = list(_connected_clients)
-        if not clients:
-            return
-        msg = {"type": "trending_pairs", "data": snapshot}
-        for c in clients:
-            try:
-                if getattr(c, "v2_broadcast", False):
-                    await c._try_send_json(msg)
-            except Exception:
-                continue
+        # Push to all connected clients as a concise event (pre-serialized)
+        await _broadcast_json_v2({"type": "trending_pairs", "data": snapshot})
 
     try:
         try:
@@ -309,6 +350,12 @@ async def lifespan(app: FastAPI):
             _ws_metrics_task.cancel()
             await _ws_metrics_task
         except asyncio.CancelledError:
+            pass
+    # Stop TickHub
+    if _tick_hub:
+        try:
+            await _tick_hub.stop()
+        except Exception:
             pass
     mt5.shutdown()
 
@@ -367,6 +414,9 @@ _ws_metrics: Dict[str, Dict[str, int]] = {
 }
 _ws_metrics_task: Optional[asyncio.Task] = None
 _trending_task: Optional[asyncio.Task] = None
+_tick_hub_task: Optional[asyncio.Task] = None
+_tick_hub: Optional["TickHub"] = None
+
 
 def _metrics_inc(label: str, key: str, by: int = 1) -> None:
     try:
@@ -376,6 +426,46 @@ def _metrics_inc(label: str, key: str, by: int = 1) -> None:
     except Exception:
         # Observability must never break runtime
         pass
+
+
+async def _broadcast_json_v2(obj: Dict[str, Any], *, metric: Optional[str] = None, items_count: Optional[int] = None) -> None:
+    """Broadcast a JSON message to all connected v2 clients.
+
+    Pre-serializes once to bytes and uses _try_send_bytes for efficiency.
+    Optionally updates metrics for indicator messages.
+    """
+    try:
+        payload = orjson.dumps(obj)
+    except Exception:
+        return
+    async with _connected_clients_lock:
+        clients = list(_connected_clients)
+    if not clients:
+        return
+    # Send in parallel to minimize per-client backpressure
+    tasks: List[asyncio.Task] = []
+    labels: List[str] = []
+    for c in clients:
+        try:
+            if not getattr(c, "v2_broadcast", False):
+                continue
+            tasks.append(asyncio.create_task(c._try_send_bytes(payload)))
+            labels.append(getattr(c, "conn_label", "v2"))
+        except Exception:
+            continue
+    if not tasks:
+        return
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    if metric == "indicator":
+        for res, label in zip(results, labels):
+            try:
+                ok = (res is True)
+                if ok:
+                    _metrics_inc(label, "ok_indicator_update", 1)
+                else:
+                    _metrics_inc(label, "fail_indicator_update", 1)
+            except Exception:
+                pass
 
 # Rate limiting for test emails
 test_email_rate_limits: Dict[str, List[datetime]] = defaultdict(list)
@@ -724,6 +814,10 @@ async def _indicator_scheduler() -> None:
             tfs_cs_updated: Set[str] = set()
             # Ensure quantum is computed once per symbol per cycle
             quantum_done: Set[str] = set()
+            # Accumulate indicator snapshots per timeframe to consolidate WS messages
+            indicator_batches: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            # Accumulate OHLC snapshots (latest closed bar) per timeframe for consolidated WS pushes
+            ohlc_batches: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
             for symbol, tf in pairs:
                 try:
                     # Fetch recent OHLC and gate on last closed bar (offloaded)
@@ -862,47 +956,45 @@ async def _indicator_scheduler() -> None:
                         # Debug-only logging must never break the scheduler
                         pass
 
-                    # Broadcast to interested clients (best-effort)
-                    if clients:
-                        snapshot = {
-                            "bar_time": last_closed.time,
-                            "indicators": {
-                                "rsi": {14: rsi_val} if rsi_val is not None else {},
-                            },
+                    # Queue into timeframe batches for consolidated WS push (v2 broadcast only)
+                    item = {
+                        "symbol": symbol,
+                        "bar_time": last_closed.time,
+                        "indicators": {
+                            "rsi": {14: rsi_val} if rsi_val is not None else {},
+                        },
+                    }
+                    indicator_batches[tf.value].append(item)
+
+                    # OHLC batch item using the last closed bar
+                    try:
+                        # Basic OHLC fields; include optional fields if present
+                        ohlc_obj: Dict[str, Any] = {
+                            "open": float(getattr(last_closed, "open", None)) if getattr(last_closed, "open", None) is not None else None,
+                            "high": float(getattr(last_closed, "high", None)) if getattr(last_closed, "high", None) is not None else None,
+                            "low": float(getattr(last_closed, "low", None)) if getattr(last_closed, "low", None) is not None else None,
+                            "close": float(getattr(last_closed, "close", None)) if getattr(last_closed, "close", None) is not None else None,
                         }
-                        msg = {
-                            "type": "indicator_update",
+                        # Optional extras
+                        for opt_key in ("volume", "tick_volume", "spread", "time_iso",
+                                        "openBid", "highBid", "lowBid", "closeBid",
+                                        "openAsk", "highAsk", "lowAsk", "closeAsk"):
+                            val = getattr(last_closed, opt_key, None)
+                            if val is not None:
+                                try:
+                                    ohlc_obj[opt_key] = float(val) if isinstance(val, (int, float)) else val
+                                except Exception:
+                                    ohlc_obj[opt_key] = val
+
+                        ohlc_item = {
                             "symbol": symbol,
-                            "timeframe": tf.value,
-                            "data": snapshot,
+                            "bar_time": last_closed.time,
+                            "ohlc": ohlc_obj,
                         }
-                        for c in clients:
-                            try:
-                                if getattr(c, "v2_broadcast", False):
-                                    ok = await c._try_send_json(msg)
-                                    try:
-                                        label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
-                                        if ok:
-                                            _metrics_inc(label, "ok_indicator_update", 1)
-                                        else:
-                                            _metrics_inc(label, "fail_indicator_update", 1)
-                                    except Exception:
-                                        pass
-                                    continue
-                                sub = getattr(c, "subscriptions", {}).get(symbol, {}).get(tf)
-                                if sub and "indicators" in getattr(sub, "data_types", []):
-                                    ok = await c._try_send_json(msg)
-                                    try:
-                                        label = getattr(c, "conn_label", "v2" if getattr(c, "v2_broadcast", False) else "v1")
-                                        if ok:
-                                            _metrics_inc(label, "ok_indicator_update", 1)
-                                        else:
-                                            _metrics_inc(label, "fail_indicator_update", 1)
-                                    except Exception:
-                                        pass
-                            except Exception:
-                                # Never let a single client block the scheduler
-                                continue
+                        ohlc_batches[tf.value].append(ohlc_item)
+                    except Exception:
+                        # Never allow OHLC batching to break scheduling
+                        pass
 
                     # Compute and cache currency strength for this timeframe once per poll cycle per timeframe (closed-bar only)
                     try:
@@ -927,23 +1019,13 @@ async def _indicator_scheduler() -> None:
                                     prev_ts = None
                                 await currency_strength_cache.update(tf.value, cs_values, ts_ms=cs_ts)
                                 tfs_cs_updated.add(tf.value)
-                                # Broadcast currency strength snapshot
+                                # Broadcast currency strength snapshot (pre-serialized)
                                 if clients:
-                                    cs_msg = {
+                                    await _broadcast_json_v2({
                                         "type": "currency_strength_update",
                                         "timeframe": tf.value,
-                                        "data": {
-                                            "bar_time": cs_ts,
-                                            "strength": cs_values,
-                                        },
-                                    }
-                                    for c in clients:
-                                        try:
-                                            if getattr(c, "v2_broadcast", False):
-                                                await c._try_send_json(cs_msg)
-                                                continue
-                                        except Exception:
-                                            continue
+                                        "data": {"bar_time": cs_ts, "strength": cs_values},
+                                    })
                                 # Log values on server when pushing for closed candles (new bar only)
                                 try:
                                     if prev_ts is None or (isinstance(cs_ts, int) and cs_ts > int(prev_ts)):
@@ -965,18 +1047,11 @@ async def _indicator_scheduler() -> None:
                     if symbol not in quantum_done:
                         quantum_done.add(symbol)
                         q = await compute_quantum_for_symbol(symbol)
-                        q_msg = {
+                        await _broadcast_json_v2({
                             "type": "quantum_update",
                             "symbol": symbol,
                             "data": q,
-                        }
-                        for c in clients:
-                            try:
-                                if getattr(c, "v2_broadcast", False):
-                                    await c._try_send_json(q_msg)
-                                    continue
-                            except Exception:
-                                continue
+                        })
 
                     # Correlation updates removed per product decision
                 except Exception as e:
@@ -990,6 +1065,23 @@ async def _indicator_scheduler() -> None:
                         await asyncio.sleep(0)
                     except Exception:
                         pass
+
+            # After processing all pairs, broadcast consolidated indicator and OHLC updates per timeframe
+            if clients and indicator_batches:
+                for tf_str, items in indicator_batches.items():
+                    await _broadcast_json_v2({
+                        "type": "indicator_updates",
+                        "timeframe": tf_str,
+                        "data": items,
+                    }, metric="indicator")
+
+            if clients and ohlc_batches:
+                for tf_str, items in ohlc_batches.items():
+                    await _broadcast_json_v2({
+                        "type": "ohlc_updates",
+                        "timeframe": tf_str,
+                        "data": items,
+                    })
 
             ended_at = datetime.now(timezone.utc)
             cpu_t1 = time.process_time()
@@ -1458,6 +1550,152 @@ async def refresh_alerts_manual(x_api_key: Optional[str] = Depends(require_api_t
     await alert_cache._refresh_cache()
     return {"message": "Alert cache refresh triggered", "status": "success"}
 
+@app.get("/api/ohlc")
+async def get_ohlc(
+    symbol: str = Query(..., description="Symbol, e.g., EURUSDm"),
+    timeframe: str = Query(..., description="One of 1M,5M,15M,30M,1H,4H,1D,1W"),
+    limit: int = Query(100, ge=1, le=1000, description="Number of bars to return (max 1000)"),
+    before: Optional[int] = Query(None, description="Return bars strictly older than this bar time (ms since epoch)"),
+    after: Optional[int] = Query(None, description="Return bars strictly newer than this bar time (ms since epoch)"),
+    x_api_key: Optional[str] = Depends(require_api_token_header),
+):
+    """Return OHLC bars for a single symbol/timeframe using cursor (keyset) pagination.
+
+    Rules:
+    - Provide either `before` (to page older) or `after` (to page newer), not both.
+    - If neither is provided, returns the most recent `limit` bars.
+    - Bars are returned in ascending time order.
+    - Response includes raw cursors for convenient next requests.
+    """
+    # Normalize and gate symbol to allowed set when available
+    sym = canonicalize_symbol(symbol)
+    try:
+        allowed_ws: Set[str] = set(ALLOWED_WS_SYMBOLS)
+    except Exception:
+        allowed_ws = set()
+    if allowed_ws and sym not in allowed_ws:
+        raise HTTPException(status_code=403, detail="forbidden_symbol")
+
+    # Parse timeframe
+    try:
+        tf = Timeframe(timeframe)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid timeframe: {timeframe}")
+
+    # Validate cursor usage
+    if before is not None and after is not None:
+        raise HTTPException(status_code=400, detail="provide_either_before_or_after_not_both")
+
+    # Resolve timeframe seconds mapping
+    tf_seconds_map = {
+        "1M": 60,
+        "5M": 5 * 60,
+        "15M": 15 * 60,
+        "30M": 30 * 60,
+        "1H": 60 * 60,
+        "4H": 4 * 60 * 60,
+        "1D": 24 * 60 * 60,
+        "1W": 7 * 24 * 60 * 60,
+    }
+    tf_secs = tf_seconds_map.get(tf.value, 60)
+
+    # If a cursor is provided, use MT5 range fetch anchored to it for deep paging
+    if before is not None or after is not None:
+        window_bars = min(20000, max(5 * limit, 2000))
+        half_pad = max(0, int(0.05 * window_bars))  # small extra margin
+        try:
+            if before is not None:
+                end_dt = datetime.fromtimestamp(int(before) / 1000.0, tz=timezone.utc)
+                start_dt = end_dt - timedelta(seconds=(window_bars + half_pad) * tf_secs)
+                bars = await _get_ohlc_range_async(sym, tf, start_dt, end_dt)
+            else:
+                start_dt = datetime.fromtimestamp(int(after) / 1000.0, tz=timezone.utc)
+                end_dt = start_dt + timedelta(seconds=(window_bars + half_pad) * tf_secs)
+                bars = await _get_ohlc_range_async(sym, tf, start_dt, end_dt)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"ohlc_range_fetch_error: {e}")
+
+        if not bars:
+            return {
+                "symbol": sym,
+                "timeframe": tf.value,
+                "limit": limit,
+                "count": 0,
+                "before": before,
+                "after": after,
+                "bars": [],
+            }
+
+        bars_sorted = sorted(bars, key=lambda b: getattr(b, "time", 0))
+        if before is not None:
+            filtered = [b for b in bars_sorted if getattr(b, "time", 0) < int(before)]
+            items = filtered[-limit:]
+        else:
+            filtered = [b for b in bars_sorted if getattr(b, "time", 0) > int(after)]
+            items = filtered[:limit]
+    else:
+        # No cursor: fetch recent window and slice to most recent `limit` ascending
+        MAX_FETCH = max(1000, min(5000, limit * 5))
+        try:
+            bars = await _get_ohlc_data_async(sym, tf, MAX_FETCH)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"ohlc_fetch_error: {e}")
+        if not bars:
+            return {
+                "symbol": sym,
+                "timeframe": tf.value,
+                "limit": limit,
+                "count": 0,
+                "before": before,
+                "after": after,
+                "bars": [],
+            }
+        bars_sorted = sorted(bars, key=lambda b: getattr(b, "time", 0))
+        items = bars_sorted[-limit:]
+
+    # Serialize minimally (pydantic models are JSON serializable, but we return explicit fields for stability)
+    data = [
+        {
+            "symbol": b.symbol,
+            "timeframe": b.timeframe,
+            "time": b.time,
+            "time_iso": b.time_iso,
+            "open": b.open,
+            "high": b.high,
+            "low": b.low,
+            "close": b.close,
+            "volume": b.volume,
+            "tick_volume": b.tick_volume,
+            "spread": b.spread,
+            "openBid": b.openBid,
+            "highBid": b.highBid,
+            "lowBid": b.lowBid,
+            "closeBid": b.closeBid,
+            "openAsk": b.openAsk,
+            "highAsk": b.highAsk,
+            "lowAsk": b.lowAsk,
+            "closeAsk": b.closeAsk,
+            "is_closed": b.is_closed,
+        }
+        for b in items
+    ]
+
+    # Prepare simple raw cursors for clients
+    next_before = data[0]["time"] if data else None  # page older using before=next_before
+    prev_after = data[-1]["time"] if data else None  # page newer using after=prev_after
+
+    return {
+        "symbol": sym,
+        "timeframe": tf.value,
+        "limit": limit,
+        "count": len(data),
+        "before": before,
+        "after": after,
+        "next_before": next_before,
+        "prev_after": prev_after,
+        "bars": data,
+    }
+
 # Debug email sender — secured with Authorization: Bearer <API_TOKEN>
 # Router for all debug endpoints (shared bearer token)
 debug_router = APIRouter(prefix="/api/debug", dependencies=[Depends(require_debug_bearer_token)])
@@ -1701,7 +1939,7 @@ class WSClient:
         self.next_ohlc_updates: Dict[str, Dict[Timeframe, datetime]] = {}
         self._task: Optional[asyncio.Task] = None
         self._ohlc_task: Optional[asyncio.Task] = None
-        self._send_interval_s: float = 1.0  # 1 Hz for ticks (1000ms)
+        self._send_interval_s: float = 0.5  # Global TickHub handles ticks (~500ms); this per-client loop is unused in v2
         # Supported data types for this connection (endpoint specific)
         self.supported_data_types: Set[str] = set(supported_data_types or {"ticks", "ohlc"})
         # v2 broadcast mode: server pushes all symbols/timeframes without explicit subscribe
@@ -1776,8 +2014,7 @@ class WSClient:
 
     async def start(self):
         # WebSocket is already accepted in the main handler
-        # Start both tick and OHLC background tasks
-        self._task = asyncio.create_task(self._tick_loop())
+        # Tick streaming is handled by the global TickHub (single producer)
         # Only start OHLC loop when this connection supports OHLC streaming
         if "ohlc" in self.supported_data_types:
             self._ohlc_task = asyncio.create_task(self._ohlc_loop())
@@ -1798,15 +2035,6 @@ class WSClient:
                 pass
 
     async def stop(self):
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                # Task may already have ended due to disconnect
-                pass
         if self._ohlc_task:
             self._ohlc_task.cancel()
             try:
@@ -1878,6 +2106,7 @@ class WSClient:
                 if tick:
                     # Inject daily_change_pct using cached D1 reference to avoid heavy calls per tick
                     dcp_val: Optional[float] = None
+                    dc_val: Optional[float] = None
                     try:
                         today_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                         cache_key = _d1_ref_cache.get(sym)
@@ -1887,21 +2116,26 @@ class WSClient:
                             # get_daily_change_pct_bid computes using current bid; extract ref by reversing would be noisy
                             # For per-tick efficiency, we will compute dcp directly each time with helper, no separate ref exposure
                             dcp_val = ref
+                            dc_val = await _daily_change_bid_async(sym)
                             _d1_ref_cache[sym] = (today_key, ref if ref is not None else float('nan'))
                         else:
                             # Recompute with helper to honor spec with latest bid; fallback to cached ref-derived value
                             dcp_val = await _daily_change_pct_bid_async(sym)
+                            dc_val = await _daily_change_bid_async(sym)
                     except Exception:
                         dcp_val = None
+                        dc_val = None
                     tick_dict = tick.model_dump()
                     if dcp_val is not None and dcp_val == dcp_val:  # not NaN
                         tick_dict["daily_change_pct"] = float(dcp_val)
+                    if dc_val is not None and dc_val == dc_val:  # not NaN
+                        tick_dict["daily_change"] = float(dc_val)
 
                     # Store full tick data for alert processing
                     full_tick_data = tick_dict.copy()
                     updates.append(full_tick_data)
                     self._last_sent_ts[sym] = ts_ms
-                    
+
                     # Update OHLC caches for baseline timeframes in v2 broadcast mode only (no live OHLC streaming in v2)
                     if self.v2_broadcast and ("ohlc" in self.supported_data_types):
                         try:
@@ -1922,7 +2156,7 @@ class WSClient:
                         )
                     except Exception:
                         pass
-                
+                    # Defer send until all symbols scanned (coalesced per-scan)
             except HTTPException:
                 # symbol disappeared or invalid; drop it
                 # Clean internal scheduling state
@@ -1936,22 +2170,21 @@ class WSClient:
                         await asyncio.sleep(0)
                     except Exception:
                         pass
-                    
         if updates:
-            # Create bid-only tick data for frontend (only send bid prices)
+            # Create bid-only tick data for frontend (only send bid prices), one per symbol
             bid_only_updates = []
             for full_tick in updates:
-                bid_only_tick = {
-                    "symbol": full_tick["symbol"],
-                    "time": full_tick["time"],
-                    "time_iso": full_tick["time_iso"],
-                    "bid": full_tick["bid"],
-                    "daily_change_pct": full_tick.get("daily_change_pct")
-                }
-                bid_only_updates.append(bid_only_tick)
+                bid_only_updates.append({
+                    "symbol": full_tick.get("symbol"),
+                    "time": full_tick.get("time"),
+                    "time_iso": full_tick.get("time_iso"),
+                    "bid": full_tick.get("bid"),
+                    "daily_change_pct": full_tick.get("daily_change_pct"),
+                    "daily_change": full_tick.get("daily_change"),
+                })
 
+            # Send a single coalesced message containing all pairs' latest ticks for this scan
             sent = await self._try_send_bytes(orjson.dumps({"type": "ticks", "data": bid_only_updates}))
-            # Metrics: per-endpoint counters for tick messages and items
             try:
                 label = getattr(self, "conn_label", "v2")
                 _metrics_inc(label, "ticks_items", by=len(bid_only_updates))
@@ -1964,13 +2197,13 @@ class WSClient:
             if not sent:
                 # Stop trying if client is gone
                 return
-            
+
             # Check for alerts on tick updates (non-blocking background task)
             # Only check alerts if there are active alerts to avoid unnecessary processing
             try:
                 all_alerts = await alert_cache.get_all_alerts()
                 total_alerts = sum(len(alerts) for alerts in all_alerts.values())
-                
+
                 if ENABLE_TICK_TRIGGERED_ALERTS and total_alerts > 0:
                     # Provide tick_data in a dict keyed by symbol as expected by alert services
                     # Use full tick data for alert processing (includes bid, ask, volume, etc.)
@@ -1992,20 +2225,20 @@ class WSClient:
                     }
                     # Create background task to check alerts without blocking the tick loop
                     asyncio.create_task(_check_alerts_safely(tick_data))
-            except Exception as e:
+            except Exception:
                 # If alert cache check fails, still try to check alerts to be safe
-                tick_data_map = {}
-                for td in updates:
-                    sym = td.get("symbol")
-                    if not sym:
-                        continue
-                    tick_data_map[sym] = {
-                        "bid": td.get("bid"),
-                        "ask": td.get("ask"),
-                        "time": td.get("time"),
-                        "volume": td.get("volume"),
-                    }
                 if ENABLE_TICK_TRIGGERED_ALERTS:
+                    tick_data_map = {}
+                    for td in updates:
+                        sym = td.get("symbol")
+                        if not sym:
+                            continue
+                        tick_data_map[sym] = {
+                            "bid": td.get("bid"),
+                            "ask": td.get("ask"),
+                            "time": td.get("time"),
+                            "volume": td.get("volume"),
+                        }
                     tick_data = {
                         "timestamp": datetime.now(timezone.utc).isoformat(),
                         "symbols": list(tick_symbols),
@@ -2067,6 +2300,272 @@ class WSClient:
 
 """Legacy (/ws/ticks) and v1 (/ws/market) WebSocket endpoints have been removed after cutover. Use /market-v2."""
 
+class TickHub:
+    """Single-producer tick broadcaster.
+
+    Polls MT5 once per interval, coalesces latest ticks for all allowed symbols,
+    injects daily_change values, and broadcasts one pre-serialized payload to all
+    connected v2 clients.
+    """
+
+    def __init__(self) -> None:
+        self._task: Optional[asyncio.Task] = None
+        try:
+            self._interval_s: float = float(os.environ.get("WS_TICK_INTERVAL_S", "0.5"))
+        except Exception:
+            self._interval_s = 0.5
+        # Deduplicate per symbol by MT5 tick timestamp
+        self._last_sent_ts: Dict[str, int] = {}
+        # Optional: refresh OHLC caches alongside ticks (default on)
+        self._refresh_ohlc: bool = str(os.environ.get("WS_REFRESH_OHLC", "1")).strip() not in ("0", "false", "False")
+        # Throttle OHLC cache refreshes per symbol×timeframe (seconds)
+        try:
+            self._ohlc_refresh_min_s: float = float(os.environ.get("WS_OHLC_REFRESH_MIN_S", "10"))
+        except Exception:
+            self._ohlc_refresh_min_s = 10.0
+        self._last_ohlc_refresh: Dict[str, Dict[Timeframe, float]] = {}
+        # Dedicated executor for MT5 tick calls to avoid contention with other threadpool users
+        try:
+            self._tick_workers: int = int(os.environ.get("WS_TICK_EXECUTOR_WORKERS", "12"))
+        except Exception:
+            self._tick_workers = 12
+        # Cap lower bound at 2 workers
+        self._tick_workers = max(2, self._tick_workers)
+        self._executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=self._tick_workers, thread_name_prefix="tickhub")
+        # Concurrency cap for per-scan fetches
+        try:
+            self._max_concurrency: int = int(os.environ.get("WS_TICK_MAX_CONCURRENCY", "16"))
+        except Exception:
+            self._max_concurrency = 16
+        self._max_concurrency = max(2, self._max_concurrency)
+        # MT5 call timeouts (seconds)
+        try:
+            self._mt5_call_timeout_s: float = float(os.environ.get("WS_TICK_CALL_TIMEOUT_S", "0.4"))
+        except Exception:
+            self._mt5_call_timeout_s = 0.4
+        try:
+            self._select_call_timeout_s: float = float(os.environ.get("WS_SELECT_CALL_TIMEOUT_S", "1.0"))
+        except Exception:
+            self._select_call_timeout_s = 1.0
+        # Cache for symbol selection to avoid calling ensure_symbol_selected every scan
+        self._selected_symbols: Set[str] = set()
+        self._selected_at: Dict[str, float] = {}
+        try:
+            self._select_refresh_min_s: float = float(os.environ.get("WS_SELECT_REFRESH_MIN_S", "1800"))  # 30 minutes
+        except Exception:
+            self._select_refresh_min_s = 1800.0
+
+    def start(self) -> None:
+        if self._task and not self._task.done():
+            return
+        self._task = asyncio.create_task(self._loop())
+
+    async def stop(self) -> None:
+        if not self._task:
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            pass
+        try:
+            self._executor.shutdown(wait=False, cancel_futures=True)  # type: ignore[arg-type]
+        except Exception:
+            pass
+
+    async def _loop(self) -> None:
+        while True:
+            started = time.monotonic()
+            try:
+                items = await self._collect_tick_items()
+                if items:
+                    await self._broadcast(items)
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                # Never crash the loop
+                pass
+            # Maintain a steady cadence by accounting for work time
+            try:
+                elapsed = time.monotonic() - started
+                delay = self._interval_s - elapsed
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                else:
+                    # If over budget, yield once to keep loop responsive
+                    await asyncio.sleep(0)
+            except Exception:
+                pass
+
+    async def _collect_tick_items(self) -> List[Dict[str, Any]]:
+        tick_symbols: Set[str] = set()
+        try:
+            tick_symbols.update(ALLOWED_WS_SYMBOLS)
+        except Exception:
+            tick_symbols.update([s.upper() for s in RSI_SUPPORTED_SYMBOLS])
+        if not tick_symbols:
+            return []
+
+        loop = asyncio.get_running_loop()
+        sem = asyncio.Semaphore(self._max_concurrency)
+        updates: List[Dict[str, Any]] = []
+
+        # Restrict OHLC cache refresh during tick loop to faster timeframes only to reduce load
+        fast_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5]
+
+        async def ensure_selected_cached(sym: str) -> None:
+            now = time.monotonic()
+            needs = (sym not in self._selected_symbols) or ((now - self._selected_at.get(sym, 0.0)) >= self._select_refresh_min_s)
+            if needs:
+                try:
+                    await asyncio.wait_for(
+                        loop.run_in_executor(self._executor, ensure_symbol_selected, sym),
+                        timeout=self._select_call_timeout_s,
+                    )
+                    self._selected_symbols.add(sym)
+                    self._selected_at[sym] = now
+                except Exception:
+                    # Leave symbol unselected; fetch may still work if already visible
+                    self._selected_at[sym] = now
+
+        async def fetch_one(sym: str) -> Optional[Dict[str, Any]]:
+            await sem.acquire()
+            try:
+                await ensure_selected_cached(sym)
+                try:
+                    info = await asyncio.wait_for(
+                        loop.run_in_executor(self._executor, mt5.symbol_info_tick, sym),
+                        timeout=self._mt5_call_timeout_s,
+                    )
+                except Exception:
+                    info = None
+                if info is None:
+                    return None
+                ts_ms = getattr(info, "time_msc", 0) or int(getattr(info, "time", 0)) * 1000
+                if self._last_sent_ts.get(sym) == ts_ms:
+                    return None
+                tick = _to_tick(sym, info)
+                if not tick:
+                    return None
+
+                # Inject daily change values using cached D1 reference (Bid basis)
+                dcp_val: Optional[float] = None
+                dc_val: Optional[float] = None
+                try:
+                    today_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    cache_key = _d1_ref_cache.get(sym)
+                    ref: Optional[float]
+                    if not cache_key or cache_key[0] != today_key or not isinstance(cache_key[1], float) or cache_key[1] != cache_key[1]:
+                        ref = await _get_d1_reference_bid_async(sym)
+                        _d1_ref_cache[sym] = (today_key, ref if ref is not None else float("nan"))
+                    else:
+                        ref = cache_key[1]
+                    bid_val = getattr(tick, "bid", None)
+                    if ref is not None and bid_val is not None:
+                        dc_val = float(bid_val) - float(ref)
+                        if ref != 0.0:
+                            dcp_val = 100.0 * dc_val / float(ref)
+                except Exception:
+                    dcp_val = None
+                    dc_val = None
+
+                tick_dict = tick.model_dump()
+                if dcp_val is not None and dcp_val == dcp_val:
+                    tick_dict["daily_change_pct"] = float(dcp_val)
+                if dc_val is not None and dc_val == dc_val:
+                    tick_dict["daily_change"] = float(dc_val)
+
+                # Record and update last sent ts
+                self._last_sent_ts[sym] = ts_ms
+
+                # Throttled OHLC cache refresh for fast timeframes only
+                if self._refresh_ohlc:
+                    try:
+                        now_mono = time.monotonic()
+                        per_sym = self._last_ohlc_refresh.setdefault(sym, {})
+                        for tf in fast_tfs:
+                            last = float(per_sym.get(tf, 0.0))
+                            if (now_mono - last) >= self._ohlc_refresh_min_s:
+                                await _update_ohlc_cache_async(sym, tf)
+                                per_sym[tf] = now_mono
+                    except Exception:
+                        pass
+
+                try:
+                    await price_cache.update(
+                        sym,
+                        time_ms=ts_ms,
+                        time_iso=tick_dict.get("time_iso"),
+                        bid=tick_dict.get("bid"),
+                        ask=tick_dict.get("ask"),
+                        daily_change_pct=tick_dict.get("daily_change_pct"),
+                    )
+                except Exception:
+                    pass
+
+                return {
+                    "symbol": tick_dict.get("symbol"),
+                    "time": tick_dict.get("time"),
+                    "time_iso": tick_dict.get("time_iso"),
+                    "bid": tick_dict.get("bid"),
+                    "daily_change_pct": tick_dict.get("daily_change_pct"),
+                    "daily_change": tick_dict.get("daily_change"),
+                }
+            except HTTPException:
+                return None
+            except Exception:
+                return None
+            finally:
+                try:
+                    sem.release()
+                except Exception:
+                    pass
+
+        tasks = [asyncio.create_task(fetch_one(sym)) for sym in list(tick_symbols)]
+        if not tasks:
+            return []
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for r in results:
+            if isinstance(r, dict) and r.get("time") is not None:
+                updates.append(r)
+        return updates
+
+    async def _broadcast(self, items: List[Dict[str, Any]]) -> None:
+        try:
+            payload = orjson.dumps({"type": "ticks", "data": items})
+        except Exception:
+            return
+        # Snapshot clients
+        async with _connected_clients_lock:
+            clients = list(_connected_clients)
+        if not clients:
+            return
+        tasks: List[asyncio.Task] = []
+        labels: List[str] = []
+        for c in clients:
+            try:
+                if not getattr(c, "v2_broadcast", False):
+                    continue
+                tasks.append(asyncio.create_task(c._try_send_bytes(payload)))
+                labels.append(getattr(c, "conn_label", "v2"))
+            except Exception:
+                continue
+        if not tasks:
+            return
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res, label in zip(results, labels):
+            try:
+                _metrics_inc(label, "ticks_items", by=len(items))
+                ok = (res is True)
+                if ok:
+                    _metrics_inc(label, "ok_ticks", 1)
+                else:
+                    _metrics_inc(label, "fail_ticks", 1)
+            except Exception:
+                pass
+
 @app.websocket("/market-v2")
 async def ws_market_v2(websocket: WebSocket):
     """Versioned Market Data WebSocket (v2)
@@ -2088,8 +2587,8 @@ async def ws_market_v2(websocket: WebSocket):
                 "type": "connected",
                 "message": "WebSocket connected successfully",
                 "supported_timeframes": [tf.value for tf in Timeframe],
-                # v2: ticks + indicators only; OHLC is not streamed to frontend
-                "supported_data_types": ["ticks", "indicators"],
+                # v2: ticks + indicators + consolidated ohlc_updates (on candle close)
+                "supported_data_types": ["ticks", "indicators", "ohlc"],
                 "supported_price_bases": ["last", "bid", "ask"],
                 "indicators": {
                     "rsi": {"method": "wilder", "applied_price": "close", "periods": [14]}
