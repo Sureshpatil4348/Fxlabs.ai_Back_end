@@ -2257,8 +2257,8 @@ class EmailService:
                 other_rows += f'<tr><td style="padding:10px;{border_style}">{item["currency"]}</td><td style="padding:10px;{border_style}">{item["strength"]}</td></tr>'
             
             other_currencies_html = f"""
-         <div style="margin-top:18px;margin-bottom:8px;font-weight:600;color:#374151;">Other Currencies</div>
-         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;">
+         <div style="margin-top:18px;margin-bottom:8px;font-weight:600;color:#374151;text-align:center;">Other Currencies</div>
+         <table role="presentation" width="66%" align="center" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;margin:0 auto;">
             <tr style="background:#F9FAFB;font-weight:600;"><td style="padding:10px">Currency</td><td style="padding:10px">Strength</td></tr>
             {other_rows}
          </table>
@@ -2283,22 +2283,16 @@ class EmailService:
     {common_header}
 
     <table role="presentation" width="600" cellpadding="0" cellspacing="0" class="card">
-      <tr><td style="padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;">{alert_name}</td></tr>
       <tr><td style="padding:16px 20px;font-size:14px;">
-         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
-            <tr>
-               <td style="vertical-align:middle;">
-                  <span class="pill">Timeframe</span>
-                  <strong style="margin-left:8px;font-size:14px;">{timeframe}</strong>
-               </td>
-               <td align="right" style="vertical-align:middle;font-size:12px;color:#6B7280;">{ts_local}</td>
-            </tr>
-         </table>
+         <div style="text-align:center;margin-bottom:12px;">
+            <span class="pill">Timeframe</span>
+            <strong style="margin-left:8px;font-size:14px;">{timeframe}</strong>
+         </div>
          <div style="margin-top:4px;margin-bottom:14px;color:#374151;">The strongest/weakest currency has changed based on closed-bar returns.</div>
          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;">
             <tr style="background:#F9FAFB;font-weight:600;"><td style="padding:10px">Role</td><td style="padding:10px">Currency</td><td style="padding:10px">Strength</td></tr>
-            <tr><td style="padding:10px;color:#065F46;font-weight:700;">Strongest</td><td style="padding:10px;">{s_sym}</td><td style="padding:10px;">{s_val}</td></tr>
-            <tr><td style="padding:10px;color:#7F1D1D;font-weight:700;border-top:1px solid #E5E7EB;">Weakest</td><td style="padding:10px;border-top:1px solid #E5E7EB;">{w_sym}</td><td style="padding:10px;border-top:1px solid #E5E7EB;">{w_val}</td></tr>
+            <tr><td style="padding:10px;color:#065F46;font-weight:700;">Strongest</td><td style="padding:10px;color:#065F46;font-weight:700;">{s_sym}</td><td style="padding:10px;color:#065F46;font-weight:700;">{s_val}</td></tr>
+            <tr><td style="padding:10px;color:#7F1D1D;font-weight:700;border-top:1px solid #E5E7EB;">Weakest</td><td style="padding:10px;color:#7F1D1D;font-weight:700;border-top:1px solid #E5E7EB;">{w_sym}</td><td style="padding:10px;color:#7F1D1D;font-weight:700;border-top:1px solid #E5E7EB;">{w_val}</td></tr>
          </table>
          <div style="margin-top:10px;color:#6B7280;font-size:12px;">Previous: Strongest = {prev_strong or '-'}, Weakest = {prev_weak or '-'}
          </div>
