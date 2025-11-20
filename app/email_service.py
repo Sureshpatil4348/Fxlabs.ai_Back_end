@@ -220,7 +220,7 @@ class EmailService:
         try:
             tz = self._zoneinfo_or_fallback(tz_name)
             dt = datetime.now(tz)
-            label = "IST" if tz_name == "Asia/Kolkata" else tz_name
+            label = "UTC +5:30" if tz_name == "Asia/Kolkata" else tz_name
             return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M"), label
         except Exception:
             dt = datetime.now(timezone.utc)
@@ -229,15 +229,9 @@ class EmailService:
     def _build_common_header(self, alert_type: str, tz_name: str = "Asia/Kolkata", date_override: Optional[str] = None, time_label_override: Optional[str] = None) -> str:
         """Build a common green header bar used across all alert emails.
 
-        Layout: [Logo] FxLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST (small)>
-        Brand color: #07c05c, text in white, time rendered slightly smaller.
+        Layout: [Logo] FxLabs Prime (left) ... <Alert Type> (right)
+        Brand color: #07c05c, text in white.
         """
-        date_str, time_str, tz_label = self._get_local_date_time_strings(tz_name)
-        date_display = (date_override or date_str)
-        if tz_label and (tz_label not in (date_display or "")):
-            date_display = f"{date_display} {tz_label}".strip()
-        time_display = time_label_override if time_label_override else f"{time_str} {tz_label}".strip()
-
         logo_img = '<img src="cid:fx-logo" width="18" height="18" alt="FxLabs Prime" style="vertical-align:middle;display:inline-block" />'
 
         return (
@@ -245,13 +239,10 @@ class EmailService:
             f"style=\"width:600px;background:#07c05c;color:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;\">"
             f"<tr><td style=\"padding:14px 16px;\">"
             f"<span style=\"display:inline-block;vertical-align:middle;\">{logo_img}</span>"
-            f"<span style=\"display:inline-block;vertical-align:middle;font-weight:700;margin-left:8px;\">FxLabs Prime</span>"
-            f"<span style=\"display:inline-block;margin:0 6px;vertical-align:middle;\">•</span>"
-            f"<span style=\"display:inline-block;vertical-align:middle;\">{alert_type}</span>"
-            f"<span style=\"display:inline-block;margin:0 6px;vertical-align:middle;\">•</span>"
-            f"<span style=\"display:inline-block;vertical-align:middle;\">{date_display}</span>"
-            f"<span style=\"display:inline-block;margin:0 6px;vertical-align:middle;\">•</span>"
-            f"<span style=\"display:inline-block;vertical-align:middle;font-size:12px;opacity:0.95;\">{time_display}</span>"
+            f"<span style=\"display:inline-block;vertical-align:middle;font-weight:700;margin-left:8px;text-transform:uppercase;\">FXLABS PRIME</span>"
+            f"</td>"
+            f"<td align=\"right\" style=\"padding:14px 16px;vertical-align:middle;\">"
+            f"<span style=\"font-weight:700;color:#ffffff;\">{alert_type}</span>"
             f"</td></tr></table><div style=\"height:12px\"></div>"
         )
     
@@ -879,7 +870,8 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
+            date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
+            subject = f"FxLabs Prime • Trading Alert: {alert_name} • {date_str} • {time_str} {tz_label}"
             
             # Build email body
             body = self._build_heatmap_alert_email_body(
@@ -950,7 +942,8 @@ class EmailService:
         self._cleanup_old_cooldowns()
 
         try:
-            subject = "FxLabs Prime • Trading Alert: Quantum Analysis"
+            date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
+            subject = f"FxLabs Prime • Trading Alert: Quantum Analysis • {date_str} • {time_str} {tz_label}"
             body = self._build_heatmap_tracker_email_body(alert_name, triggered_pairs, alert_config)
             text_body = self._build_plain_text_heatmap_tracker(alert_name, triggered_pairs, alert_config)
             mail = self._build_mail(
@@ -1201,7 +1194,8 @@ class EmailService:
         # Unsubscribe support removed
         
         try:
-            subject = "FxLabs Prime • System Test"
+            date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
+            subject = f"FxLabs Prime • System Test • {date_str} • {time_str} {tz_label}"
             
             body = f"""
             <!DOCTYPE html>
@@ -1287,7 +1281,8 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"FxLabs Prime • RSI Alert - {alert_name}"
+            date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
+            subject = f"FxLabs Prime • RSI Alert - {alert_name} • {date_str} • {time_str} {tz_label}"
             logger.info(f"📝 Email subject: {subject}")
             
             # Build email body
@@ -1375,7 +1370,8 @@ class EmailService:
         self._cleanup_old_cooldowns()
 
         try:
-            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
+            date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
+            subject = f"FxLabs Prime • Trading Alert: {alert_name} • {date_str} • {time_str} {tz_label}"
             body = self._build_custom_indicator_email_body(alert_name, triggered_pairs, alert_config)
             text_body = self._build_plain_text_custom_indicator(alert_name, triggered_pairs, alert_config)
             mail = self._build_mail(
@@ -1619,7 +1615,8 @@ class EmailService:
         
         try:
             # Create email content
-            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
+            date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
+            subject = f"FxLabs Prime • Trading Alert: {alert_name} • {date_str} • {time_str} {tz_label}"
             
             # Build email body
             body = self._build_rsi_correlation_alert_email_body(
@@ -1837,7 +1834,8 @@ class EmailService:
         )
         text = None
 
-        subject = "FxLabs Prime • News reminder"
+        date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
+        subject = f"FxLabs Prime • News reminder • {date_str} • {time_str} {tz_label}"
         mail = self._build_mail(
             subject=subject,
             to_email_addr=user_email,
@@ -1942,20 +1940,6 @@ class EmailService:
                 return ""
         date_local = esc(payload.get("date_local", ""))
         
-        # --- Custom Header for Daily Brief ---
-        logo_img = '<img src="cid:fx-logo" width="18" height="18" alt="FxLabs Prime" style="vertical-align:middle;display:inline-block" />'
-        header_html = (
-            f"<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" "
-            f"style=\"width:600px;background:#07c05c;color:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;\">"
-            f"<tr><td style=\"padding:14px 16px;\">"
-            f"<span style=\"display:inline-block;vertical-align:middle;\">{logo_img}</span>"
-            f"<span style=\"display:inline-block;vertical-align:middle;font-weight:700;margin-left:8px;text-transform:uppercase;\">FXLABS PRIME</span>"
-            f"</td>"
-            f"<td align=\"right\" style=\"padding:14px 16px;vertical-align:middle;\">"
-            f"<span style=\"font-weight:700;color:#ffffff;\">Daily</span>"
-            f"</td></tr></table><div style=\"height:12px\"></div>"
-        )
-
         # --- Signal Summary (Core Pairs) ---
         rows = []
         for idx, s in enumerate(payload.get("core_signals", []) or []):
@@ -2075,7 +2059,7 @@ class EmailService:
   <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">
     <tr>
       <td align=\"center\" style=\"padding:24px 12px;\">
-        {header_html}
+        {self._build_common_header('Daily', self.tz_name)}
         <table role=\"presentation\" class=\"container\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#ffffff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#19235d;\">
           <tr>
             <td style=\"padding:20px;\">
@@ -2184,7 +2168,8 @@ class EmailService:
         if not self.sg:
             self._log_config_diagnostics(context="daily brief email")
             return False
-        subject = f"FxLabs Prime • Daily Morning Brief • {payload.get('date_local', '')}"
+        date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
+        subject = f"FxLabs Prime • Daily Morning Brief • {date_str} • {time_str} {tz_label}"
         html = self._build_daily_html(payload)
         text = self._build_daily_text(payload)
         mail = self._build_mail(
@@ -2350,7 +2335,8 @@ class EmailService:
             return False
 
         try:
-            subject = f"FxLabs Prime • Trading Alert: {alert_name}"
+            date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
+            subject = f"FxLabs Prime • Trading Alert: {alert_name} • {date_str} • {time_str} {tz_label}"
             html_body = self._build_currency_strength_email_body(alert_name, timeframe, triggered_items, prev_winners, all_values)
             # Build a simple text alternative
             try:

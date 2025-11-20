@@ -305,10 +305,11 @@ Email HTML structure example (simplified):
 ### Common Email Header (All alerts)
 
 - Color: `#07c05c`
-- Layout: `[FxLabs logo] FxLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST>`
-  - The time part is rendered in a smaller font size.
+- Layout: `[FxLabs logo] FxLabs Prime` (Left) ... `<Alert Type>` (Right)
+  - Date and time are removed from the header bar.
   - Logo uses the white SVG mark embedded inline for email compatibility.
-- Timezone: Defaults to `Asia/Kolkata` (IST). For Daily emails, the header shows the configured time label (e.g., `IST 09:00`).
+- Subject Line: All emails append `• <Date> • <Time> UTC +5:30` (or configured timezone) to the subject.
+- Timezone: Defaults to `Asia/Kolkata` (UTC +5:30). For Daily emails, the header shows the configured time label (e.g., `UTC +5:30`).
 ## Alerts Cache — Categories Summary
 
 After each alert cache refresh, the server logs a categories summary and a full list of alerts grouped by category. Example console output:
