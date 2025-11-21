@@ -350,12 +350,12 @@ Additionally:
   - RSI Tracker: `tf`, `period`, `ob` (overbought), `os` (oversold)
   - RSI Correlation Tracker: `tf`, `mode`, `period`, `ob`, `os`, `window`
   - Heatmap Tracker: `style`, `buy_threshold`, `sell_threshold`, `pairs`
-  - Indicator Tracker: `indicator`, `tf`, `pairs`
+- Indicator Tracker: `indicator`, `tf`, `pairs`
 
 **Troubleshooting: `name 'html' is not defined` when sending Heatmap Tracker email**
 - Symptom: `❌ Error sending heatmap tracker alert email: name 'html' is not defined`.
 - Cause: Legacy `_pair_display()` used an undefined variable; triggered when formatting symbol names for email.
-- Fix: Update to the latest code. `_pair_display()` is corrected and now safely escapes output used in HTML emails.
+- Fix: Update to the latest code. `_pair_display()` is corrected and now safely escapes output used in HTML emails. The Heatmap/Quantum Tracker email now renders triggered pairs in a compact table (`Pair`, `Buy/Sell`, `Percentage`) instead of per‑pair cards, matching the clean table styling used by the Currency Strength alert.
 
 ### REST: Alerts by Category
 

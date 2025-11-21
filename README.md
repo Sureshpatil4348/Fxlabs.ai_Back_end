@@ -1473,7 +1473,7 @@ For support and questions:
 ### Heatmap tracker email fails: name 'html' is not defined
 - Symptom: Logs show `❌ Error sending heatmap tracker alert email: name 'html' is not defined`.
 - Root cause: An internal helper `_pair_display()` erroneously referenced an undefined variable and lacked HTML escaping.
-- Fixed: Update to the latest code. The helper now formats symbols safely (e.g., `EURUSD` → `EUR/USD`) and escapes output for email templates.
+- Fixed: Update to the latest code. The helper now formats symbols safely (e.g., `EURUSD` → `EUR/USD`) and escapes output for email templates. The Heatmap/Quantum “Probability Signal” email template also now shows triggered pairs in a table layout with columns `Pair`, `Buy/Sell`, and `Percentage` (styled similarly to the Currency Strength alert table) instead of individual per‑pair cards with contributors/threshold text.
 
 ### SyntaxError at server.py:808 "try:" on startup (Windows)
 - Symptom: Startup fails with a traceback pointing to `server.py` around line ~808 with `try:` highlighted.

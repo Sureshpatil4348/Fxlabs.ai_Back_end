@@ -1092,58 +1092,89 @@ class EmailService:
         triggered_pairs: List[Dict[str, Any]],
         alert_config: Dict[str, Any]
     ) -> str:
-        """Build HTML email body for Heatmap/Quantum Tracker using simplified per‑pair cards."""
+        """Build HTML email body for Heatmap/Quantum Tracker using a compact table layout."""
 
-        cards: List[str] = []
+        # Build table rows for triggered pairs
+        rows: List[str] = []
         for pair in triggered_pairs:
             symbol = self._pair_display(pair.get("symbol", "N/A"))
-            timeframe = pair.get("timeframe", "style-weighted")
             cond = str(pair.get("trigger_condition", "")).strip().upper()
             if cond == "BUY":
-                probability = pair.get("buy_percent", 0)
-                threshold = alert_config.get("buy_threshold", 70)
+                percentage = pair.get("buy_percent", pair.get("probability", 0))
             else:
-                probability = pair.get("sell_percent", 0)
-                threshold = alert_config.get("sell_threshold", 30)
+                percentage = pair.get("sell_percent", pair.get("probability", 0))
+
+            # Normalize percentage display
+            try:
+                pct_text = f"{round(float(percentage), 2)}%"
+            except Exception:
+                pct_text = f"{percentage}%"
+
             color = "#0CCC7C" if cond == "BUY" else "#E5494D"
 
-            # Contributors if known; otherwise "-"
-            top_inds: Optional[str] = None
-            try:
-                selected = alert_config.get("selected_indicators") or []
-                if isinstance(selected, list) and selected:
-                    top_inds = ", ".join(selected)
-            except Exception:
-                top_inds = None
-            if not top_inds:
-                top_inds = "-"
+            rows.append(
+                f"<tr>"
+                f"<td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{symbol}</td>"
+                f"<td style=\"padding:10px;border-top:1px solid #E5E7EB;color:{color};font-weight:700;\">{cond}</td>"
+                f"<td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{pct_text}</td>"
+                f"</tr>"
+            )
 
-            card = f"""
-<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
-  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">New Signal Above Threshold</td></tr>
-  <tr><td style=\"padding:20px;\">
-    <div style=\"font-size:16px;margin-bottom:8px;\"><strong>{symbol}</strong> ({timeframe})</div>
-    <div style=\"margin-bottom:12px;\">
-      <span style=\"display:inline-block;padding:6px 12px;border-radius:999px;background:{color};color:#fff;font-weight:700;text-transform:uppercase;\">
-        {cond} • {round(float(probability), 2)}%
-      </span>
-    </div>
-    <div style=\"font-size:13px;color:#374151;\">Contributors: {top_inds}</div>
-    <div style=\"margin-top:14px;padding:12px;background:#F9FAFB;border-radius:10px;font-size:13px;\">Your alert threshold: {threshold}%</div>
-  </td></tr>
-</table>
-<div style=\"height:12px\"></div>
-            """
-            cards.append(card)
+        rows_html = "".join(rows) or (
+            "<tr><td colspan=\"3\" style=\"padding:10px;text-align:center;color:#6B7280;\">"
+            "No qualifying pairs for this alert."
+            "</td></tr>"
+        )
 
-        html = f"""
-<!doctype html>
-<html lang=\"en\">
-<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs Prime • Probability Signal</title></head>
-<body style=\"margin:0;background:#F5F7FB;\">\n
-<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('Probability Signal', self.tz_name)}\n{''.join(cards)}\n<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;\">FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>.</td></tr>\n</table>\n</td></tr></table>
-</body></html>
-        """
+        table_html = (
+            "<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" "
+            "style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;"
+            "font-family:Arial,Helvetica,sans-serif;color:#111827;\">"
+            "<tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">"
+            "Probability Signal Summary"
+            "</td></tr>"
+            "<tr><td style=\"padding:20px;\">"
+            "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" "
+            "style=\"border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;\">"
+            "<tr style=\"background:#F9FAFB;font-weight:600;color:#6B7280;font-size:12px;\">"
+            "<td style=\"padding:10px;\">Pair</td>"
+            "<td style=\"padding:10px;\">Buy/Sell</td>"
+            "<td style=\"padding:10px;\">Percentage</td>"
+            "</tr>"
+            f"{rows_html}"
+            "</table>"
+            "</td></tr>"
+            "</table>"
+        )
+
+        html = (
+            "<!doctype html>\n"
+            "<html lang=\"en\">\n"
+            "<head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<title>FxLabs Prime • Probability Signal</title></head>\n"
+            "<body style=\"margin:0;background:#F5F7FB;\">\n"
+            "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\">"
+            "<tr><td align=\"center\" style=\"padding:24px 12px;\">\n"
+            f"{self._build_common_header('Probability Signal', self.tz_name)}\n"
+            f"{table_html}\n"
+            "<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" "
+            "style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;"
+            "font-family:Arial,Helvetica,sans-serif;color:#111827;\">"
+            "<tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;"
+            "border-top:1px solid #E5E7EB;line-height:1.6;\">"
+            "FXLabs Prime provides automated market insights and notifications for informational and educational "
+            "purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an "
+            "offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your "
+            "initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any "
+            "trading losses. Always verify information independently and comply with your local laws and regulations "
+            "before acting on any signal. Use of this service implies acceptance of our "
+            "<a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">"
+            "Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" "
+            "style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>."
+            "</td></tr></table>\n"
+            "</td></tr></table>\n"
+            "</body></html>\n"
+        )
         return html
 
         # Normalize Daily disclaimer styling to match other emails (neutral gray)
