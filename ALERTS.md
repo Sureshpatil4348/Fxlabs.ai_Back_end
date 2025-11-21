@@ -255,6 +255,10 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 - Template: Minimal, mobile-friendly HTML wrapped with the unified green header (`FxLabs Prime • News • <date/time>`) and a single common disclaimer footer.
   - Branding: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` are kept for readability and visual hierarchy.
   - Fields: `event_title`, `event_time_local` (IST by default), `currency`, `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
+  - Layout & color cues:
+    - Bias stats row background is super-light green `#ECFDF3` for bullish and super-light red `#FEF2F2` for bearish, with bias text in dark green `#047857` / dark red `#B91C1C`.
+    - Event title (e.g., `[GBP] Flash Services PMI`) is center-aligned and ~20% larger than the surrounding body text.
+    - Impact label (e.g., `High`) is rendered in dark red `#B91C1C` to stand out.
   - Rendering: Sent as HTML‑only content to avoid clients displaying the plain‑text part.
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `news_auth_fetch_start`, `news_auth_fetch_page`, `news_auth_fetch_page_emails` (debug), `news_auth_fetch_done`

@@ -329,10 +329,12 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 #### News Reminder Behavior (High‑Impact Only)
 - The 5‑minute news reminder filters to only source‑reported high‑impact items (`impact == "high"` from the upstream API). Medium/low impact items are skipped.
 - Impact is not AI‑derived for reminders or display; it mirrors the upstream field.
-- **Bias Color Coding**: News bias is displayed with color coding for better visual clarity:
-  - **Bullish bias**: Displayed in green (`#10B981`)
-  - **Bearish bias**: Displayed in red (`#EF4444`) 
-  - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
+- **Bias & Emphasis Styling**: News bias and impact are displayed with explicit color cues:
+  - **Bullish bias text**: Dark green (`#047857`) on a super-light green stats row background (`#ECFDF3`).
+  - **Bearish bias text**: Dark red (`#B91C1C`) on a super-light red stats row background (`#FEF2F2`).
+  - **Other/Neutral bias**: Text in brand color (`#19235d`) on a neutral row background.
+  - **Impact label** (e.g., `High`): Rendered in dark red (`#B91C1C`) for emphasis.
+  - **Volatility risk card**: Uses a light blue background `#DEECF9` instead of the previous yellow palette.
 - Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
 - Rendering: News reminders are sent as HTML‑only (no `text/plain` part) to ensure clients render the designed template instead of falling back to plain text.
  - Error diagnostics: If SendGrid returns a non‑2xx or raises an HTTP error (e.g., `400 Bad Request`), the server logs structured details including status, headers (when available), and provider `errors[]` with `code`, `field`, `message`, and `help` to speed up troubleshooting.

@@ -1746,6 +1746,26 @@ class EmailService:
         else:
             return "#19235d"  # Default brand color
 
+    def _get_news_reminder_bias_color(self, bias: str) -> str:
+        """Get text color for news reminder bias label: dark green/red for bullish/bearish."""
+        bias_lower = (bias or "").strip().lower()
+        if bias_lower == "bullish":
+            return "#047857"  # Dark green
+        elif bias_lower == "bearish":
+            return "#B91C1C"  # Dark red
+        else:
+            return "#19235d"  # Default brand color
+
+    def _get_news_reminder_row_background(self, bias: str) -> str:
+        """Get background color for the news reminder stats row based on bias."""
+        bias_lower = (bias or "").strip().lower()
+        if bias_lower == "bullish":
+            return "#ECFDF3"  # Super-light green
+        elif bias_lower == "bearish":
+            return "#FEF2F2"  # Super-light red
+        else:
+            return "#FFFFFF"  # Default white background
+
     def _build_news_reminder_html(
         self,
         event_title: str,
@@ -1762,7 +1782,7 @@ class EmailService:
 <html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>FxLabs Prime • News Reminder</title></head>
 <body style=\"margin:0;background:#F5F7FB;\">\n
 <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"background:#F5F7FB;\"><tr><td align=\"center\" style=\"padding:24px 12px;\">\n{self._build_common_header('News', self.tz_name)}\n
-<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Starts in 5 Minutes</td></tr>\n  <tr><td style=\"padding:20px;\">\n    <div style=\"font-size:16px;margin-bottom:6px;\"><strong>{event_title}</strong></div>\n    <div style=\"font-size:13px;color:#374151;margin-bottom:12px;\">\n      Time: {event_time_local} • Currency: <strong>{currency}</strong> • Impact: <strong>{impact}</strong>\n    </div>\n    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;width:100%;\">\n      <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">\n        <td style=\"padding:10px\">Previous</td><td style=\"padding:10px\">Forecast</td><td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">Bias</td>\n      </tr>\n      <tr>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{previous}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{forecast}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{expected}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\"><strong style=\"color:{self._get_bias_color(bias)};\">{bias}</strong></td>\n      </tr>\n    </table>\n    <div style=\"margin-top:14px;padding:12px;background:#FEF3C7;border:1px solid #FDE68A;border-radius:10px;font-size:13px;\">\n      Volatility risk. Consider spreads, slippage and cooldown windows.\n    </div>\n  </td></tr>\n</table>\n
+<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">Starts in 5 Minutes</td></tr>\n  <tr><td style=\"padding:20px;\">\n    <div style=\"font-size:19px;margin-bottom:6px;text-align:center;\"><strong>{event_title}</strong></div>\n    <div style=\"font-size:13px;color:#374151;margin-bottom:12px;\">\n      Time: {event_time_local} • Currency: <strong>{currency}</strong> • Impact: <strong style=\"color:#B91C1C;\">{impact}</strong>\n    </div>\n    <table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;width:100%;\">\n      <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">\n        <td style=\"padding:10px\">Previous</td><td style=\"padding:10px\">Forecast</td><td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">Bias</td>\n      </tr>\n      <tr style=\"background:{self._get_news_reminder_row_background(bias)};\">\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{previous}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{forecast}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\">{expected}</td>\n        <td style=\"padding:10px;border-top:1px solid #E5E7EB;\"><strong style=\"color:{self._get_news_reminder_bias_color(bias)};\">{bias}</strong></td>\n      </tr>\n    </table>\n    <div style=\"margin-top:14px;padding:12px;background:#DEECF9;border:1px solid #DEECF9;border-radius:10px;font-size:13px;\">\n      Volatility risk. Consider spreads, slippage and cooldown windows.\n    </div>\n  </td></tr>\n</table>\n
 <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">\n  <tr><td style=\"padding:16px 20px;background:#F9FAFB;font-size:10px;color:#6B7280;border-top:1px solid #E5E7EB;line-height:1.6;\">FXLabs Prime provides automated market insights and notifications for informational and educational purposes only. Nothing in this email constitutes financial advice, investment recommendations, or an offer to trade. Trading in forex, CFDs, or crypto involves high risk, and you may lose more than your initial investment. Data may be delayed or inaccurate; FXLabs Prime assumes no responsibility for any trading losses. Always verify information independently and comply with your local laws and regulations before acting on any signal. Use of this service implies acceptance of our <a href=\"https://fxlabsprime.com/terms-of-service\" style=\"color:#6B7280;text-decoration:underline;\">Terms</a> &amp; <a href=\"https://fxlabsprime.com/privacy-policy\" style=\"color:#6B7280;text-decoration:underline;\">Privacy Policy</a>.</td></tr>\n</table>\n
 </td></tr></table>\n
 </body></html>
