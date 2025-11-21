@@ -83,6 +83,10 @@ Troubleshooting (Currency Strength)
 **Message Structure (email)**
 - Title: RSI Alert • {PAIR} ({TF})
 - Body: zone entered (Overbought/Oversold), RSI value, price, IST time.
+- Visual styling:
+  - When RSI is Overbought, the `RSI Alert • {PAIR} ({TF})` section is rendered inside a centered, elevated light‑green card (super‑light green background, subtle border and shadow) with the “RSI has entered Overbought” text in dark green. The “Heads‑up” helper card inside uses a matching light‑green background.
+  - When RSI is Oversold, the same layout is used but with light‑red card/background and dark red “Oversold” text.
+  - Neutral/other RSI signals use a neutral gray card background.
 - Footer: The disclaimer appears once at the bottom of the email (not per pair).
 - RSI: "Not financial advice. © FxLabs Prime"
   - Heatmap/Indicator trackers and Daily: "Education only. © FxLabs Prime" (or equivalent wording)
@@ -255,6 +259,10 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 - Template: Minimal, mobile-friendly HTML wrapped with the unified green header (`FxLabs Prime • News • <date/time>`) and a single common disclaimer footer.
   - Branding: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` are kept for readability and visual hierarchy.
   - Fields: `event_title`, `event_time_local` (IST by default), `currency`, `impact`, `previous`, `forecast`, `expected` (shown as `-` pre-release), `bias` (from AI effect → Bullish/Bearish/Neutral).
+  - Layout & color cues:
+    - Bias stats row background is super-light green `#ECFDF3` for bullish and super-light red `#FEF2F2` for bearish, with bias text in dark green `#047857` / dark red `#B91C1C`.
+    - Event title (e.g., `[GBP] Flash Services PMI`) is center-aligned and ~20% larger than the surrounding body text.
+    - Impact label (e.g., `High`) is rendered in dark red `#B91C1C` to stand out.
   - Rendering: Sent as HTML‑only content to avoid clients displaying the plain‑text part.
 - Logging: Uses human-readable logs via `app/alert_logging.py` with events:
   - Auth fetch: `news_auth_fetch_start`, `news_auth_fetch_page`, `news_auth_fetch_page_emails` (debug), `news_auth_fetch_done`
@@ -305,10 +313,11 @@ Email HTML structure example (simplified):
 ### Common Email Header (All alerts)
 
 - Color: `#07c05c`
-- Layout: `[FxLabs logo] FxLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST>`
-  - The time part is rendered in a smaller font size.
+- Layout: `[FxLabs logo] FxLabs Prime` (Left) ... `<Alert Type>` (Right)
+  - Date and time are removed from the header bar.
   - Logo uses the white SVG mark embedded inline for email compatibility.
-- Timezone: Defaults to `Asia/Kolkata` (IST). For Daily emails, the header shows the configured time label (e.g., `IST 09:00`).
+- Subject Line: All emails append `• <Date> • <Time> UTC +5:30` (or configured timezone) to the subject.
+- Timezone: Defaults to `Asia/Kolkata` (UTC +5:30). For Daily emails, the header shows the configured time label (e.g., `UTC +5:30`).
 ## Alerts Cache — Categories Summary
 
 After each alert cache refresh, the server logs a categories summary and a full list of alerts grouped by category. Example console output:
@@ -345,12 +354,12 @@ Additionally:
   - RSI Tracker: `tf`, `period`, `ob` (overbought), `os` (oversold)
   - RSI Correlation Tracker: `tf`, `mode`, `period`, `ob`, `os`, `window`
   - Heatmap Tracker: `style`, `buy_threshold`, `sell_threshold`, `pairs`
-  - Indicator Tracker: `indicator`, `tf`, `pairs`
+- Indicator Tracker: `indicator`, `tf`, `pairs`
 
 **Troubleshooting: `name 'html' is not defined` when sending Heatmap Tracker email**
 - Symptom: `❌ Error sending heatmap tracker alert email: name 'html' is not defined`.
 - Cause: Legacy `_pair_display()` used an undefined variable; triggered when formatting symbol names for email.
-- Fix: Update to the latest code. `_pair_display()` is corrected and now safely escapes output used in HTML emails.
+- Fix: Update to the latest code. `_pair_display()` is corrected and now safely escapes output used in HTML emails. The Heatmap/Quantum Tracker email now renders triggered pairs in a compact table (`Pair`, `Buy/Sell`, `Percentage`) instead of per‑pair cards, matching the clean table styling used by the Currency Strength alert.
 
 ### REST: Alerts by Category
 

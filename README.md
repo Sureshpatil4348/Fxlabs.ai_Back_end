@@ -49,10 +49,11 @@ Note — FxLabs Prime Domain Update
 // Removed: Rate Limits + Digest (alerts send immediately subject to value-based cooldown)
 - **IST Timezone Display**: Email timestamps are shown in Asia/Kolkata (IST) for user-friendly readability
   - FxLabs Prime tenant: All alert emails are enforced to IST (Asia/Kolkata) regardless of host tz. If the OS tz database is missing, a robust +05:30 (IST) fallback is applied.
-- **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FxLabs Prime • <Alert Type> • <Local Date IST> • <Local Time IST>` (time in small font)
+- **Unified Email Header**: All alert emails use a common green header `#07c05c` showing `[FxLabs logo] FxLabs Prime` (Left) ... `<Alert Type>` (Right). Date and time are removed from the header bar.
 - **Comprehensive Legal Disclaimer**: All alert emails now include a comprehensive legal disclaimer footer that outlines risks, disclaims financial advice, and links to Terms of Service and Privacy Policy at fxlabsprime.com. This ensures full legal compliance and transparency with users about trading risks. Daily Morning Brief now uses the same neutral gray disclaimer styling as other emails (no yellow highlight).
 - **Email Brand Color Update**: We avoid pure black in emails. Any `black`, `#000`/`#000000` is replaced with the brand `#19235d`. Dark grays like `#111827`, `#333333`, and `#1a1a1a` remain for readability and hierarchy.
 - **RSI Email Price Formatting**: Prices shown in RSI alert emails are formatted to at most 5 decimal places to avoid float artifacts from broker feeds (e.g., `1.64309999999999` → `1.6431`). Trailing zeros are trimmed; no more than 5 decimals are shown.
+- **RSI Email Visual Emphasis**: RSI alerts render each pair’s card with zone‑aware styling — Overbought cards use a centered, elevated light‑green background with dark‑green “Overbought” text and a matching light‑green heads‑up panel; Oversold cards mirror this with light‑red background and dark‑red “Oversold” text. Neutral RSI signals use a neutral gray card style.
 - **Style‑Weighted Buy Now %**: Heatmap alerts compute a style‑weighted Final Score across selected timeframes and convert it to Buy Now % for triggers, per the Calculations Reference (EMA21/50/200, MACD, RSI, UTBot, Ichimoku; new‑signal boost; quiet‑market damping)
   - Per‑alert overrides: optional `style_weights_override` map customizes TF weights (only applied to selected TFs; invalid entries ignored; defaults used if sum ≤ 0).
 
@@ -329,10 +330,12 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 #### News Reminder Behavior (High‑Impact Only)
 - The 5‑minute news reminder filters to only source‑reported high‑impact items (`impact == "high"` from the upstream API). Medium/low impact items are skipped.
 - Impact is not AI‑derived for reminders or display; it mirrors the upstream field.
-- **Bias Color Coding**: News bias is displayed with color coding for better visual clarity:
-  - **Bullish bias**: Displayed in green (`#10B981`)
-  - **Bearish bias**: Displayed in red (`#EF4444`) 
-  - **Other/Neutral bias**: Displayed in brand color (`#19235d`)
+- **Bias & Emphasis Styling**: News bias and impact are displayed with explicit color cues:
+  - **Bullish bias text**: Dark green (`#047857`) on a super-light green stats row background (`#ECFDF3`).
+  - **Bearish bias text**: Dark red (`#B91C1C`) on a super-light red stats row background (`#FEF2F2`).
+  - **Other/Neutral bias**: Text in brand color (`#19235d`) on a neutral row background.
+  - **Impact label** (e.g., `High`): Rendered in dark red (`#B91C1C`) for emphasis.
+  - **Volatility risk card**: Uses a light blue background `#DEECF9` instead of the previous yellow palette.
 - Branding: News reminder emails now use the same unified green header and common footer as other alerts (logo + date/time in header; single disclaimer footer).
 - Rendering: News reminders are sent as HTML‑only (no `text/plain` part) to ensure clients render the designed template instead of falling back to plain text.
  - Error diagnostics: If SendGrid returns a non‑2xx or raises an HTTP error (e.g., `400 Bad Request`), the server logs structured details including status, headers (when available), and provider `errors[]` with `code`, `field`, `message`, and `help` to speed up troubleshooting.
@@ -1471,7 +1474,7 @@ For support and questions:
 ### Heatmap tracker email fails: name 'html' is not defined
 - Symptom: Logs show `❌ Error sending heatmap tracker alert email: name 'html' is not defined`.
 - Root cause: An internal helper `_pair_display()` erroneously referenced an undefined variable and lacked HTML escaping.
-- Fixed: Update to the latest code. The helper now formats symbols safely (e.g., `EURUSD` → `EUR/USD`) and escapes output for email templates.
+- Fixed: Update to the latest code. The helper now formats symbols safely (e.g., `EURUSD` → `EUR/USD`) and escapes output for email templates. The Heatmap/Quantum “Probability Signal” email template also now shows triggered pairs in a table layout with columns `Pair`, `Buy/Sell`, and `Percentage` (styled similarly to the Currency Strength alert table) instead of individual per‑pair cards with contributors/threshold text.
 
 ### SyntaxError at server.py:808 "try:" on startup (Windows)
 - Symptom: Startup fails with a traceback pointing to `server.py` around line ~808 with `try:` highlighted.

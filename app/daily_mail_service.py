@@ -125,7 +125,7 @@ def _format_date_local(d: Optional[datetime] = None) -> str:
 
 def _tz_display_label() -> str:
     tz_name = (DAILY_TZ_NAME or "").strip() or "Asia/Kolkata"
-    return "IST" if tz_name == "Asia/Kolkata" else tz_name
+    return "UTC +5:30" if tz_name == "Asia/Kolkata" else tz_name
 
 
 def _parse_send_hms() -> Tuple[int, int, int]:
