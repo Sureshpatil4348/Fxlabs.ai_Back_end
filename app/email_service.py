@@ -1455,27 +1455,47 @@ class EmailService:
             cond = str(pair.get("trigger_condition", "")).lower()
             if "overbought" in cond:
                 zone = "Overbought"
+                card_bg = "#ECFDF3"  # super-light green
+                card_border = "#D1FAE5"
+                zone_color = "#047857"  # dark green
+                heads_up_bg = "#ECFDF3"
+                heads_up_border = "#D1FAE5"
             elif "oversold" in cond:
                 zone = "Oversold"
+                card_bg = "#FEF2F2"  # super-light red
+                card_border = "#FECACA"
+                zone_color = "#B91C1C"  # dark red
+                heads_up_bg = "#FEF2F2"
+                heads_up_border = "#FECACA"
             else:
                 zone = "RSI signal"
+                card_bg = "#F9FAFB"
+                card_border = "#E5E7EB"
+                zone_color = "#19235d"
+                heads_up_bg = "#F9FAFB"
+                heads_up_border = "#E5E7EB"
 
             card = f"""
-<table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:#fff;border-radius:12px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;\">
-  <tr><td style=\"padding:18px 20px;border-bottom:1px solid #E5E7EB;font-weight:700;\">RSI Alert • {symbol} ({timeframe})</td></tr>
-  <tr><td style=\"padding:20px;\">
-    <div style=\"margin-bottom:10px;\">RSI has entered <strong>{zone}</strong>.</div>
-    <div style=\"font-size:14px;line-height:1.6\">
-      <strong>Current RSI:</strong> {rsi_value}<br>
-      <strong>Price:</strong> {price}<br>
-      <strong>Time:</strong> {ts_local}
-    </div>
-    <div style=\"margin-top:16px;padding:12px;border-radius:10px;background:#F9FAFB;color:#374151;font-size:13px;\">
-      Heads-up: Oversold/Overbought readings can precede reversals or trend continuation. Combine with your plan.
-    </div>
-  </td></tr>
+<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"margin:0 auto 16px auto;\">
+  <tr>
+    <td align=\"center\">
+      <table role=\"presentation\" width=\"600\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:600px;background:{card_bg};border-radius:16px;overflow:hidden;font-family:Arial,Helvetica,sans-serif;color:#111827;border:1px solid {card_border};box-shadow:0 6px 18px rgba(15,23,42,0.10);\">
+        <tr><td style=\"padding:18px 20px;border-bottom:1px solid rgba(148,163,184,0.35);font-weight:700;\">RSI Alert • {symbol} ({timeframe})</td></tr>
+        <tr><td style=\"padding:20px;\">
+          <div style=\"margin-bottom:10px;color:{zone_color};\">RSI has entered <strong>{zone}</strong>.</div>
+          <div style=\"font-size:14px;line-height:1.6\">
+            <strong>Current RSI:</strong> {rsi_value}<br>
+            <strong>Price:</strong> {price}<br>
+            <strong>Time:</strong> {ts_local}
+          </div>
+          <div style=\"margin-top:16px;padding:12px;border-radius:10px;background:{heads_up_bg};border:1px solid {heads_up_border};color:#19235d;font-size:13px;\">
+            Heads-up: Oversold/Overbought readings can precede reversals or trend continuation. Combine with your plan.
+          </div>
+        </td></tr>
+      </table>
+    </td>
+  </tr>
 </table>
-<div style=\"height:12px\"></div>
             """
             cards.append(card)
 

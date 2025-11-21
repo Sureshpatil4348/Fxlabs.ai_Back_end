@@ -83,6 +83,10 @@ Troubleshooting (Currency Strength)
 **Message Structure (email)**
 - Title: RSI Alert • {PAIR} ({TF})
 - Body: zone entered (Overbought/Oversold), RSI value, price, IST time.
+- Visual styling:
+  - When RSI is Overbought, the `RSI Alert • {PAIR} ({TF})` section is rendered inside a centered, elevated light‑green card (super‑light green background, subtle border and shadow) with the “RSI has entered Overbought” text in dark green. The “Heads‑up” helper card inside uses a matching light‑green background.
+  - When RSI is Oversold, the same layout is used but with light‑red card/background and dark red “Oversold” text.
+  - Neutral/other RSI signals use a neutral gray card background.
 - Footer: The disclaimer appears once at the bottom of the email (not per pair).
 - RSI: "Not financial advice. © FxLabs Prime"
   - Heatmap/Indicator trackers and Daily: "Education only. © FxLabs Prime" (or equivalent wording)
