@@ -60,6 +60,7 @@ Troubleshooting (Currency Strength)
   - Confirm `TENANT` and the corresponding `*_SUPABASE_URL` and `*_SUPABASE_SERVICE_KEY` are set (service role key required).
   - Verify `GET {SUPABASE_URL}/rest/v1/currency_strength_tracker_alerts` returns 200 with the service key.
   - To see more logs, set `ALERT_VERBOSE_LOGS=true`.
+- Email layout (mobile): If the first table in the Currency Strength alert (`Role / Currency / Strength`) appears squashed or not full-width on Gmail mobile, update to the latest backend. The email template now applies an explicit `width:100%` inline style on that table so it stretches to the full width of the card on mobile while keeping the desktop layout unchanged.
 
 **System Safeguards**
 - Per‑pair concurrency and warm‑up enforced.
