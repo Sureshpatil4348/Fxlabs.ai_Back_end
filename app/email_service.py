@@ -2360,7 +2360,7 @@ class EmailService:
             <strong style="margin-left:8px;font-size:14px;">{timeframe}</strong>
          </div>
          <div style="margin-top:4px;margin-bottom:14px;color:#374151;">The strongest/weakest currency has changed based on closed-bar returns.</div>
-         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;">
+         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;">
             <tr style="background:#F9FAFB;font-weight:600;"><td style="padding:10px">Role</td><td style="padding:10px">Currency</td><td style="padding:10px">Strength</td></tr>
             <tr><td style="padding:10px;color:#065F46;font-weight:700;">Strongest</td><td style="padding:10px;color:#065F46;font-weight:700;">{s_sym}</td><td style="padding:10px;color:#065F46;font-weight:700;">{s_val}</td></tr>
             <tr><td style="padding:10px;color:#7F1D1D;font-weight:700;border-top:1px solid #E5E7EB;">Weakest</td><td style="padding:10px;color:#7F1D1D;font-weight:700;border-top:1px solid #E5E7EB;">{w_sym}</td><td style="padding:10px;color:#7F1D1D;font-weight:700;border-top:1px solid #E5E7EB;">{w_val}</td></tr>

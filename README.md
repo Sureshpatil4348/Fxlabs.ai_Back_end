@@ -1503,6 +1503,10 @@ Expected logs when working:
   - `📤 Queueing email send for RSI Tracker ...`
   - Email service logs like `📧 RSI Alert Email Service - Starting email process` and `📊 SendGrid response: Status 202`.
 
+### "Currency Strength email table looks narrow on Gmail mobile"
+- Symptom: On some mobile email clients (especially Gmail mobile), the first table in the Currency Strength alert (`Role / Currency / Strength`) can appear narrower than the card, only wrapping its own content instead of spanning the full width.
+- Fix in code: The Currency Strength email template now explicitly enforces `width:100%` via inline CSS on that table so it expands to the full width of its container on mobile as well as desktop, without changing the visual design elsewhere.
+
  
 
 ### "SendGrid not configured, skipping RSI alert email"
