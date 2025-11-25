@@ -657,6 +657,9 @@ Symbol normalization (canonicalization):
 Notes:
 - Multiple triggers render multiple cards in a single email.
 
+Layout note:
+- For the RSI Correlation alert email, the inner stats table (`Expected / Actual Now / Trigger`) now explicitly uses `width:100%` in its inline CSS (alongside `width="100%"`) so that in mobile clients like Gmail the table stretches to the full width of its card instead of shrinking to just wrap its content.
+
  
 
 ### Global Limit: Max 3 Pairs/User

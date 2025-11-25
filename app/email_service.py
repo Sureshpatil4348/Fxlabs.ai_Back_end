@@ -1759,7 +1759,7 @@ class EmailService:
                 block = f"""
     <tr><td style=\"padding:20px;\">
       <div style=\"margin-bottom:12px;\"><strong>{pair_a}</strong> vs <strong>{pair_b}</strong> • Window: {lookback} • TF: {timeframe}</div>
-      <table role=\"presentation\" width=\"100%\" style=\"border:1px solid #E5E7EB;border-radius:10px\">
+      <table role=\"presentation\" width=\"100%\" style=\"width:100%;border:1px solid #E5E7EB;border-radius:10px\">
         <tr style=\"background:#F9FAFB;color:#6B7280;font-size:12px;\">
           <td style=\"padding:10px\">Expected</td><td style=\"padding:10px\">Actual Now</td><td style=\"padding:10px\">Trigger</td>
         </tr>

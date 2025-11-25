@@ -126,6 +126,9 @@ Troubleshooting (Currency Strength)
 
 > Note on multitenancy: All alert trigger inserts now use tenant-aware Supabase via `app/config.py` and `app/tenancy.py`. Use `python fxlabs-server.py` or `python hextech-server.py` to select the tenant; set the corresponding credentials in `.env`.
 
+Layout (RSI email):
+- In the RSI Correlation alert email, the inner stats table (`Expected / Actual Now / Trigger`) now includes an explicit `width:100%` inline style (in addition to `width="100%"`) so that on mobile clients like Gmail the table stretches to the full width of its card instead of collapsing to just the width of its contents.
+
 ### How Alerts Are Evaluated
 
 - Evaluation and trigger insertion are performed by the backend only. The frontend solely manages alert configuration state (CRUD, validation) and must not evaluate thresholds or insert triggers.
