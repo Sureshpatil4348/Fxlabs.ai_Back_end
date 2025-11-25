@@ -243,7 +243,7 @@ async def lifespan(app: FastAPI):
     async def _warm_populate_currency_strength_cache() -> None:
         try:
             # Only supported timeframes (>=5M and WS-allowed)
-            baseline_tfs: List[Timeframe] = [Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
+            baseline_tfs: List[Timeframe] = [Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1, Timeframe.MN1]
             try:
                 allowed_tfs = ALLOWED_WS_TIMEFRAMES
             except Exception:
@@ -520,6 +520,7 @@ def _rollout_timeframes() -> List[Timeframe]:
         Timeframe.H4,
         Timeframe.D1,
         Timeframe.W1,
+        Timeframe.MN1,
     ]
 
 def _rollout_symbols() -> List[str]:
@@ -1233,7 +1234,7 @@ async def get_indicator(
     indicator: str = Query(..., description="Indicator name: rsi|quantum|currency_strength"),
     timeframe: str = Query(
         ...,
-        description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W (currency_strength requires >=5M)",
+        description="Timeframe: one of 1M,5M,15M,30M,1H,4H,1D,1W,1MN (currency_strength requires >=5M)",
     ),
     pairs: Optional[List[str]] = Query(None, description="Repeatable symbol param (e.g., pairs=EURUSDm&pairs=BTCUSDm) or CSV"),
     symbols: Optional[List[str]] = Query(None, description="Alias for pairs (repeatable or CSV)"),
@@ -1553,7 +1554,7 @@ async def refresh_alerts_manual(x_api_key: Optional[str] = Depends(require_api_t
 @app.get("/api/ohlc")
 async def get_ohlc(
     symbol: str = Query(..., description="Symbol, e.g., EURUSDm"),
-    timeframe: str = Query(..., description="One of 1M,5M,15M,30M,1H,4H,1D,1W"),
+    timeframe: str = Query(..., description="One of 1M,5M,15M,30M,1H,4H,1D,1W,1MN"),
     limit: int = Query(100, ge=1, le=1000, description="Number of bars to return (max 1000)"),
     before: Optional[int] = Query(None, description="Return bars strictly older than this bar time (ms since epoch)"),
     after: Optional[int] = Query(None, description="Return bars strictly newer than this bar time (ms since epoch)"),
@@ -1596,6 +1597,7 @@ async def get_ohlc(
         "4H": 4 * 60 * 60,
         "1D": 24 * 60 * 60,
         "1W": 7 * 24 * 60 * 60,
+        "1MN": 30 * 24 * 60 * 60,
     }
     tf_secs = tf_seconds_map.get(tf.value, 60)
 
@@ -2022,7 +2024,7 @@ class WSClient:
         if self.v2_broadcast and ("ohlc" in self.supported_data_types):
             try:
                 now = datetime.now(timezone.utc)
-                baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
+                baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1, Timeframe.MN1]
                 for sym in RSI_SUPPORTED_SYMBOLS:
                     try:
                         await _ensure_symbol_selected_async(sym)
@@ -2139,7 +2141,7 @@ class WSClient:
                     # Update OHLC caches for baseline timeframes in v2 broadcast mode only (no live OHLC streaming in v2)
                     if self.v2_broadcast and ("ohlc" in self.supported_data_types):
                         try:
-                            baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1]
+                            baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1, Timeframe.MN1]
                             for tf in baseline_tfs:
                                 await _update_ohlc_cache_async(sym, tf)
                         except Exception:

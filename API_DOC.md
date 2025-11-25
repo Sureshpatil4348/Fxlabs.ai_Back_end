@@ -5,7 +5,7 @@ This document describes how the frontend should consume market data and indicato
 ### Answers to common questions
 
 - **Mechanism to fetch indicators for different timeframes via WebSocket?**
-  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. It also broadcasts `currency_strength_update` snapshots over WebSocket only on closed bars and only for supported (WS-allowed) timeframes, using closed-candle ROC aggregation for the 8 fiat currencies and normalizing to a −100..100 scale (0 = neutral). Note: Currency Strength enforces a minimum timeframe of `5M` (no `1M`).
+  - Yes. WebSocket v2 (`/market-v2`) is broadcast-only. The server computes closed-bar indicators on a 10s cadence and pushes `indicator_update` events for all allowed symbols across baseline timeframes: `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W, 1MN`. It also broadcasts `currency_strength_update` snapshots over WebSocket only on closed bars and only for supported (WS-allowed) timeframes, using closed-candle ROC aggregation for the 8 fiat currencies and normalizing to a −100..100 scale (0 = neutral). Note: Currency Strength enforces a minimum timeframe of `5M` (no `1M`).
   - Update: Indicator WS pushes are consolidated by timeframe. Each cycle emits one `indicator_updates` message per timeframe with an array of all symbols updated in that cycle.
   - There is no per-client subscription filtering in v2. Clients receive broadcast updates when a new closed bar is detected.
 
@@ -29,7 +29,7 @@ This document describes how the frontend should consume market data and indicato
 {
   "type": "connected",
   "message": "WebSocket connected successfully",
-  "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
+  "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W","1MN"],
   "notes": ["currency_strength requires timeframe >= 5M"],
   "supported_data_types": ["ticks","indicators","ohlc"],
   "supported_price_bases": ["last","bid","ask"],
@@ -190,7 +190,7 @@ This document describes how the frontend should consume market data and indicato
   - If no `pairs`/`symbols` provided, returns for WS‑allowed symbols (capped to 32).
   - Query params:
     - `indicator` (required): `rsi` | `quantum` | `currency_strength`
-    - `timeframe` (required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`.
+    - `timeframe` (required): one of `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W, 1MN`.
       - Constraint: for `currency_strength`, minimum timeframe is `5M` (requests with `1M` return error `min_timeframe_5M`).
     - `pairs` (repeatable or CSV): symbols to include. Alias: `symbols`.
   - Response examples:
@@ -226,7 +226,7 @@ This document describes how the frontend should consume market data and indicato
   - Auth: `X-API-Key: {API_TOKEN}` when `API_TOKEN` is configured.
   - Query params:
     - `symbol` (string, required): e.g., `EURUSDm`.
-    - `timeframe` (string, required): one of `1M,5M,15M,30M,1H,4H,1D,1W`.
+    - `timeframe` (string, required): one of `1M,5M,15M,30M,1H,4H,1D,1W,1MN`.
     - `limit` (int, optional, default `100`, max `1000`): number of bars to return.
     - `before` (int, optional): epoch milliseconds; return bars strictly older than this bar time (page older).
     - `after` (int, optional): epoch milliseconds; return bars strictly newer than this bar time (page newer).
@@ -341,7 +341,7 @@ Note: Tick streaming remains WebSocket-only via `/market-v2`. `/api/pricing` ser
 
 ### Symbols and timeframes
 
-- Timeframes: fixed set `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W`. For `currency_strength`, the minimum timeframe is `5M`.
+- Timeframes: fixed set `1M, 5M, 15M, 30M, 1H, 4H, 1D, 1W, 1MN`. For `currency_strength`, the minimum timeframe is `5M`.
 - Symbols: allowlisted; defaults to all supported RSI symbols (broker-suffixed). Operators can restrict via environment.
 
 ### Notes & caveats

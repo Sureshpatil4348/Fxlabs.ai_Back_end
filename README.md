@@ -378,7 +378,7 @@ Tick push payloads to clients remain a list of ticks. Internally, for alert chec
 {
   "type": "connected",
   "message": "WebSocket connected successfully",
-  "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W"],
+  "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W", "1MN"],
   "supported_data_types": ["ticks", "indicators", "ohlc"],
   "supported_price_bases": ["last", "bid", "ask"]
 }
@@ -444,7 +444,7 @@ V2 greeting example (capabilities + indicators registry):
 {
   "type": "connected",
   "message": "WebSocket connected successfully",
-  "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
+  "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W","1MN"],
   "supported_data_types": ["ticks","indicators"],
   "supported_price_bases": ["last","bid","ask"],
   "note": "v2 endpoint; v1 deprecated — migrate to /market-v2",

@@ -20,6 +20,7 @@ MT5_TIMEFRAMES = {
     Timeframe.H4: mt5.TIMEFRAME_H4,
     Timeframe.D1: mt5.TIMEFRAME_D1,
     Timeframe.W1: mt5.TIMEFRAME_W1,
+    Timeframe.MN1: mt5.TIMEFRAME_MN1,
 }
 
 logger = logging.getLogger(__name__)
@@ -333,6 +334,14 @@ def calculate_next_update_time(subscription_time: datetime, timeframe: Timeframe
         if days_ahead == 7:
             days_ahead = 7
         next_update = subscription_time.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=days_ahead)
+    elif timeframe == Timeframe.MN1:
+        if subscription_time.month == 12:
+            year = subscription_time.year + 1
+            month = 1
+        else:
+            year = subscription_time.year
+            month = subscription_time.month + 1
+        next_update = subscription_time.replace(year=year, month=month, day=1, hour=0, minute=0, second=0, microsecond=0)
     else:
         # Default to 1 minute for safety
         next_update = subscription_time.replace(second=0, microsecond=0) + timedelta(minutes=1)
