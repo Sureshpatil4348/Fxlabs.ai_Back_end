@@ -311,6 +311,9 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 
 - News rows now include the source currency code for each event (e.g., `[USD] Nonfarm Payrolls`). This matches the API payloads where `currency` is already provided.
 
+#### Layout and Mobile Behavior
+- The primary tables in the Daily Morning Brief email (`Signal Summary (Core Pairs)` and `Today's High-Impact News`) now explicitly apply `width:100%` via inline CSS in addition to `width="100%"`. This avoids narrow or content-wrapped tables in mobile clients (especially Gmail mobile) and ensures the tables stretch to the full width of the white card container while preserving desktop layout.
+
 #### Styling Consistency
 - Disclaimer footer styling is now unified with other emails (neutral, accessible colors), removing the previous yellow/warning palette.
 - Container: `background: #F9FAFB`, `border: 1px solid #E5E7EB`

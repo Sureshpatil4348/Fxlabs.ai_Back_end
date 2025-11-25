@@ -2135,7 +2135,7 @@ class EmailService:
           <tr>
             <td style=\"padding:20px;\">
               <div style=\"font-weight:700;margin-bottom:8px;color:#19235d;\">Signal Summary (Core Pairs)</div>
-              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;\">
+              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;border:1px solid #E5E7EB;border-radius:10px;overflow:hidden;\">
                 <tr style=\"background:#F9FAFB;font-size:12px;color:#6B7280;\">
                   <td style=\"padding:10px;\">Pair</td>
                   <td style=\"padding:10px;\">Signal</td>
@@ -2156,7 +2156,7 @@ class EmailService:
           <tr>
             <td style=\"padding:0 20px 20px;\">
               <div style=\"font-weight:700;margin-bottom:8px;color:#19235d;\">Today's High-Impact News</div>
-              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border:1px solid #E5E7EB;border-radius:10px;\">
+              <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"width:100%;border:1px solid #E5E7EB;border-radius:10px;\">
                 {news_html}
               </table>
             </td>
