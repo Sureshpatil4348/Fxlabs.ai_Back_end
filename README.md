@@ -311,6 +311,9 @@ DAILY_SEND_LOCAL_TIME=09:00          # HH:MM or HH:MM:SS (24h)
 
 - News rows now include the source currency code for each event (e.g., `[USD] Nonfarm Payrolls`). This matches the API payloads where `currency` is already provided.
 
+#### Layout and Mobile Behavior
+- The primary tables in the Daily Morning Brief email (`Signal Summary (Core Pairs)` and `Today's High-Impact News`) now explicitly apply `width:100%` via inline CSS in addition to `width="100%"`. This avoids narrow or content-wrapped tables in mobile clients (especially Gmail mobile) and ensures the tables stretch to the full width of the white card container while preserving desktop layout.
+
 #### Styling Consistency
 - Disclaimer footer styling is now unified with other emails (neutral, accessible colors), removing the previous yellow/warning palette.
 - Container: `background: #F9FAFB`, `border: 1px solid #E5E7EB`
@@ -375,7 +378,7 @@ Tick push payloads to clients remain a list of ticks. Internally, for alert chec
 {
   "type": "connected",
   "message": "WebSocket connected successfully",
-  "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W"],
+  "supported_timeframes": ["1M", "5M", "15M", "30M", "1H", "4H", "1D", "1W", "1MN"],
   "supported_data_types": ["ticks", "indicators", "ohlc"],
   "supported_price_bases": ["last", "bid", "ask"]
 }
@@ -441,7 +444,7 @@ V2 greeting example (capabilities + indicators registry):
 {
   "type": "connected",
   "message": "WebSocket connected successfully",
-  "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W"],
+  "supported_timeframes": ["1M","5M","15M","30M","1H","4H","1D","1W","1MN"],
   "supported_data_types": ["ticks","indicators"],
   "supported_price_bases": ["last","bid","ask"],
   "note": "v2 endpoint; v1 deprecated — migrate to /market-v2",

@@ -14,6 +14,7 @@ class Timeframe(str, Enum):
     H4 = "4H"
     D1 = "1D"
     W1 = "1W"
+    MN1 = "1MN"
 
 
 class Tick(BaseModel):
