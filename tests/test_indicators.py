@@ -98,6 +98,7 @@ def run_unit_checks() -> int:
             "GBPUSDm",
             "USDJPYm",
             "XAUUSDm",
+            "USOILm",
             "BTCUSDm",
         ]
         symbols: List[str] = []
@@ -107,7 +108,7 @@ def run_unit_checks() -> int:
                 symbols.append(s)
             except Exception:
                 continue
-            if len(symbols) >= 5:
+            if len(symbols) >= len(preferred):
                 break
         if not symbols:
             # Fall back to first 3 supported if ensure/select failed silently
@@ -225,5 +226,4 @@ def run_unit_checks() -> int:
 if __name__ == "__main__":
     exit_code = run_unit_checks()
     sys.exit(exit_code)
-
 

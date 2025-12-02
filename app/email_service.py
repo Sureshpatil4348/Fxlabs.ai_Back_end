@@ -180,7 +180,10 @@ class EmailService:
         """
         raw = self._unsuffix_symbol(symbol)
         try:
-            if len(raw) >= 6:
+            # Special-case common non-6-char broker symbols (e.g., USOILm → OIL/USD)
+            if raw == "USOIL":
+                display = "OIL/USD"
+            elif len(raw) >= 6:
                 base = raw[:3]
                 quote = raw[3:6]
                 display = f"{base}/{quote}"

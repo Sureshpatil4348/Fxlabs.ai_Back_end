@@ -167,10 +167,11 @@ This document describes how the frontend should consume market data and indicato
       "data": {
         "threshold_pct": 0.05,
         "last_updated": "2025-10-06T12:00:00Z",
-        "count": 3,
+        "count": 4,
         "pairs": [
           {"symbol": "BTCUSDm", "daily_change_pct": 0.42},
           {"symbol": "XAUUSDm", "daily_change_pct": -0.11},
+          {"symbol": "USOILm", "daily_change_pct": 0.18},
           {"symbol": "EURUSDm", "daily_change_pct": 0.06}
         ]
       }

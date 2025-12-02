@@ -293,6 +293,7 @@ HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
 - **Signal Summary Badges**: BUY badges are always green (`#0CCC7C`), SELL badges are always red (`#E5494D`) for clear visual distinction.
 - **H4 Overbought/Oversold Layout**: Rendered in two fixed columns (Oversold left, Overbought right) using table-based columns so they remain side-by-side across clients, including mobile.
 - **Brand Text Color**: Primary text color inside the daily brief is updated to `#19235d` instead of near-black for consistency with brand guidelines.
+ - **Core Pairs Coverage**: Daily brief core signals cover `EURUSDm`, `XAUUSDm`, `USOILm`, and `BTCUSDm` (displayed as `EUR/USD`, `XAU/USD`, `OIL/USD`, `BTC/USD` with an "Intraday" timeframe label).
 - Configure timezone and send time using env vars:
 
 ```env

@@ -106,6 +106,7 @@ def run_parity_checks() -> int:
             "GBPUSDm",
             "USDJPYm",
             "XAUUSDm",
+            "USOILm",
             "BTCUSDm",
         ]
         symbols: List[str] = []
@@ -115,7 +116,7 @@ def run_parity_checks() -> int:
                 symbols.append(s)
             except Exception:
                 continue
-            if len(symbols) >= 5:
+            if len(symbols) >= len(preferred):
                 break
         if not symbols:
             symbols = RSI_SUPPORTED_SYMBOLS[:3]
@@ -224,5 +225,4 @@ def run_parity_checks() -> int:
 if __name__ == "__main__":
     code = run_parity_checks()
     sys.exit(code)
-
 

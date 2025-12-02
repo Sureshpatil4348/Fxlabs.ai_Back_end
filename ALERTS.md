@@ -42,7 +42,7 @@
   - RSI settings: period is fixed to 14; configure only `rsi_overbought` (60–90) and `rsi_oversold` (10–40).
   - Pairs: fixed set, backend uses a documented list (no per-alert selection, no env overrides).
   - Behavior: If any pair crosses into overbought/oversold on the closed candle, a trigger is recorded and emailed.
-  - Supported trading pairs (MT5-suffixed): `EURUSDm, GBPUSDm, USDJPYm, USDCHFm, AUDUSDm, USDCADm, NZDUSDm, EURGBPm, EURJPYm, EURCHFm, EURAUDm, EURCADm, EURNZDm, GBPJPYm, GBPCHFm, GBPAUDm, GBPCADm, GBPNZDm, AUDJPYm, AUDCHFm, AUDCADm, AUDNZDm, NZDJPYm, NZDCHFm, NZDCADm, CADJPYm, CADCHFm, CHFJPYm, XAUUSDm, XAGUSDm, BTCUSDm, ETHUSDm`.
+  - Supported trading pairs (MT5-suffixed): `EURUSDm, GBPUSDm, USDJPYm, USDCHFm, AUDUSDm, USDCADm, NZDUSDm, EURGBPm, EURJPYm, EURCHFm, EURAUDm, EURCADm, EURNZDm, GBPJPYm, GBPCHFm, GBPAUDm, GBPCADm, GBPNZDm, AUDJPYm, AUDCHFm, AUDCADm, AUDNZDm, NZDJPYm, NZDCHFm, NZDCADm, CADJPYm, CADCHFm, CHFJPYm, XAUUSDm, XAGUSDm, USOILm, BTCUSDm, ETHUSDm`.
 
 **Currency Strength Tracker (new)**
 - What: Triggers whenever the strongest or weakest fiat currency changes for the configured timeframe.
@@ -279,7 +279,7 @@ Automatic email 5 minutes before each scheduled high‑impact news item
 Automated daily email to all users at a configurable local time
 
 - What: A daily brief sent to all users at 09:00 IST containing:
-  - Core signals for EUR/USD, XAU/USD, BTC/USD from the All‑in‑One (Quantum) model (displayed with "Intraday" timeframe label)
+  - Core signals for EUR/USD, XAU/USD, OIL/USD, BTC/USD from the All‑in‑One (Quantum) model (displayed with "Intraday" timeframe label)
   - RSI(14) on 4H: lists of pairs currently Oversold (≤30) and Overbought (≥70), or "No pair in overbought / oversold" if none found
   - Today's high/medium‑impact news from the local news cache (IST day)
 - Who: All user emails fetched from Supabase Auth (`auth.users`) using the service role key. This is the single source of truth for daily emails and does not depend on per‑product alert tables.
@@ -293,7 +293,7 @@ Automated daily email to all users at a configurable local time
   - `DAILY_SEND_LOCAL_TIME` (default `09:00`) — local time in `HH:MM` or `HH:MM:SS`.
   - The email header shows the same time label (e.g., `IST 09:00`).
 - Data sources:
-  - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `scalper` style for EURUSDm, XAUUSDm, BTCUSDm
+  - Core signals: reuse Heatmap/Quantum `_compute_buy_sell_percent(symbol, style)` with `scalper` style for EURUSDm, XAUUSDm, USOILm, BTCUSDm
   - RSI(14) 4H: uses real MT5 OHLC via `get_ohlc_data` and computes RSI locally
   - News: filters `global_news_cache` for items with IST date == today and impact in {high, medium}
 - Template: Responsive table layout with three main sections:
