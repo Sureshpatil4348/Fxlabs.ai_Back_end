@@ -49,7 +49,7 @@ def main() -> int:
         import app.indicators as ind
 
         symbols = []
-        for s in ("EURUSDm", "GBPUSDm", "USDJPYm", "XAUUSDm", "BTCUSDm"):
+        for s in ("EURUSDm", "GBPUSDm", "USDJPYm", "XAUUSDm", "USOILm", "BTCUSDm"):
             try:
                 ensure_symbol_selected(s)
                 symbols.append(s)
@@ -127,5 +127,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
 

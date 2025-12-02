@@ -30,6 +30,9 @@ def _unsuffix_symbol(symbol: str) -> str:
 
 def _pair_display(symbol: str) -> str:
     raw = _unsuffix_symbol(symbol)
+    # Special-case common non-6-char broker symbols (e.g., USOILm → OIL/USD)
+    if raw == "USOIL":
+        return "OIL/USD"
     if len(raw) >= 6:
         return f"{raw[:3]}/{raw[3:6]}"
     return raw
@@ -41,10 +44,11 @@ def _rsi_latest_from_closes(closes: List[float], period: int = 14) -> Optional[f
 
 
 async def _collect_core_signals() -> List[Dict[str, Any]]:
-    """Collect All-in-One (Quantum Analysis) signals for EURUSD, XAUUSD, BTCUSD using scalper style."""
+    """Collect All-in-One (Quantum Analysis) signals for EURUSD, XAUUSD, OIL/USD, BTCUSD using scalper style."""
     pairs = [
         ("EURUSDm", "EUR/USD"),
         ("XAUUSDm", "XAU/USD"),
+        ("USOILm", "OIL/USD"),
         ("BTCUSDm", "BTC/USD"),
     ]
     results: List[Dict[str, Any]] = []

@@ -41,8 +41,8 @@ def test_symbol_access(mt5):
         symbols = mt5.symbols_get()
         if symbols:
             print(f"✓ Found {len(symbols)} symbols")
-            # Try to get info for a common symbol
-            common_symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD']
+            # Try to get info for common symbols
+            common_symbols = ['EURUSD', 'GBPUSD', 'USDJPY', 'XAUUSD', 'USOIL']
             for symbol in common_symbols:
                 info = mt5.symbol_info(symbol)
                 if info:

@@ -42,15 +42,15 @@ FX Crosses (21):
 - CADJPYm, CADCHFm
 - CHFJPYm
 
-Metals (2):
-- XAUUSDm (Gold), XAGUSDm (Silver)
+Metals & Commodities (3):
+- XAUUSDm (Gold), XAGUSDm (Silver), USOILm (Crude Oil)
 
 Crypto (2):
 - BTCUSDm (Bitcoin), ETHUSDm (Ethereum)
 
 Notes
 - RSI Tracker and general dashboards subscribe to all of the above by default.
-- Currency Strength only aggregates the eight fiat currencies {USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD}; any pair whose base/quote is outside these (e.g., XAU, XAG, BTC, ETH) is ignored in the strength aggregation.
+- Currency Strength only aggregates the eight fiat currencies {USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD}; any pair whose base/quote is outside these (e.g., XAU, XAG, USOIL, BTC, ETH) is ignored in the strength aggregation.
 
 ## Quantum Analysis (Multi‑Indicator Heatmap)
 
@@ -175,7 +175,7 @@ Minimum data requirements (closes/bars):
 Computes an 8‑currency strength map using subscribed FX, metals, and crypto pairs.
 
 ### Pairs & Sources
-- Pairs: All core majors + cross pairs + `XAUUSDm`, `XAGUSDm`, `BTCUSDm`, `ETHUSDm` are subscribed; calculation uses the eight fiat currencies `{USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD}`.
+- Pairs: All core majors + cross pairs + `XAUUSDm`, `XAGUSDm`, `USOILm`, `BTCUSDm`, `ETHUSDm` are subscribed; calculation uses the eight fiat currencies `{USD, EUR, GBP, JPY, AUD, CAD, CHF, NZD}`.
 - Modes:
   - closed: last two closed candles (stable)
   - live: last two ticks (real‑time)

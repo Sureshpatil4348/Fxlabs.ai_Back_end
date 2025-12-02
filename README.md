@@ -293,6 +293,7 @@ HEXTECH_DAILY_SEND_LOCAL_TIME=09:00
 - **Signal Summary Badges**: BUY badges are always green (`#0CCC7C`), SELL badges are always red (`#E5494D`) for clear visual distinction.
 - **H4 Overbought/Oversold Layout**: Rendered in two fixed columns (Oversold left, Overbought right) using table-based columns so they remain side-by-side across clients, including mobile.
 - **Brand Text Color**: Primary text color inside the daily brief is updated to `#19235d` instead of near-black for consistency with brand guidelines.
+ - **Core Pairs Coverage**: Daily brief core signals cover `EURUSDm`, `XAUUSDm`, `USOILm`, and `BTCUSDm` (displayed as `EUR/USD`, `XAU/USD`, `OIL/USD`, `BTC/USD` with an "Intraday" timeframe label).
 - Configure timezone and send time using env vars:
 
 ```env
@@ -656,6 +657,9 @@ Symbol normalization (canonicalization):
   - **ts_local**: local time string (IST by default)
 Notes:
 - Multiple triggers render multiple cards in a single email.
+
+Layout note:
+- For the RSI Correlation alert email, the inner stats table (`Expected / Actual Now / Trigger`) now explicitly uses `width:100%` in its inline CSS (alongside `width="100%"`) so that in mobile clients like Gmail the table stretches to the full width of its card instead of shrinking to just wrap its content.
 
  
 

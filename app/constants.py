@@ -17,12 +17,11 @@ RSI_SUPPORTED_SYMBOLS: List[str] = [
     "CADJPYm", "CADCHFm",
     # CHF crosses (1)
     "CHFJPYm",
-    # Precious metals (2)
-    "XAUUSDm", "XAGUSDm",
+    # Precious metals & commodities (3)
+    "XAUUSDm", "XAGUSDm", "USOILm",
     # Crypto (2)
     "BTCUSDm", "ETHUSDm",
 ]
 
 
 # Correlation pairs and window removed per product decision
-
