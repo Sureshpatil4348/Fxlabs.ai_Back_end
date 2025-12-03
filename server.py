@@ -74,6 +74,9 @@ from app.currency_strength_cache import currency_strength_cache
 from app.constants import RSI_SUPPORTED_SYMBOLS
 from app.trending_pairs import trending_pairs_cache, trending_pairs_scheduler, refresh_trending_pairs
 
+# Extra symbols that should participate in OHLC streaming/REST only (no indicators/RSI universe).
+EXTRA_OHLC_ONLY_SYMBOLS: Set[str] = {canonicalize_symbol("DXYm")}
+
 # Async wrappers for blocking MT5 calls to avoid event-loop stalls (especially on Windows)
 async def _get_ohlc_data_async(symbol: str, timeframe: Timeframe, count: int = 300):
     return await asyncio.to_thread(get_ohlc_data, symbol, timeframe, count)
@@ -821,6 +824,7 @@ async def _indicator_scheduler() -> None:
             ohlc_batches: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
             for symbol, tf in pairs:
                 try:
+                    is_ohlc_only = symbol in EXTRA_OHLC_ONLY_SYMBOLS
                     # Fetch recent OHLC and gate on last closed bar (offloaded)
                     bars = await _get_ohlc_data_async(symbol, tf, 300)
                     if not bars:
@@ -836,136 +840,141 @@ async def _indicator_scheduler() -> None:
                     closes = [b.close for b in closed_bars]
                     highs = [b.high for b in closed_bars]
                     lows = [b.low for b in closed_bars]
-                    # Compute indicators for latest closed bar
-                    rsi_val = ind_rsi_latest(closes, 14) if len(closes) >= 15 else None
-                    ema_vals: Dict[int, Optional[float]] = {}
-                    for p in (21, 50, 200):
-                        ema_vals[p] = ind_ema_latest(closes, p) if len(closes) >= p else None
-                    macd_trip = ind_macd_latest(closes, 12, 26, 9)
-                    # Additional indicators for logging/WS snapshot (not cached)
-                    utbot_vals = None
-                    ich_vals = None
-                    try:
-                        utbot_vals = ind_utbot_latest(highs, lows, closes, 50, 10, 3.0)
-                    except Exception:
+
+                    if not is_ohlc_only:
+                        # Compute indicators for latest closed bar
+                        rsi_val = ind_rsi_latest(closes, 14) if len(closes) >= 15 else None
+                        ema_vals: Dict[int, Optional[float]] = {}
+                        for p in (21, 50, 200):
+                            ema_vals[p] = ind_ema_latest(closes, p) if len(closes) >= p else None
+                        macd_trip = ind_macd_latest(closes, 12, 26, 9)
+                        # Additional indicators for logging/WS snapshot (not cached)
                         utbot_vals = None
-                    try:
-                        ich_vals = ind_ichimoku_latest(highs, lows, closes, 9, 26, 52, 26)
-                    except Exception:
                         ich_vals = None
+                        try:
+                            utbot_vals = ind_utbot_latest(highs, lows, closes, 50, 10, 3.0)
+                        except Exception:
+                            utbot_vals = None
+                        try:
+                            ich_vals = ind_ichimoku_latest(highs, lows, closes, 9, 26, 52, 26)
+                        except Exception:
+                            ich_vals = None
 
-                    # Store to indicator cache (async-safe)
-                    if rsi_val is not None:
-                        await indicator_cache.update_rsi(symbol, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
-                        tfs_rsi_updated.add(tf.value)
-                    for period, v in ema_vals.items():
-                        if v is not None:
-                            await indicator_cache.update_ema(symbol, tf.value, int(period), float(v), ts_ms=last_closed.time)
-                            tfs_ema_updated.add(tf.value)
-                    if macd_trip is not None:
-                        macd_v, sig_v, hist_v = macd_trip
-                        await indicator_cache.update_macd(
-                            symbol,
-                            tf.value,
-                            12,
-                            26,
-                            9,
-                            float(macd_v),
-                            float(sig_v),
-                            float(hist_v),
-                            ts_ms=last_closed.time,
-                        )
-                        tfs_macd_updated.add(tf.value)
-
-                    _indicator_last_bar[key] = last_closed.time
-                    processed += 1
-
-                    # Structured per-update metrics (DEBUG level): latency and values snapshot
-                    try:
-                        latency_ms = max(poll_time_ms - int(last_closed.time), 0)
-                        item_log = {
-                            "event": "indicator_item",
-                            "sym": symbol,
-                            "tf": tf.value,
-                            "bar_time": int(last_closed.time),
-                            "latency_ms": int(latency_ms),
-                            "rsi14": (float(rsi_val) if rsi_val is not None else None),
-                            "ema": {k: (float(v) if v is not None else None) for k, v in ema_vals.items()},
-                            "macd": (
-                                {
-                                    "macd": float(macd_trip[0]),
-                                    "signal": float(macd_trip[1]),
-                                    "hist": float(macd_trip[2]),
-                                }
-                                if macd_trip
-                                else None
-                            ),
-                            "utbot": (
-                                {
-                                    "baseline": float(utbot_vals[0]),
-                                    "stop": float(utbot_vals[1]),
-                                    "direction": int(utbot_vals[2]),
-                                    "flip": int(utbot_vals[3]),
-                                }
-                                if utbot_vals
-                                else None
-                            ),
-                            "ichimoku": (ich_vals if ich_vals else None),
-                        }
-                        # JSON logs optional; emit at DEBUG to avoid INFO spam
-                        logger.debug(orjson.dumps(item_log).decode("utf-8"))
-                    except Exception:
-                        # Never allow observability to break scheduling
-                        pass
-
-                    # Live RSI debug log for 5M closed bars using cache-aligned numbers
-                    try:
-                        if (
-                            LIVE_RSI_DEBUGGING
-                            and symbol == "BTCUSDm"
-                            and tf == Timeframe.M5
-                            and rsi_val is not None
-                        ):
-                            time_iso = getattr(last_closed, "time_iso", "") or ""
-                            if "T" in time_iso:
-                                parts = time_iso.split("T", 1)
-                                date_part = parts[0]
-                                time_part = parts[1]
-                            else:
-                                date_part = time_iso
-                                time_part = ""
-                            time_part = time_part.replace("+00:00", "Z")
-                            volume_str = f"{last_closed.volume:.2f}" if getattr(last_closed, "volume", None) is not None else "-"
-                            tick_volume_str = f"{last_closed.tick_volume:.0f}" if getattr(last_closed, "tick_volume", None) is not None else "-"
-                            spread_str = f"{last_closed.spread:.0f}" if getattr(last_closed, "spread", None) is not None else "-"
-                            logger = logging.getLogger(__name__)
-                            logger.info(
-                                "🧭 liveRSI %s 5M RSIclosed(14)=%.2f | date=%s time=%s open=%.5f high=%.5f low=%.5f close=%.5f volume=%s tick_volume=%s spread=%s",
+                        # Store to indicator cache (async-safe)
+                        if rsi_val is not None:
+                            await indicator_cache.update_rsi(symbol, tf.value, 14, float(rsi_val), ts_ms=last_closed.time)
+                            tfs_rsi_updated.add(tf.value)
+                        for period, v in ema_vals.items():
+                            if v is not None:
+                                await indicator_cache.update_ema(symbol, tf.value, int(period), float(v), ts_ms=last_closed.time)
+                                tfs_ema_updated.add(tf.value)
+                        if macd_trip is not None:
+                            macd_v, sig_v, hist_v = macd_trip
+                            await indicator_cache.update_macd(
                                 symbol,
-                                float(rsi_val),
-                                date_part,
-                                time_part,
-                                float(getattr(last_closed, "open", 0.0)),
-                                float(getattr(last_closed, "high", 0.0)),
-                                float(getattr(last_closed, "low", 0.0)),
-                                float(getattr(last_closed, "close", 0.0)),
-                                volume_str,
-                                tick_volume_str,
-                                spread_str,
+                                tf.value,
+                                12,
+                                26,
+                                9,
+                                float(macd_v),
+                                float(sig_v),
+                                float(hist_v),
+                                ts_ms=last_closed.time,
                             )
-                    except Exception:
-                        # Debug-only logging must never break the scheduler
-                        pass
+                            tfs_macd_updated.add(tf.value)
 
-                    # Queue into timeframe batches for consolidated WS push (v2 broadcast only)
-                    item = {
-                        "symbol": symbol,
-                        "bar_time": last_closed.time,
-                        "indicators": {
-                            "rsi": {14: rsi_val} if rsi_val is not None else {},
-                        },
-                    }
-                    indicator_batches[tf.value].append(item)
+                        _indicator_last_bar[key] = last_closed.time
+                        processed += 1
+
+                        # Structured per-update metrics (DEBUG level): latency and values snapshot
+                        try:
+                            latency_ms = max(poll_time_ms - int(last_closed.time), 0)
+                            item_log = {
+                                "event": "indicator_item",
+                                "sym": symbol,
+                                "tf": tf.value,
+                                "bar_time": int(last_closed.time),
+                                "latency_ms": int(latency_ms),
+                                "rsi14": (float(rsi_val) if rsi_val is not None else None),
+                                "ema": {k: (float(v) if v is not None else None) for k, v in ema_vals.items()},
+                                "macd": (
+                                    {
+                                        "macd": float(macd_trip[0]),
+                                        "signal": float(macd_trip[1]),
+                                        "hist": float(macd_trip[2]),
+                                    }
+                                    if macd_trip
+                                    else None
+                                ),
+                                "utbot": (
+                                    {
+                                        "baseline": float(utbot_vals[0]),
+                                        "stop": float(utbot_vals[1]),
+                                        "direction": int(utbot_vals[2]),
+                                        "flip": int(utbot_vals[3]),
+                                    }
+                                    if utbot_vals
+                                    else None
+                                ),
+                                "ichimoku": (ich_vals if ich_vals else None),
+                            }
+                            # JSON logs optional; emit at DEBUG to avoid INFO spam
+                            logger.debug(orjson.dumps(item_log).decode("utf-8"))
+                        except Exception:
+                            # Never allow observability to break scheduling
+                            pass
+
+                        # Live RSI debug log for 5M closed bars using cache-aligned numbers
+                        try:
+                            if (
+                                LIVE_RSI_DEBUGGING
+                                and symbol == "BTCUSDm"
+                                and tf == Timeframe.M5
+                                and rsi_val is not None
+                            ):
+                                time_iso = getattr(last_closed, "time_iso", "") or ""
+                                if "T" in time_iso:
+                                    parts = time_iso.split("T", 1)
+                                    date_part = parts[0]
+                                    time_part = parts[1]
+                                else:
+                                    date_part = time_iso
+                                    time_part = ""
+                                time_part = time_part.replace("+00:00", "Z")
+                                volume_str = f"{last_closed.volume:.2f}" if getattr(last_closed, "volume", None) is not None else "-"
+                                tick_volume_str = f"{last_closed.tick_volume:.0f}" if getattr(last_closed, "tick_volume", None) is not None else "-"
+                                spread_str = f"{last_closed.spread:.0f}" if getattr(last_closed, "spread", None) is not None else "-"
+                                logger = logging.getLogger(__name__)
+                                logger.info(
+                                    "🧭 liveRSI %s 5M RSIclosed(14)=%.2f | date=%s time=%s open=%.5f high=%.5f low=%.5f close=%.5f volume=%s tick_volume=%s spread=%s",
+                                    symbol,
+                                    float(rsi_val),
+                                    date_part,
+                                    time_part,
+                                    float(getattr(last_closed, "open", 0.0)),
+                                    float(getattr(last_closed, "high", 0.0)),
+                                    float(getattr(last_closed, "low", 0.0)),
+                                    float(getattr(last_closed, "close", 0.0)),
+                                    volume_str,
+                                    tick_volume_str,
+                                    spread_str,
+                                )
+                        except Exception:
+                            # Debug-only logging must never break the scheduler
+                            pass
+
+                        # Queue into timeframe batches for consolidated WS push (v2 broadcast only)
+                        item = {
+                            "symbol": symbol,
+                            "bar_time": last_closed.time,
+                            "indicators": {
+                                "rsi": {14: rsi_val} if rsi_val is not None else {},
+                            },
+                        }
+                        indicator_batches[tf.value].append(item)
+                    else:
+                        # OHLC-only symbols still track last processed bar to avoid duplicate work.
+                        _indicator_last_bar[key] = last_closed.time
 
                     # OHLC batch item using the last closed bar
                     try:
@@ -1045,7 +1054,7 @@ async def _indicator_scheduler() -> None:
                         # Strength calculation must never break the indicator scheduler loop
                         pass
                     # Also compute and broadcast quantum analysis snapshot once per symbol per cycle
-                    if symbol not in quantum_done:
+                    if (not is_ohlc_only) and symbol not in quantum_done:
                         quantum_done.add(symbol)
                         q = await compute_quantum_for_symbol(symbol)
                         await _broadcast_json_v2({
@@ -1574,7 +1583,9 @@ async def get_ohlc(
         allowed_ws: Set[str] = set(ALLOWED_WS_SYMBOLS)
     except Exception:
         allowed_ws = set()
-    if allowed_ws and sym not in allowed_ws:
+    # Permit certain symbols (e.g., DXYm) for OHLC even when not in the WS indicator allowlist.
+    extra_ohlc: Set[str] = set(EXTRA_OHLC_ONLY_SYMBOLS)
+    if allowed_ws and sym not in allowed_ws and sym not in extra_ohlc:
         raise HTTPException(status_code=403, detail="forbidden_symbol")
 
     # Parse timeframe
@@ -2025,7 +2036,14 @@ class WSClient:
             try:
                 now = datetime.now(timezone.utc)
                 baseline_tfs: List[Timeframe] = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.M30, Timeframe.H1, Timeframe.H4, Timeframe.D1, Timeframe.W1, Timeframe.MN1]
-                for sym in RSI_SUPPORTED_SYMBOLS:
+                # Include RSI universe symbols plus OHLC-only extras (e.g., DXYm)
+                baseline_symbols: List[str] = [canonicalize_symbol(s) for s in RSI_SUPPORTED_SYMBOLS]
+                baseline_symbols += list(EXTRA_OHLC_ONLY_SYMBOLS)
+                seen: Set[str] = set()
+                for sym in baseline_symbols:
+                    if sym in seen:
+                        continue
+                    seen.add(sym)
                     try:
                         await _ensure_symbol_selected_async(sym)
                     except Exception:

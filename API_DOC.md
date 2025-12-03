@@ -94,7 +94,7 @@ This document describes how the frontend should consume market data and indicato
       ]
     }
     ```
-  - OHLC updates (10s poller; consolidated by timeframe; on candle close for all symbols):
+  - OHLC updates (10s poller; consolidated by timeframe; on candle close for all symbols, including OHLC-only indices like `DXYm`):
     ```json
     {
       "type": "ohlc_updates",

@@ -423,7 +423,7 @@ Internal alert tick_data shape:
 - Use `/market-v2` for new clients. It exposes ticks, indicators, and consolidated `ohlc_updates` on candle close, and advertises capabilities via `supported_data_types` in the greeting.
 - Current capabilities: `supported_data_types = ["ticks","indicators","ohlc"]`.
 - Broadcast-All mode: v2 pushes ticks and closed‑bar updates (indicators and OHLC) to all connected clients without explicit subscriptions.
-  - Symbols: all symbols in `ALLOWED_WS_SYMBOLS` (defaults to all `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`, broker‑suffixed)
+  - Symbols: all symbols in `ALLOWED_WS_SYMBOLS` (defaults to all `RSI_SUPPORTED_SYMBOLS` from `app/constants.py`, broker‑suffixed). Certain indices (e.g., `DXYm`) are exposed as OHLC‑only via `/api/ohlc` and OHLC WebSocket updates without joining the full RSI/indicator universe.
 - Timeframes: M1, M5, M15, M30, H1, H4, D1, W1
   - Note: `currency_strength` enforces a minimum timeframe of `5M` (no `1M`).
   - Scale: `currency_strength` values are normalized to −100..100 (0 = neutral).
