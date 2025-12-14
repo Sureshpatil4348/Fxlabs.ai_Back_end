@@ -6,6 +6,8 @@ import hmac
 import json
 import re
 from urllib.parse import quote as url_quote
+import urllib.request
+import urllib.error
 from threading import RLock
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Any, Tuple
@@ -38,6 +40,11 @@ from .config import SENDGRID_API_KEY, FROM_EMAIL, FROM_NAME, PUBLIC_BASE_URL, DA
 from .tenancy import get_tenant_config
 from .alert_logging import log_debug, log_info, log_warning, log_error
  
+
+SUBSCRIPTION_CHECK_BY_EMAIL_URL = (
+    "https://hyajwhtkwldrmlhfiuwg.supabase.co/functions/v1/subscription_check-by-email"
+)
+SUBSCRIPTION_CHECK_TIMEOUT_SECONDS = 3.0
 
 
 class EmailService:
@@ -78,6 +85,77 @@ class EmailService:
                 logger.warning("⚠️ Tenant email credentials missing (API key). Email sending is disabled.")
             # Provide comprehensive diagnostics on what's missing/misaligned
             self._log_config_diagnostics(context="startup")
+
+    def _get_supabase_public_anon_key(self) -> str:
+        return (os.environ.get("SUPABASE_PUBLIC_ANON_KEY", "") or "").strip()
+
+    def _fetch_subscription_status_by_email(self, user_email: str) -> Optional[str]:
+        """Return subscription_status for the email if (and only if) request+parse succeed.
+
+        Fail-open: returns None on any error so callers proceed with sending.
+        """
+        key = self._get_supabase_public_anon_key()
+        if not key:
+            return None
+        try:
+            payload = json.dumps({"email": user_email}).encode("utf-8")
+            req = urllib.request.Request(
+                SUBSCRIPTION_CHECK_BY_EMAIL_URL,
+                data=payload,
+                method="POST",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": key,
+                },
+            )
+            with urllib.request.urlopen(req, timeout=SUBSCRIPTION_CHECK_TIMEOUT_SECONDS) as resp:
+                status_code = getattr(resp, "status", None) or resp.getcode()
+                if not isinstance(status_code, int) or status_code < 200 or status_code >= 300:
+                    return None
+                raw = resp.read()
+            try:
+                data = json.loads((raw or b"{}").decode("utf-8"))
+            except Exception:
+                return None
+            subscription_status = data.get("subscription_status")
+            return subscription_status.strip() if isinstance(subscription_status, str) else None
+        except Exception:
+            return None
+
+    async def _should_skip_email_for_expired_subscription(self, user_email: str, context: str) -> bool:
+        """True only when the subscription check succeeds and returns 'expired'.
+
+        Any error (network/HTTP/JSON/etc) returns False to fail-open and allow email sending.
+        """
+        try:
+            if not user_email:
+                return False
+            if not self._get_supabase_public_anon_key():
+                return False
+            loop = asyncio.get_event_loop()
+            sub_status = await loop.run_in_executor(
+                None, lambda: self._fetch_subscription_status_by_email(user_email)
+            )
+            if not sub_status:
+                return False
+            if sub_status.strip().lower() != "expired":
+                return False
+            log_info(
+                logger,
+                "email_skip_subscription_expired",
+                context=context,
+                user_email=user_email,
+            )
+            return True
+        except Exception as e:
+            log_warning(
+                logger,
+                "subscription_check_error",
+                context=context,
+                user_email=user_email,
+                error=str(e),
+            )
+            return False
 
     
     def _generate_alert_hash(self, user_email: str, alert_name: str, triggered_pairs: List[Dict[str, Any]], calculation_mode: str = None) -> str:
@@ -870,6 +948,10 @@ class EmailService:
         
         # Clean up old cooldowns periodically
         self._cleanup_old_cooldowns()
+
+        if await self._should_skip_email_for_expired_subscription(user_email, context="heatmap"):
+            logger.info(f"⏭️ Skipping heatmap email send for expired subscription: {user_email}")
+            return False
         
         try:
             # Create email content
@@ -943,6 +1025,10 @@ class EmailService:
             return False
 
         self._cleanup_old_cooldowns()
+
+        if await self._should_skip_email_for_expired_subscription(user_email, context="heatmap_tracker"):
+            logger.info(f"⏭️ Skipping heatmap tracker email send for expired subscription: {user_email}")
+            return False
 
         try:
             date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
@@ -1226,6 +1312,10 @@ class EmailService:
             logger.warning("SendGrid not configured, cannot send test email")
             return False
         # Unsubscribe support removed
+
+        if await self._should_skip_email_for_expired_subscription(user_email, context="test"):
+            logger.info(f"⏭️ Skipping test email send for expired subscription: {user_email}")
+            return False
         
         try:
             date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
@@ -1312,6 +1402,10 @@ class EmailService:
         
         # Clean up old cooldowns periodically
         self._cleanup_old_cooldowns()
+
+        if await self._should_skip_email_for_expired_subscription(user_email, context="rsi"):
+            logger.info(f"⏭️ Skipping RSI email send for expired subscription: {user_email}")
+            return False
         
         try:
             # Create email content
@@ -1402,6 +1496,10 @@ class EmailService:
             return False
 
         self._cleanup_old_cooldowns()
+
+        if await self._should_skip_email_for_expired_subscription(user_email, context="custom_indicator"):
+            logger.info(f"⏭️ Skipping custom indicator email send for expired subscription: {user_email}")
+            return False
 
         try:
             date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
@@ -1666,6 +1764,10 @@ class EmailService:
 
         # Clean up old cooldowns periodically
         self._cleanup_old_cooldowns()
+
+        if await self._should_skip_email_for_expired_subscription(user_email, context="rsi_correlation"):
+            logger.info(f"⏭️ Skipping RSI correlation email send for expired subscription: {user_email}")
+            return False
         
         try:
             # Create email content
@@ -1886,6 +1988,10 @@ class EmailService:
         
         if not self.sg:
             self._log_config_diagnostics(context="news reminder email")
+            return False
+
+        if await self._should_skip_email_for_expired_subscription(user_email, context="news_reminder"):
+            logger.info(f"⏭️ Skipping news reminder email send for expired subscription: {user_email}")
             return False
 
         # Normalize display values
@@ -2242,6 +2348,11 @@ class EmailService:
         if not self.sg:
             self._log_config_diagnostics(context="daily brief email")
             return False
+
+        if await self._should_skip_email_for_expired_subscription(user_email, context="daily_brief"):
+            logger.info(f"⏭️ Skipping daily brief email send for expired subscription: {user_email}")
+            return False
+
         date_str, time_str, tz_label = self._get_local_date_time_strings(self.tz_name)
         subject = f"FxLabs Prime • Daily Morning Brief • {date_str} • {time_str} {tz_label}"
         html = self._build_daily_html(payload)
@@ -2400,6 +2511,10 @@ class EmailService:
             return True
         if not self.sg:
             self._log_config_diagnostics(context="currency strength alert email")
+            return False
+
+        if await self._should_skip_email_for_expired_subscription(user_email, context="currency_strength"):
+            logger.info(f"⏭️ Skipping currency strength email send for expired subscription: {user_email}")
             return False
 
         try:

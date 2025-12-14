@@ -19,6 +19,7 @@
 - Retrigger policy: once triggered, re‑arm only after leaving the triggerable zone and trigger again only on a fresh crossing back in.
 - Timezone for display: Asia/Kolkata (tenant-aware for Daily/news: see `DAILY_TZ_NAME`).
 - System safeguards: rate limit 5 emails/user/hour (overflow → digest), per‑pair concurrency cap, warm‑up for RSI, skip stale TFs (last candle age > 2× TF length).
+- Subscription gating (email): before sending an email, the backend calls `subscription_check-by-email` using `SUPABASE_PUBLIC_ANON_KEY`; only a successful response with `"subscription_status":"expired"` suppresses the email (any errors fail-open and still send).
   - Startup warm‑up: On server start or first evaluation per key, alerts baseline current state and skip initial triggers for existing in‑zone conditions. Specifically:
     - RSI Tracker: baseline last closed bar per (symbol, timeframe) and require the next new bar for triggers.
     - Heatmap Tracker: initialize armed state per (alert, symbol) from current Buy%/Sell% (disarm sides already above thresholds) and skip the first observation.
